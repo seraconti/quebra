@@ -288,9 +288,22 @@ def _verdict(
     if result.p_value <= alpha:
         # A rejection. Whether it is trustworthy still depends on the calibration, so the
         # note carries that even when the verdict does not.
+        #
+        # BOTH calibration states are named here, not just one. The non-rejection branch
+        # below demotes `bench_accepted is None` to `underpowered` because a non-rejection
+        # from a check of unknown size is not evidence for the null. The same is true of a
+        # rejection: with no bench cell there is no measured level, so `p <= alpha` does not
+        # mean the test rejects at alpha. The verdict stays `fail` because the statistic did
+        # land in the tail and suppressing that would hide a finding, but the note must say
+        # the level behind it is unmeasured.
         note = "rejected"
         if bench_accepted is False:
             note += "; but the bench found this check miscalibrated at this event count"
+        elif bench_accepted is None:
+            note += (
+                "; UNCALIBRATED: no bench cell for this check at this event count, so no "
+                "level stands behind this rejection"
+            )
         return VERDICT_FAIL, note
     unmet = []
     if n_events < min_events_pass:

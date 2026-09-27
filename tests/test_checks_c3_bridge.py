@@ -108,3 +108,48 @@ def test_a_probe_that_answers_nothing_is_distinguishable_from_one_that_never_ran
     from quebra.analyzers.check_ledger import _r_provenance
 
     assert _r_provenance(True)[2] == ("probe returned nothing",)
+
+
+def test_the_package_imports_with_no_rscript_on_path(tmp_path):
+    """Oracle: a fresh interpreter with Rscript hidden, which is what a CI runner is.
+
+    The bridge's whole design rests on R being optional AT IMPORT: `rpy2` was refused
+    because it turns a missing R into an import-time failure of the package. Nothing pinned
+    that. A module-level probe added by accident would break every install without R and no
+    test here would notice, because this machine has R.
+
+    Runs in a subprocess: importing in-process would find `quebra` already imported and
+    assert nothing.
+    """
+    import subprocess
+    import sys
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "python").symlink_to(sys.executable)
+
+    completed = subprocess.run(
+        [
+            str(bindir / "python"),
+            "-c",
+            # Every module, not a hand-picked few. Importing `quebra` alone reached 19 of
+            # 84: a module-level R probe planted in `instrument_validation` survived it,
+            # and that is one of the two most R-adjacent modules in the tree.
+            "import importlib, pkgutil, shutil, quebra;"
+            "assert shutil.which('Rscript') is None, 'Rscript was not hidden';"
+            "mods=[m.name for m in pkgutil.walk_packages(quebra.__path__,'quebra.')];"
+            "[importlib.import_module(m) for m in mods];"
+            "from quebra.analyzers.checks import c3_serial_copula as c3;"
+            "assert c3.rscript_path() is None;"
+            "print(f'OK {len(mods)}')",
+        ],
+        env={"PATH": str(bindir), "PYTHONPATH": ":".join(sys.path)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert completed.returncode == 0, (
+        f"importing quebra without Rscript failed.\nstdout:\n{completed.stdout}\n"
+        f"stderr:\n{completed.stderr}"
+    )
+    assert "OK" in completed.stdout

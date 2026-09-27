@@ -115,7 +115,12 @@ class CheckLedgerPanel(BasePlot):
                         # event count is still a rejection, but it is not the same
                         # evidence as one from a calibrated check. The hatch says so at a
                         # glance; burying it in a notes column would not.
-                        hatch=MISCALIBRATED_HATCH if bench_ok is False else None,
+                        #
+                        # BOTH non-calibrated states hatch, not just one. `None` means the
+                        # bench has no cell for this check at all, which is a weaker
+                        # footing than `False`, not a stronger one. Hatching only `False`
+                        # drew an unbenched cell identically to a calibrated one.
+                        hatch=None if bench_ok is True else MISCALIBRATED_HATCH,
                     )
                 )
                 ax.text(
@@ -138,7 +143,7 @@ class CheckLedgerPanel(BasePlot):
                         facecolor="white",
                         edgecolor="black",
                         hatch=MISCALIBRATED_HATCH,
-                        label="bench: miscalibrated at this n",
+                        label="bench: miscalibrated at this n, or no bench cell",
                     )
                 ],
                 loc="upper left",

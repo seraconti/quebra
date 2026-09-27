@@ -151,10 +151,20 @@ class InstrumentGrid:
         Dividing by every cell would let an underpowered grid look reassuring: 40 cells with
         no power and 4 rejections is not "10% rejection", it is "4 of 4 decided cells
         rejected". NaN when nothing was decided, which is itself the finding.
+
+        ALSO NaN when `pass` never occurred. For an instrument the bench has no cell for,
+        `_verdict` sends every non-rejection to `underpowered`, so `pass` is unreachable and
+        this ratio is 1.0 by construction whenever anything rejected at all. Reporting that
+        as a rejection SHARE would put a forced constant where a reader expects a measured
+        rate: the shipped C3 grid reads 46 fail, 0 pass, and 1.000 is not a finding about
+        the data. The same degeneracy reaches any instrument the bench scored as
+        miscalibrated at every event count.
         """
         c = self.counts
         decided = c[VERDICT_PASS] + c[VERDICT_FAIL]
-        return float("nan") if decided == 0 else c[VERDICT_FAIL] / decided
+        if decided == 0 or c[VERDICT_PASS] == 0:
+            return float("nan")
+        return c[VERDICT_FAIL] / decided
 
 
 @dataclass(frozen=True)
@@ -302,7 +312,6 @@ def build_independence_survey(
             "alpha": alpha,
             "n_datasets": len(datasets),
             "n_instruments": len(SURVEY_KEYS),
-            "c3_excluded": True,
         },
     )
 

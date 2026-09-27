@@ -56,8 +56,6 @@ dev = [
   "deptry>=0.20",
   "build>=1.2",
 ]
-# placeholder for now
-r = []
 bench = ["joblib>=1.3"]
 
 [project.urls]

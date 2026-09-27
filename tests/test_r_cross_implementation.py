@@ -8,7 +8,7 @@ implementation, written by other people from the same paper, is what catches tha
 For three of these the R package is by the authors of the method: `XICOR` is Chatterjee's,
 `energy` is Szekely and Rizzo's. That is as close to a definitional reference as exists.
 
-**The suite never runs R.** `rscripts/reference_values.R` writes two committed CSV fixtures
+**Most of this file never runs R.** `rscripts/reference_values.R` writes two committed CSV fixtures
 and this file reads them. `pytest` therefore works on a machine with no R, which was the
 may be the state of a reviewer's machine.
 
@@ -233,8 +233,9 @@ def test_the_c3_reference_is_pinned_with_its_simulation_seed():
 
     This does not re-run R. It pins that the fixture carries the seed, N and lag.max
     alongside the number, so the value can be regenerated and challenged. C3's own
-    agreement with this reference is a separate exercise: it needs R at test time, which
-    this suite refuses to require.
+    agreement with this reference is a separate exercise, and it now exists:
+    `test_the_bridge_reproduces_the_reference_serial_indep_values` below, behind the `r`
+    marker so it skips where there is no interpreter.
     """
     assert r_value("durations_iid", "serial_indep_sim_seed") == 707
     assert r_value("durations_iid", "serial_indep_N") == 1000
@@ -291,3 +292,119 @@ def test_the_three_implementations_agree_where_all_three_are_defined():
     ours = chatterjee_xi(x, y)
     assert ours == pytest.approx(float(scipy_xi.chatterjeexi(x, y).statistic), abs=TOL)
     assert ours == pytest.approx(r_value("xi_tie_free", "xicor"), abs=TOL)
+
+
+# ------------------------------------------------------- the R bridge, against this fixture
+#
+# These three need a real interpreter and carry the `r` marker. They skip where `Rscript` is
+# absent; they never pass with a mocked one. The tier marker stays `statistical` from the
+# module-level `pytestmark`, because `r` is a COST marker on the orthogonal axis.
+
+
+@pytest.mark.r
+def test_the_bridge_reproduces_the_reference_serial_indep_values(requires_rscript):
+    """Oracle: `copula::serialIndepTest` itself, via jobs/reference/r_reference_values.csv.
+
+    BOTH quantities are asserted, and that is the point of the test. The statistic is
+    invariant to the simulation seed and to N, so a statistic-only assertion cannot detect a
+    swapped `seed`/`n_sim` argument order in the bridge. The p-value is a function of the
+    simulated null and therefore of both, so it is what pins the call.
+
+    `analyzers/instrument_validation.py` reported this comparison as tier-4 ABSENT and named
+    it exactly, on the grounds that it "needs R at test time, which the suite refuses to
+    require". The `r` tier is what makes it requirable.
+    """
+    from quebra.analyzers.checks import c3_serial_copula as c3
+    from quebra.analyzers.checks.result import CLOCK_IN_SPEC, Segment
+
+    x, _unused = r_inputs("durations_iid")
+    seed = int(r_value("durations_iid", "serial_indep_sim_seed"))
+    n_sim = int(r_value("durations_iid", "serial_indep_N"))
+    lag_max = int(r_value("durations_iid", "serial_indep_lag_max"))
+
+    # `run`, not `_invoke_rscript`. The ledger calls `run`, and the argument plumbing
+    # between the two is what a helper-level test leaves uncovered: swapping run's
+    # positional arguments to the helper is a mutation the whole suite survives, and the
+    # shipped row would then carry a seed that does not reproduce its own p-value.
+    result = c3.run(
+        [Segment(x=x, tau=float(x.sum()), n_censored_dropped=0)],
+        clock=CLOCK_IN_SPEC,
+        max_lag=lag_max,
+        seed=seed,
+        n_null_sim=n_sim,
+    )
+    statistic, p_value = result.statistic, result.p_value
+
+    assert f"seed={seed}" in result.notes and f"N={n_sim}" in result.notes, (
+        f"the row must record the settings that produced it: {result.notes}"
+    )
+    assert statistic == pytest.approx(
+        r_value("durations_iid", "serial_indep_global_statistic"), abs=TOL
+    )
+    assert p_value == pytest.approx(
+        r_value("durations_iid", "serial_indep_global_p_value"), abs=TOL
+    )
+
+
+@pytest.mark.r
+def test_the_fixture_meta_rows_match_the_local_r(requires_rscript):
+    """Oracle: the installed R, asked directly.
+
+    `test_the_fixture_records_which_r_produced_it` asserts these rows are PRESENT, which is
+    a real property and runs everywhere. This asserts they are TRUE of the machine, which
+    only an interpreter can answer. A fixture whose recorded versions have drifted from the
+    R that can be run is a fixture whose values nobody can re-derive.
+    """
+    import subprocess
+
+    probe = (
+        "cat(R.version$major, R.version$minor, "
+        + ", ".join(
+            f'as.character(packageVersion("{p}"))'
+            for p in ("XICOR", "energy", "randtests", "copula")
+        )
+        + ")"
+    )
+    out = subprocess.run(
+        [requires_rscript, "-e", probe],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        timeout=120,
+        check=True,
+    ).stdout.split()
+
+    r_major, r_minor_full = out[0], out[1]
+    assert int(r_major) == int(r_value("meta", "r_major"))
+    assert int(r_minor_full.split(".")[0]) == int(r_value("meta", "r_minor"))
+
+    packages = ("XICOR", "energy", "randtests", "copula")
+    for package, reported in zip(packages, out[2:], strict=True):
+        parts = reported.replace("-", ".").split(".")
+        assert int(parts[0]) == int(r_value("meta", f"{package}_major")), package
+        assert int(parts[1]) == int(r_value("meta", f"{package}_minor")), package
+
+
+@pytest.mark.r
+def test_the_bridge_times_out_rather_than_hanging(requires_rscript):
+    """Oracle: `subprocess.run`'s own timeout contract.
+
+    The bridge's caller in `check_ledger` catches `TimeoutExpired` and writes a `declined:`
+    row, so a bridge that swallowed the timeout instead of raising would turn a hung
+    interpreter into a silent `not computed`. This pins the raise, not the ledger's handling
+    of it. The ledger does not pass `timeout_s`, so a ledger row runs under the 900 s
+    default: that branch is reachable in production, and simply not cheap to reach here.
+    """
+    import subprocess
+
+    from quebra.analyzers.checks import c3_serial_copula as c3
+    from quebra.analyzers.checks.result import CLOCK_IN_SPEC, Segment
+
+    x, _unused = r_inputs("durations_iid")
+    segment = Segment(x=x, tau=float(x.sum()), n_censored_dropped=0)
+
+    with pytest.raises(subprocess.TimeoutExpired) as excinfo:
+        c3.run([segment], clock=CLOCK_IN_SPEC, seed=707, timeout_s=0.5, n_null_sim=1000)
+    # `_invoke_rscript` also calls `r_library_paths`, whose own 60 s ceiling raises the same
+    # type, so the timeout value is what says which subprocess this was.
+    assert excinfo.value.timeout == 0.5

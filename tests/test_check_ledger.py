@@ -507,3 +507,78 @@ def test_an_unusable_r_is_recorded_on_the_ledger_and_does_not_stop_it(
     assert set(ledger.rows[ledger.rows["check_id"] == c3.CHECK_NAME]["verdict"]) == {
         VERDICT_NOT_COMPUTED
     }
+
+
+# The set of surveyed checks the bench has never calibrated. DERIVED below from the bench
+# tables rather than trusted: if C3 is ever benched, or a new uncalibrated check is
+# registered, the test fails and this constant has to move with it.
+UNCALIBRATED_CHECKS = {"c3_serial_copula"}
+
+
+def test_every_surveyed_check_is_benched_or_declared_uncalibrated():
+    """Oracle: jobs/bench/results/size_table.csv, read rather than assumed.
+
+    A check with no bench cell has no measured size, so neither its rejections nor its
+    non-rejections carry a level. The ledger already demotes the non-rejection to
+    `underpowered`; the rejection keeps `fail` and must say so in its note. Nothing pinned
+    WHICH checks are in that state, so a later pass could bench C3, or register a seventh
+    check with no calibration, and the distinction would quietly stop matching the tables.
+    """
+    from quebra.analyzers.independence_survey import SURVEY_KEYS
+
+    size = pd.read_csv(
+        pathlib.Path(__file__).resolve().parents[1]
+        / "jobs"
+        / "bench"
+        / "results"
+        / "size_table.csv"
+    )
+    benched = set(size["check"].unique())
+    surveyed = {key[0] for key in SURVEY_KEYS}
+
+    assert UNCALIBRATED_CHECKS == surveyed - benched, (
+        "the surveyed checks with no bench cell have changed. If a check was benched, "
+        "remove it from UNCALIBRATED_CHECKS here and check that "
+        "analyzers/instrument_validation.py's tier rows moved with it. If a new "
+        "uncalibrated check was registered, it needs a row in the bench before its "
+        "verdicts can be read as levelled."
+    )
+    # No second assertion here. `UNCALIBRATED_CHECKS <= surveyed` is true by construction
+    # once the equality above holds, and "not in ROW_KEYS" is already pinned by
+    # tests/test_independence_survey.py, whose subject that is.
+
+
+def test_an_uncalibrated_rejection_says_no_level_stands_behind_it():
+    """Oracle: AGENTS.md section 3 - a check outcome never stops execution, and section 4.
+
+    The twin of the `underpowered` demotion on the non-rejection path. Without it a
+    rejection from a check the bench has never run reads exactly like a calibrated one, and
+    the survey draws 60 such cells today.
+    """
+    from quebra.analyzers.check_ledger import VERDICT_FAIL, _verdict
+    from quebra.analyzers.checks.result import CALIB_R_COPULA, CheckResult
+
+    rejected = CheckResult(
+        check="c3_serial_copula",
+        statistic=9.9,
+        p_value=0.001,
+        calibration=CALIB_R_COPULA,
+        clock="in_spec",
+        n_events=80,
+        n_segments=1,
+        n_censored_dropped=0,
+        notes="",
+    )
+    verdict, note = _verdict(
+        rejected,
+        alpha=0.05,
+        n_events=80,
+        min_events_pass=0,
+        n_distinct=80,
+        tie_cutoff=5,
+        bench_accepted=None,
+    )
+    assert verdict == VERDICT_FAIL, (
+        "the statistic did land in the tail; do not hide that"
+    )
+    assert "UNCALIBRATED" in note and "no level stands behind" in note, note

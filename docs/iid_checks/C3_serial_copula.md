@@ -1,5 +1,34 @@
 # C3 - copula-based serial independence
 
+## What this project computes, and what it does not
+
+**The statistic is not ours.** It is computed by `copula::serialIndepTest`, the CRAN
+implementation of the Genest and Remillard empirical-copula serial independence test (no
+locator for the paper is recorded in this repository); this package calls it and does not
+reimplement it. Porting it was considered and declined in `spec/quebraplan.md` row 6.2,
+because validating a reimplementation of a validity test against the implementation it
+replaced is a scientific risk rather than an engineering win.
+
+**The call is a subprocess and a CSV round trip, not `rpy2`**, for the reason the Bridge
+section below gives. `tests/test_checks_c3_bridge.py` pins that the package imports on a
+machine with no R, in a fresh interpreter with `Rscript` hidden.
+
+**The bridge is pinned against the reference implementation's own output.** An `r`-marked
+test puts it against `jobs/reference/r_reference_values.csv` on BOTH the statistic and the
+p-value at seed 707, N 1000, `lag.max` 5. Both are asserted because the statistic is seed- and
+N-invariant and so cannot, alone, detect a swapped argument order. The test skips where
+`Rscript` is absent and never passes with a mocked one.
+
+**C3 is UNCALIBRATED.** It has no entry in `battery.ROW_KEYS` and no row in either bench
+table, so its size has never been measured and its power has never been measured. A C3
+p-value is a statistic, not a level: neither a rejection nor a non-rejection from it is
+evidence at alpha. The ledger says so on every such row, and
+`tests/test_check_ledger.py::test_every_surveyed_check_is_benched_or_declared_uncalibrated`
+derives that status from the bench table so it cannot drift. What a C3 bench cell would even
+mean is an open question, recorded in `spec/quebraplan.md` section 7B.
+
+---
+
 **Runs, but uncalibrated.** R is installed and C3 has executed. Smoke test on iid
 exponential input at `lag.max=5`, `n.sim=1000`, C3 `seed=1`: n=50 gives statistic 0.0057908
 / p 0.9575, n=150 gives 0.0071326 / p 0.9036, n=355 gives 0.0076331 / p 0.8656.

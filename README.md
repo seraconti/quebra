@@ -117,8 +117,43 @@ from a git clone, that script is what catches it.
 There is no `requirements.txt`. Dependencies are declared in `pyproject.toml` and derived
 from the imports that actually appear under `src/quebra/`.
 
-The copula serial-independence check additionally needs R with the copula package. Without R
-that one check reports not computed, and nothing else is affected.
+### The optional R check
+
+One check, C3 (`copula::serialIndepTest`), runs out of process through `Rscript`. Everything
+else is pure Python, and the package imports and runs without R: C3 reports `not computed`
+and the other five checks still answer.
+
+**There is no `pip install quebra[r]`, and there cannot be.** An extra installs Python
+distributions, and what C3 needs is an R interpreter plus a CRAN package, neither of which
+pip can provide. `rpy2` is pip-installable but does not ship R either: it links against an R
+you must already have, which is also why this project uses a subprocess rather than `rpy2`
+(see `analyzers/checks/c3_serial_copula.py`). An empty `[r]` extra used to sit in
+`pyproject.toml` and was removed, because a name you can type at pip that installs nothing
+reads as an install route.
+
+To enable C3, install R and the `copula` package yourself:
+
+```bash
+# Debian/Ubuntu: sudo apt install r-base    Fedora: sudo dnf install R    macOS: brew install r
+Rscript -e 'install.packages("copula", repos="https://cloud.r-project.org")'
+Rscript -e 'packageVersion("copula")'       # confirm it resolves
+```
+
+`randtests`, `XICOR` and `energy` are not used by the pipeline, but `make test-r` DOES need
+them: one `r`-marked test checks the committed fixture's recorded versions against the local
+R, and it asks for all four. Install them too if you intend to run that gate:
+
+```bash
+Rscript -e 'install.packages(c("randtests","XICOR","energy"), repos="https://cloud.r-project.org")'
+```
+
+They are otherwise needed only to regenerate the fixtures with
+`jobs/rscripts/reference_values.R`, which the test suite never runs.
+
+Tests that need R carry the `r` marker and skip without it. `make test-r` runs them;
+`make test` excludes them, so the default gate stays green on a machine with no R. A
+container image would remove this step entirely and is recorded as a later option in
+`spec/quebraplan.md`, not as something this project ships today.
 
 Running a job
 

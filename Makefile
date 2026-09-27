@@ -59,8 +59,9 @@ test: require-selector
 test-all:
 	pytest -m "not real"
 
-## Local only today; the CI job is deferred. Requires Rscript and copula. `randtests` is only used by
-## jobs/rscripts/reference_values.R, which the suite never runs.
+## Local only today; the CI job is deferred. Needs Rscript plus copula, and also XICOR,
+## energy and randtests: one test checks the committed fixture's recorded versions against
+## the local R and asks for all four.
 test-r:
 	pytest -m "r"
 

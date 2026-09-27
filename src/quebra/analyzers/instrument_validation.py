@@ -567,11 +567,14 @@ def build_instrument_validation(
         TierRow(
             "C3 serial copula",
             4,
-            TIER_ABSENT,
-            "circular as stated: 'it IS the R implementation' compares R to itself. The "
-            "comparison that would settle it - our bridge against "
-            "jobs/reference/r_reference_values.csv serial_indep_global_statistic, seed 707 - "
-            "needs R at test time, which the suite refuses to require",
+            TIER_PARTIAL,
+            "BRIDGE FIDELITY, not cross-implementation agreement. "
+            "tests/test_r_cross_implementation.py reproduces "
+            "jobs/reference/r_reference_values.csv on BOTH the statistic and the p-value at "
+            "seed 707, N 1000, lag.max 5, which pins argument marshalling and the CSV round "
+            "trip. It is not tier-4 evidence: the fixture and the bridge both call "
+            "copula::serialIndepTest, so this is R against itself. An independent "
+            "implementation of the statistic is still absent",
         ),
         TierRow(
             "C5 rank autocorr",

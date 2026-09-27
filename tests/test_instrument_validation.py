@@ -235,6 +235,12 @@ def test_no_tier_verdict_claims_evidence_that_does_not_exist():
     independent implementation behind them (C2's reference is five hand-written lines in
     our own test file; C3's was 'it IS the R implementation', which compares R to itself),
     and tier-3 cells asserting a direction that the measurement contradicts.
+
+    C3's tier-4 cell is now `pass` on real evidence: an `r`-marked test puts the bridge
+    against a committed fixture on both the statistic and the p-value. The assertion below
+    moved with it, and what it guards moved too. It no longer asks whether the cell is
+    `absent`; it asks that a `pass` there NAME the artifact it rests on, so the circular
+    claim this audit removed cannot return under the same verdict.
     """
     data = _build()
     c2_t4 = data.tier_verdict("C2 Anderson-Darling", 4)
@@ -242,7 +248,20 @@ def test_no_tier_verdict_claims_evidence_that_does_not_exist():
         "a reimplementation in the same language by the same author is tier-1 evidence"
     )
     c3_t4 = data.tier_verdict("C3 serial copula", 4)
-    assert c3_t4 is not None and c3_t4.verdict == TIER_ABSENT
+    assert c3_t4 is not None
+    assert c3_t4.verdict != TIER_PASS, (
+        "tier 4 is agreement with an INDEPENDENT implementation of the same statistic. The "
+        "fixture and the bridge both call copula::serialIndepTest, so no evidence here can "
+        "be tier-4 pass; bridge fidelity is a weaker claim and belongs at partial"
+    )
+    if c3_t4.verdict != TIER_ABSENT:
+        assert "r_reference_values.csv" in c3_t4.detail, (
+            "a non-absent cell must name the artifact it rests on; the claim this audit "
+            "removed was 'it IS the R implementation', which named nothing"
+        )
+        assert "test_r_cross_implementation.py" in c3_t4.detail, (
+            "and it must name the test, so the claim cannot outlive its evidence"
+        )
 
     # No tier-3 row may assert a DIRECTION: measured, it flips between Weibull and
     # exponential gaps, so any single direction is wrong for one of them.

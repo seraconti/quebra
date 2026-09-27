@@ -275,7 +275,7 @@ distributions before the signal is used to validate anything else.
 | # | Change | Why | Evidence | Standard? | Venue check |
 |---|---|---|---|---|---|
 | 6.1 | Port `randtests::bartels.rank.test` to NumPy/SciPy, validated against R output as oracle | It is a rank-difference statistic with a known asymptotic normal approximation. This one genuinely is short. | `[INFERRED]` | `[PRACTICE]` | Reduces install friction |
-| 6.2 | **Keep** `copula::serialIndepTest` behind `pip install quebra[r]` plus an `Rscript` subprocess bridge | It is a Cramér-von Mises functional of the empirical copula process with a multiplier-bootstrap null. It is also your Check 2 validity gate. Reimplementing your own load-bearing validity test and validating it against the implementation you just deleted is a scientific risk, not an engineering win. | `[INFERRED]`; the most epistemically careful report reached the same conclusion | `[PRACTICE]`: core/extras splits via `[project.optional-dependencies]` are standard, and `rpy2` itself ships this pattern | JOSS: extras splits are accepted; `rpy2` draws reviewer friction |
+| 6.2 | **Keep** `copula::serialIndepTest` behind an `Rscript` subprocess bridge. RESHAPED: the `pip install quebra[r]` half of this row is impossible and the extra was deleted, see item 11 of section 7 and `specrboundary07.md` R7.0.4 | It is a Cramér-von Mises functional of the empirical copula process with a multiplier-bootstrap null. It is also your Check 2 validity gate. Reimplementing your own load-bearing validity test and validating it against the implementation you just deleted is a scientific risk, not an engineering win. | `[INFERRED]`; the most epistemically careful report reached the same conclusion | `[PRACTICE]`: core/extras splits via `[project.optional-dependencies]` are standard, and `rpy2` itself ships this pattern | JOSS: extras splits are accepted; `rpy2` draws reviewer friction |
 | 6.3 | Import the package successfully without R; check for R at **call** time and raise an actionable error naming the extra and the `Rscript` PATH requirement | Graceful degradation at call time, never at import time. | `[DOCUMENTED]` | Universal | JOSS: core install must succeed cleanly |
 | 6.4 | R-dependent tests `pytest.importorskip`/skip when R is absent, and **required** in a dedicated `r-lib/actions/setup-r` CI job | They must not silently pass with mocked values. Budget 3-5 minutes per run; gate the job so the core matrix stays fast. | `[DOCUMENTED]` r-lib/actions | `[PRACTICE]` | JOSS: reviewer runs the core matrix |
 | 6.5 | Say in the paper that the copula test is delegated to the reference implementation | This reads as more careful than a home rolled null distribution, and it strengthens the DAG-runner argument: the R step really is a process boundary, so a file-based engine costs nothing *there*, which makes the rest of the in-memory argument credible. | `[INFERRED]` | n/a | TQE/JOSS: honest scoping |
@@ -667,6 +667,84 @@ legitimately sit.
    Deciding it needs the survey read, a stated rule for which clock and which rows license, and
    a stated mapping for `underpowered` and `not computed`. It is the ADR Phase 9.1 will have to
    write either way, so it is named here rather than left implicit in a passing test.
+
+---
+
+11. **A container image is the only honest way to make the R dependency installable, and
+   nothing installs it today.** Raised while settling SPEC 0007 R7.5. C3 needs an R
+   interpreter plus the CRAN `copula` package, and neither is a Python distribution, so
+   `pip install quebra[r]` cannot ever work: the empty extra that implied otherwise was
+   deleted. `rpy2` does not help - it is pip-installable but links against an R you must
+   already have, and `analyzers/checks/c3_serial_copula.py` refuses it by name because that
+   turns a missing R into an import-time failure of the whole package. So today the only
+   install route is prose in the README telling a reader to run `apt`/`dnf`/`brew` and then
+   `install.packages("copula")`, and the only thing verifying that route is a human reading it.
+   An image would make the R side reproducible, pin the `copula` version the p-values depend
+   on (which `CheckLedger.r_version` now records but nobody can currently reproduce), and give
+   the `r` tier somewhere to run other than one developer laptop.
+   **What this already collides with.** Section 6 rates containerisation "Adopt-lite, later"
+   and section 4 scopes it as one optional image *if* the methods paper routes through an
+   artifact-badging venue. It also notes ACM/ICSE warn that an install over roughly 30 minutes
+   is unlikely to be accepted, and building `copula` from source is the part at risk there.
+   **What would settle it:** one timed build of an image carrying R plus `copula`, which is the
+   same measurement the deferred `r-lib/actions/setup-r` CI job in `specrboundary07.md` needs.
+   Do them together or not at all. Not scheduled, and not part of Phase 6.
+
+## 7B. Remaining statistical tools and checks
+
+What is implemented, what is calibrated, and what is neither. Calibration here means a bench
+cell: a measured size, and where it matters a measured power, against a generating arm with
+known truth. A check with no bench cell produces numbers whose LEVEL is unmeasured, so neither
+its rejections nor its non-rejections are evidence at alpha.
+
+Which instruments exist is `AGENTS.md`'s "Implemented today / Not implemented" list and
+`battery.ROW_KEYS`; neither is restated here, because a second copy is what goes stale. What
+this section adds is the CALIBRATION status, which is decidable from the bench tables: the
+five checks in `battery.ROW_KEYS` have size and where relevant power rows, and C3 has none.
+`tests/test_check_ledger.py::test_every_surveyed_check_is_benched_or_declared_uncalibrated`
+derives that split rather than asserting it, so it cannot drift.
+
+### C3 is the one shipped check with no calibration, and it now draws numbers
+
+Measured 2026-09-27, the full survey with `INCLUDE_C3 = True` and `C3_N_NULL_SIM = 200`, 34
+datasets, 30 minutes of wall clock: **248 of 680 C3 cells produced a p-value, and 60 of those
+read `fail`** (46 in-spec, 14 calendar). Before R was installed on this machine every one of
+those cells read `not computed`. `battery.ROW_KEYS` has nine entries and none is C3; both bench
+tables carry zero C3 rows.
+
+A guard now exists so this cannot be lost: `check_ledger._verdict` names the uncalibrated state
+in the note of every such rejection, and `tests/test_check_ledger.py` derives the uncalibrated
+set from `size_table.csv` and fails if it stops matching. Benching C3 is what removes them.
+
+**What is NOT settled, and needs thought before anyone builds it.**
+
+1. **Which calibration C3 should even have.** The other five are scored on a permutation or an
+   asymptotic null that the bench can resample. C3's null is simulated ON THE R SIDE from
+   `(n, lag.max, N, seed)` by `copula::serialIndepTestSim`, so it shares nothing with the
+   `PermutationSet` that pairs every other row's Monte Carlo noise. A bench cell for C3 is
+   therefore not the same object as a bench cell for C1, and `report.py`'s generated prose
+   asserting that every row of a replicate reads the same permutation set becomes false the
+   moment a C3 row exists.
+2. **Whether the R bridge changes what a calibration means.** The p-value depends on the
+   installed `copula` version and on `N`. `CheckLedger` now records both, but a bench cell
+   measured under one `copula` and read under another is an open question nobody has posed.
+3. **Cost, and the multi-process hole.** C3 returns `None` for `m > 1`, which is most of the
+   bench's censoring grid at n >= 50, so a C3 bench can only be calibrated at censoring 0 for
+   the larger n. That removes cells from inside the promotion report's own envelope and changes
+   the Bonferroni threshold for the C3 row relative to every other row.
+4. **A blocking defect, before any of the above.** `jobs/bench/runner.py:207-213` counts a
+   `None` p-value into `seen` but never into `hits`, and C3 is the only check that can return
+   `None`. A registered C3 would report a rejection rate of 0 on every multi-segment cell and
+   `calibration_summary.py` would publish it as MISCALIBRATED on cells where it never ran. Two
+   more in the same file: `runner.py:169`, `:181` and `:200` catch only `(ValueError, KeyError)`
+   while the bridge raises `RuntimeError` and `TimeoutExpired`, so one bridge failure aborts a
+   multi-hour run; and `report.py:665-673` asserts the shared-permutation-set pairing that item
+   1 makes false.
+
+**Scope.** This is one pass, not four: the unimplemented estimators and C3's calibration share a
+question (what is the oracle, and what does the bench cell mean) and the same blocking defect
+list. It is not Phase 6, which stops at making the R boundary honest about what it does and does
+not know.
 
 ---
 
