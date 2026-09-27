@@ -143,9 +143,10 @@ def test_a_bare_sweep_excludes_the_composites_as_the_docs_promise():
     """The regression this guards is measured, not hypothetical.
 
     Replacing the `jobs/active/*.py` glob with "every discovered job" silently widens
-    `run --all` from 9 jobs to 12, pulling in the three composites that `AGENTS.md` and
-    `docs/WRITING_A_JOB.md` both promise are not swept - one of which is the ~6.5 h
-    independence survey. Someone typing `run --all` starts it without asking for it.
+    `run --all` from 9 jobs to 13, pulling in the four jobs that `AGENTS.md` and
+    `docs/WRITING_A_JOB.md` both promise are not swept: the three composites plus
+    `jobs/active/km_with_checks_6d2s.py`. One is the independence survey, which someone
+    typing `run --all` would start without asking for it.
     """
     all_jobs = discover(REPO_JOBS)
     swept_ids = {j.job_id for j in swept(REPO_JOBS)}

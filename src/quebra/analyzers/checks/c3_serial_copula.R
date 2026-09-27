@@ -6,11 +6,9 @@
 # Reads a one-column CSV of durations, runs the empirical-copula serial independence test,
 # and writes a one-row CSV with `statistic` and `p_value`.
 #
-# Exercised under Rscript 4.5.3.
-# Historic: R was absent on the machine this was written on, so this script had never
-# run. It is written to exit non-zero on any surprise rather than to write a plausible
-# number, because the Python side turns a non-zero exit into a traceback and a written
-# file into a reported p-value.
+# It exits non-zero on any surprise rather than writing a plausible number, because the
+# Python side turns a non-zero exit into a traceback and a written file into a reported
+# p-value.
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) != 5L) {
@@ -40,8 +38,7 @@ if (length(x) <= lag_max + 1L) {
 }
 
 # Pinned so a rerun with the same seed reproduces the same simulated null. The null
-# depends only on (n, lag.max, seed), which is what makes caching it across bench cells
-# sound; the cache itself lives on the Python side.
+# depends only on (n, lag.max, seed).
 set.seed(seed)
 
 sim <- copula::serialIndepTestSim(

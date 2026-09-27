@@ -3716,7 +3716,7 @@ scope; nothing to review there. CITATION.cff / quebra.toml / this ledger skipped
 - [ ] AGENTS.md
 - [ ] README.md
 - [ ] CONTRIBUTING.md
-- [ ] src/quebra/analyzers/checks/battery.py
+REVIEWED battery.py
 - [ ] docs/PANEL_CONTRACT.md
 - [ ] docs/FIGURE_STANDARD.md
 - [ ] docs/TIME_SEMANTICS.md
@@ -4655,3 +4655,378 @@ NOT findings, verified:
 - `*Data` suffix is NOT the convention: 3 of 41 top-level classes in analyzers/ carry it, and only 2 of 11 StaleArtifactGuard artifacts repo-wide (both `*PanelData`). CheckOutcome sits with CheckLedger, SignalBand, ReliabilityBand, DistinguishBand, SizeVsN, ValidationCurve, ReadDependence. OutcomeGrid mirrors InstrumentGrid.
 - Plot: `plots/check_outcome_plot.py` / `CheckOutcomePlot(BasePlot)` / `_draw_grid(ax, grid, ...)` all match independence_survey_plot.py.
 - Pre-existing "dispatch" at core/job.py:156, schemas/ramsey_series.py:8, tests/test_load_dataset_contract.py:10,206,252 is schema selection. Correct usage, leave alone.
+
+---
+
+SCOPE: CHECKPOINT 7.1 - tracked working-tree diff vs HEAD (12 files). Excludes untracked
+spec/specrboundary07.md and spec/specpresentation09.md.
+COMMIT: 278a2fd
+(Appended, not overwritten: prior findings above are committed work.)
+
+## Manifest
+- [ ] docs/iid_checks/C3_serial_copula.md (+/-52)
+- [ ] docs/iid_checks/LIMITATIONS.md (+/-9)
+- [ ] jobs/bench/report.py (+/-25)
+- [ ] jobs/bench/results/promotion_report.md (+/-2)
+- [ ] jobs/composite/independence_survey.py (+/-21)
+- [ ] spec/quebraplan.md (+/-11)
+REVIEWED battery.py
+REVIEWED c3_serial_copula.R
+- [ ] src/quebra/analyzers/checks/c3_serial_copula.py (+/-44)
+- [ ] src/quebra/analyzers/independence_survey.py (+/-17)
+- [ ] src/quebra/plots/independence_survey_plot.py (+/-24)
+- [ ] tests/test_checks_c3_bridge.py (+/-17)
+- [ ] CROSS-CUT: tenth-site hunt, number reproduction, em dashes
+
+## Reviewed
+
+## Findings
+
+### src/quebra/analyzers/checks/battery.py
+No finding. Verified: `len(ROW_KEYS) == 9`, no C3 entry; `grep -ic c3` on
+jobs/bench/results/{size,power}_table.csv gives 0 and 0; `jobs/bench/arms.py` has no C3
+mention; `check_ledger.py:175,199,223,463` carries `include_c3` and invokes the bridge
+directly. The retired "(it does not here)" is gone. No em dash, no spec id.
+
+### src/quebra/analyzers/checks/c3_serial_copula.R
+No finding. "Historic: R was absent..." deleted; the surviving sentence states the
+contract (non-zero exit rather than a plausible number) in the present tense. Site 5 of
+nine, corrected.
+
+### src/quebra/analyzers/independence_survey.py
+No finding. Verified by import: `len(ROW_KEYS)==9`, `len(SURVEY_KEYS)==10`, `C3_KEY` last.
+New prose is count-free ("One grid per entry of `SURVEY_KEYS`"), the CvM-appears-twice
+addition is correct (cvm asymptotic + cvm permutation both in ROW_KEYS), and the
+`build_independence_survey` comment is now count-free. "132 of 340 cells per grid" is
+per-grid and unaffected by the instrument count (34 datasets x 10 rungs = 340). Retired
+"the survey turns it off to stay affordable" is gone and matches
+`jobs/composite/independence_survey.py` INCLUDE_C3=True.
+
+### src/quebra/plots/independence_survey_plot.py
+IMPORTANT | src/quebra/plots/independence_survey_plot.py:203 | TENTH SITE of the same
+count-drift class the diff fixed three lines above: "each of the fourteen panels" is
+7 instruments x 2 clocks. `SURVEY_KEYS` has 10 entries and `build_matplotlib` lays out
+`len(keys) x len(clocks)` = 20 panels. The diff de-counted the class docstring's first line
+and left the stale count in the same docstring. | "each of the twenty panels", or de-count
+it as the first line was.
+IMPORTANT | src/quebra/plots/independence_survey_plot.py:244 | Same stale count, same class:
+"fourteen copies of a thirty-four-label axis". Twenty today. | De-count or say twenty.
+
+### jobs/bench/report.py + jobs/bench/results/promotion_report.md
+Verified: regenerating `build(runtime_note)` into a scratchpad file and diffing against the
+tracked `promotion_report.md` gives IDENTICAL (no write to the repo). The R-absent branch
+was rendered by monkeypatching `c3.rscript_path` and also reads true. No absolute path
+survives. `ruff check jobs/bench/report.py` exits 0; `ruff format --check` on all seven
+changed Python files reports "already formatted". No test regenerates and compares the
+report, so a no-R CI machine will not fail a gate on this.
+
+IMPORTANT | jobs/bench/results/promotion_report.md:5 | The abs-path correction removed the
+path but the TRACKED generated artifact still encodes a machine fact: "`Rscript` was on
+PATH when this report was generated". Regenerating on a machine without R rewrites this
+tracked file, so `python jobs/bench/report.py` is no longer reproducible from the two
+committed CSVs the report's own header line claims it is built from. | State it
+unconditionally in both directions ("where R is present the bridge returns an uncalibrated
+p-value; where absent it degrades to `not computed`") and drop the probe, or move the probe
+result into an untracked runtime note.
+MINOR | jobs/bench/report.py:544-547 | R-present branch reads "the bridge executes and
+returns a real p-value" inside a paragraph about THIS bench, which never calls C3. The next
+clause rescues it, but the first-read subject is ambiguous. | "...the bridge executes for
+callers that request C3".
+
+### tests/test_checks_c3_bridge.py
+Behaviour: UNCHANGED. Read the full file: no assertion added, removed or altered; the skip
+condition at :66 is still `rscript_path() is not None`; no marker or parametrize change.
+Only the module docstring, one test docstring and the skip message moved.
+
+IMPORTANT | tests/test_checks_c3_bridge.py:6-8 | The rewrite replaced one false environment
+claim with a false claim about the file: "Every test here drives that behaviour directly,
+monkeypatching the probe ... so the file asserts the same thing on a machine with R and on
+one without". `test_r_is_genuinely_absent_here` (:60-72) does NOT monkeypatch and is exactly
+the test whose outcome depends on the machine - it skips where R is present and asserts
+where it is absent. | "All but one test monkeypatches the probe; `test_r_is_genuinely_absent_here`
+reads the real machine and skips where R is present."
+MINOR | tests/test_checks_c3_bridge.py:60 | The function NAME still asserts the retired
+claim: `test_r_is_genuinely_absent_here`. Its own docstring was corrected to "Records
+whether `Rscript` is absent"; the node id a reader sees in `-v` output was not. | Rename to
+`test_records_whether_rscript_is_present`.
+
+### jobs/composite/independence_survey.py
+IMPORTANT | jobs/composite/independence_survey.py:104-109 | "Over this survey's 415
+populated cells that BRACKETS the run between roughly a quarter of an hour ... and roughly
+six hours". The arithmetic checks (415 x 2.1 s = 14.5 min, 415 x 54.6 s = 6.3 h) but it is
+not a bracket: the endpoints are the smallest and largest MEASURED n (50 and 355), not the
+survey's smallest and largest CELL, and nothing here establishes that no cell exceeds
+n = 355. The one datum in the repo about a larger n was deleted from
+`c3_serial_copula.py` in this same diff. | Say "brackets the run IF every cell falls between
+n = 50 and n = 355, which has not been checked", or drop "brackets" for "suggests".
+MINOR | jobs/composite/independence_survey.py:104-106 | Quotes 2.1 / 7.1 / 54.6 s as "the
+measured cost" while `c3_serial_copula.py:212-216` says of those exact figures that "a third
+significant figure here would be noise quoted as measurement" and gives a second run at
+1.7 / 6.2 / 57.2. Two tracked sites disagree about how precisely the same measurement may be
+quoted. | Quote the rounded form here too, or name it as one of two runs.
+
+### docs/iid_checks/C3_serial_copula.md
+Statistics and p-values REPRODUCED, all seven quoted values, exactly (see cross-cut below).
+"Historic note" block removed; the `four-check` skip-message reference removed; the
+"it reads the interpreter off the machine it is generated on" claim matches report.py.
+
+### docs/iid_checks/LIMITATIONS.md
+IMPORTANT | docs/iid_checks/LIMITATIONS.md:44-47 | The rewritten sentence ends "so large
+windows can exhaust the timeout and report `not computed` for that reason alone", but the
+timeout is 900 s (`c3_serial_copula.py:212`) and the largest measured cost is now 54.6-57.2 s
+at n = 355. `c3_serial_copula.py:228` says the opposite in the same tree: "900 s covers every
+n the T2* ladder has produced so far with margin". Two tracked sites now contradict each
+other, and the one datum that supported "can exhaust" (n = 682 unfinished at 580 s) was
+deleted in this same diff. | Either restore the n = 682 observation as the open question
+CLAUDE.md sec 4 prescribes, or drop "can exhaust the timeout" for "costs minutes rather than
+seconds".
+
+### spec/quebraplan.md
+No finding. Section 7 item 2 amended in place with the dated search, its result, and the
+"a search is a negative result with a date on it" caveat. `statsmodels` claim not
+independently checked (it is a negative search result, correctly labelled as one).
+
+## CROSS-CUT
+
+VERIFIED (CRITICAL check, passed) | All quoted C3 numbers reproduce. Ran the stated recipe
+(one `numpy.random.default_rng(0)` drawing `exponential(1.0)` at n=50, 150, 355 in that
+order) through `c3._invoke_rscript(x, 5, seed, ., 1000)` under R 4.5.3 / copula 1.1.7:
+  seed=1 n=50  stat 0.00579077616284928 p 0.957542457542458  -> quoted 0.0057908 / 0.9575 OK
+  seed=1 n=150 stat 0.00713259001510053 p 0.903596403596404  -> quoted 0.0071326 / 0.9036 OK
+  seed=1 n=355 stat 0.00763312792149939 p 0.865634365634366  -> quoted 0.0076331 / 0.8656 OK
+  seed=0 n=50  p 0.947552447552448                            -> quoted 0.9476 OK
+  seed=0 n=150 p 0.911588411588412                            -> quoted 0.9116 OK
+Every digit quoted at every site matches. No CRITICAL finding on the numbers.
+
+IMPORTANT | src/quebra/analyzers/calibration_summary.py:252 | ANOTHER site of the corrected
+class, outside the diff. "Drawing all seven put C1 and C2 on the page twice" - the power
+table carries NINE distinct check/calibration/variant rows (measured from
+`jobs/bench/results/power_table.csv`), and CvM appears twice as well. The diff corrected
+this sentence's exact twin in `independence_survey.py` ("C1, C2 and CvM each appear twice")
+and left this one. | "Drawing all nine put C1, C2 and CvM on the page twice".
+MINOR | src/quebra/analyzers/checks/c3_serial_copula.py:210-213, docs/iid_checks/C3_serial_copula.md:14-16,
+docs/iid_checks/LIMITATIONS.md:45, jobs/composite/independence_survey.py:104 | The module
+docstring says of 2.1 / 7.1 / 54.6 that "a third significant figure here would be noise
+quoted as measurement", then three other tracked sites quote exactly those three-significant-
+figure values as "the measured cost", with no spread. A third run during this review measured
+61.2 s at n = 355, outside the docstring's own "55 to 57 s" band. | Quote the rounded form at
+all four sites, or state two runs at all four.
+MINOR | src/quebra/analyzers/checks/c3_serial_copula.py:210-212 | "TWO RUNS, AND THE SPREAD IS
+WHY THESE ARE ROUNDED" but the rounding NARROWS: observed 6.2-7.1 is quoted "6 to 7" and
+observed 54.6-57.2 is quoted "55 to 57". Three of four endpoints are pulled inside the
+observed hull, which is the wrong direction for a rounding justified by spread. | "6 to 8 s"
+and "54 to 58 s", or drop the headline and keep the two raw triples.
+MINOR | src/quebra/analyzers/checks/c3_serial_copula.py:228 | "900 s covers every n the T2*
+ladder has produced so far with margin" now rests on no measurement above n = 355, because
+the only larger-n datum was deleted from this docstring. | Bound the claim to the measured
+range, or restore n = 682 as an open question.
+
+CHECKED, NOT FINDINGS:
+- Regression greps clean outside the spec and this ledger: "is absent on this machine",
+  "four-check", "n^2.8" appear in no source, doc or test.
+- `check_ledger.py:477` uses past tense ("while R was absent ... With R installed the call
+  executes for real"). True, not a site.
+- README.md:48,120 phrase R conditionally. Not a site.
+- `jobs/bench/report.py:19,21` "all seven rows" / "factor of seven" are past-tense records of
+  a measurement made before CvM was promoted, and CLAUDE.md sec 4 quotes the first verbatim.
+- `plots/instrument_validation_plot.py:162` "four of seven rows" is the tier table, a
+  different subject.
+- No em dash in any added line. No SPEC/phase identifier in any added source line.
+- `ruff check` exit 0 on jobs/bench/report.py; `ruff format --check` clean on all 7 changed
+  Python files. `pytest tests/test_checks_c3_bridge.py` = 5 passed, 1 skipped.
+- `test_there_is_exactly_one_figure_per_surveyed_instrument` exists at
+  tests/test_independence_survey.py:253; the plot comment's citation is live.
+- Regenerated promotion_report.md into the scratchpad: byte-identical to the tracked file.
+
+## ALL MANIFEST ITEMS COMPLETE
+
+---
+
+SCOPE: FINAL SWEEP - whole working-tree diff vs 278a2fd (25 tracked files) PLUS untracked
+spec/specrboundary07.md and spec/specpresentation09.md. Checkpoints 7.0-7.3 of SPEC 0007.
+COMMIT: 278a2fd
+(Appended, not overwritten.)
+
+## Manifest
+- [ ] CROSS-CUT P1: incomplete fixes (repo-wide grep of retired phrasings/numbers, count drift)
+- [ ] CROSS-CUT P2: internal contradictions (spec vs docs vs docstrings vs promotion_report)
+- [ ] CROSS-CUT P3: uncheckable claims (numbers without recipe/machine; absolutes)
+- [ ] CROSS-CUT P4: writing rules (em dash, spec id in source, debugging history)
+- [ ] Makefile
+- [ ] conftest.py
+- [ ] docs/iid_checks/C3_serial_copula.md
+- [ ] docs/iid_checks/LIMITATIONS.md
+- [ ] jobs/active/km_with_checks_6d2s.py
+- [ ] jobs/bench/report.py
+- [ ] jobs/bench/results/promotion_report.md
+- [ ] jobs/composite/independence_survey.py
+- [ ] pyproject.toml
+- [ ] spec/quebraplan.md
+- [ ] src/quebra/analyzers/calibration_summary.py
+- [ ] src/quebra/analyzers/check_ledger.py
+- [ ] src/quebra/analyzers/checks/__init__.py
+- [ ] src/quebra/analyzers/checks/battery.py
+- [ ] src/quebra/analyzers/checks/c3_serial_copula.R
+- [ ] src/quebra/analyzers/checks/c3_serial_copula.py
+- [ ] src/quebra/analyzers/independence_survey.py
+- [ ] src/quebra/core/_artifact_guard.py
+- [ ] src/quebra/core/discovery.py
+- [ ] src/quebra/plots/independence_survey_plot.py
+- [ ] tests/test_check_ledger.py
+- [ ] tests/test_checks_c3_bridge.py
+- [ ] tests/test_job_discovery.py
+- [ ] tests/test_marker_discipline.py
+- [ ] spec/specrboundary07.md (untracked, 524 lines)
+- [ ] spec/specpresentation09.md (untracked, 490 lines)
+
+## Reviewed
+
+## Findings
+
+---
+
+SCOPE: COMMIT GROUP B - CHECKPOINTS 7.2 + 7.3 of SPEC 0007. Paths: conftest.py, Makefile,
+pyproject.toml, .gitignore, src/quebra/analyzers/check_ledger.py,
+src/quebra/analyzers/checks/c3_serial_copula.py, src/quebra/core/_artifact_guard.py,
+tests/test_check_ledger.py, tests/test_marker_discipline.py, docs/iid_checks/LIMITATIONS.md
+COMMIT: 278a2fd (working tree, uncommitted)
+(Appended, not overwritten. Prior 7.1 pass above covered the PROSE-only half of
+c3_serial_copula.py and LIMITATIONS.md; the 7.2/7.3 code is new and reviewed fresh here.)
+
+## Manifest
+- [ ] src/quebra/analyzers/checks/c3_serial_copula.py (+/-119)
+- [ ] src/quebra/analyzers/check_ledger.py (+/-80)
+- [ ] conftest.py (+/-56)
+- [ ] tests/test_marker_discipline.py (+/-174)
+- [ ] tests/test_check_ledger.py (+/-303)
+- [ ] src/quebra/core/_artifact_guard.py (+/-2)
+- [ ] Makefile (+/-3)
+- [ ] pyproject.toml (+/-2)
+- [ ] .gitignore (+/-6)
+- [ ] docs/iid_checks/LIMITATIONS.md (+/-32)
+- [ ] EXPERIMENTS: exception-escape matrix, state-collision matrix, mutation runs, cost
+
+## Reviewed
+
+## Findings
+
+## Manifest ADDENDUM (scope given to this pass includes 3 paths the manifest above omitted)
+- [ ] AGENTS.md (+21)
+- [ ] tests/test_checks_c3_bridge.py (+42/-)
+- [ ] spec/specrboundary07.md (untracked, 555 lines; R7.2, R7.3, Mutation ledger)
+
+## Reviewed (Group B)
+- [x] src/quebra/analyzers/checks/c3_serial_copula.py
+- [x] src/quebra/analyzers/check_ledger.py
+- [x] src/quebra/core/_artifact_guard.py
+- [x] AGENTS.md
+- [x] EXPERIMENTS: exception-escape matrix (DONE, all clean), sentinel leak (DONE, leaks)
+
+## Findings (Group B)
+IMPORTANT | src/quebra/analyzers/checks/c3_serial_copula.py:109-114 | the empty-probe sentinel
+  added for the PROVENANCE consumer leaks into the FUNCTIONAL one: `_invoke_rscript:204`
+  does `env["R_LIBS"] = os.pathsep.join(r_library_paths())`, so the branch hands R the
+  literal string `probe returned nothing (exit 0)` as a library search path. Measured:
+  R_LIBS handed to the bridge == 'probe returned nothing (exit 0)'. Fix: move the sentinel
+  into `check_ledger._r_provenance` (which already owns the `probe failed (...)` sentinel)
+  and leave `r_library_paths()` returning `()`.
+MINOR | c3_serial_copula.py:113 and :158 | both empty-probe sentinels interpolate
+  `{completed.returncode}` in a branch only reachable when returncode == 0 (non-zero exits
+  earlier in both functions), so the code always emits "(exit 0)". Dead interpolation that
+  invites a reader to think it varies. Fix: drop the parenthetical.
+IMPORTANT | c3_serial_copula.py:262-266 | "No interval is quoted, and that is deliberate."
+  is contradicted two sentences later by "have ranged from about 50 s to about 75 s across
+  six runs". Also violates the AGENTS.md rule this same commit adds. Fix: delete the range
+  sentence or delete the "no interval is quoted" claim.
+IMPORTANT | AGENTS.md:419-423 | the new wall-clock rule's cited evidence is false as shipped:
+  "the fourth attempt stopped quoting an interval at all" - the fourth attempt
+  (c3_serial_copula.run, same commit) quotes 50-75 s, 130.2 s and 580 s. Fix: correct the
+  docstring, or restate the evidence.
+MINOR | c3_serial_copula.py:280-286 | cites `output/check_ledger_q1_070423_.../` for
+  statistic 1.511 / p 0.0005 / n 682. Numbers VERIFY against the pickle's bytes (1.51123,
+  0.0004995, 682 present), but output/ is gitignored AND the pickle names module
+  `analyzers`, not `quebra.analyzers`, so the shipping code cannot unpickle it. A permanent
+  docstring citing an artifact no reader can open. Fix: state the numbers with their job
+  and date, not the ephemeral directory.
+MINOR | c3_serial_copula.py:287 | "It still fails fast..." is glued to the end of the
+  inserted paragraph with no blank line, and the line runs ~104 chars. Fix: reflow.
+MINOR | check_ledger.py:143-145 | `c3_n_null_sim` is the one of the four new fields with no
+  `not asked` state: it records `inputs.c3_n_null_sim` (module default 1000) even when
+  `include_c3=False` and no C3 row exists. Its three siblings got a sentinel. Documented in
+  the comment, so not a silent fallback, but the twin site is untreated.
+MINOR | check_ledger.py:346 | the `r_version()` except clause omits `RuntimeError` while its
+  twin at :338 includes it. Not reachable today (r_version returns a string on non-zero
+  exit) but the asymmetry is unexplained at the call site.
+VERIFIED CLEAN | `_r_provenance` exception escape: stubs for hang (120.1 s, TimeoutExpired),
+  non-zero exit, vanished path (FileNotFoundError), non-executable and directory
+  (PermissionError), silent, and undecodable bytes all returned normally. Nothing escaped.
+VERIFIED CLEAN | `_artifact_guard.py` message change is accurate for the new break.
+
+## Reviewed (Group B) - continued
+- [x] conftest.py
+- [x] tests/test_marker_discipline.py
+- [x] tests/test_check_ledger.py
+- [x] tests/test_checks_c3_bridge.py
+- [x] Makefile
+- [x] pyproject.toml
+- [x] .gitignore
+- [x] docs/iid_checks/LIMITATIONS.md
+- [x] spec/specrboundary07.md (R7.2, R7.3, Mutation ledger)
+## Manifest (Group B) - EMPTY, all items reviewed
+
+## Findings (Group B) - continued
+IMPORTANT | src/quebra/core/_artifact_guard.py:1,3,22,27 | the runtime message at :49 was
+  generalised from "predates the builder/renderer split" to "predates a field added to this
+  artifact", but the module and class docstrings still call the mixin's users "panel-data
+  artifacts" / "panel-data dataclasses" and still frame every break as "pre-split".
+  `CheckLedger` (check_ledger.py:120) is neither. One site of the class fixed, four left.
+IMPORTANT | spec/specrboundary07.md:449-452 | the mutation ledger says "Every test these two
+  checkpoints add or change" and "A test with no row here is not evidence", but
+  `test_with_no_rscript_the_r_fields_read_absent_and_every_row_is_still_built` has no row -
+  and it is the test R7.3's own Acceptance clause names. (Also
+  `test_records_whether_rscript_is_absent_here`, renamed with no row.) Measured: an M12
+  collapsing `absent` to `not asked` DOES turn it red, so the test is sound; the ledger's
+  totality claim is not. Fix: add the row, or drop the totality sentence.
+MINOR | src/quebra/analyzers/checks/c3_serial_copula.py:157-160 | the success value is
+  `"R version 4.5.3 (2026-03-11) 1.1.7"` - the copula version is an unlabelled trailing
+  token. Every failure string names itself; the success one does not. Fix: `cat(..., "
+  copula", ...)` in the probe.
+MINOR | tests/test_marker_discipline.py:154-157 | the test asserts
+  `completed.returncode == 0` on a child that runs the WHOLE `-m policy` selection, so any
+  unrelated policy failure turns this one red too. The file-existence assertion already
+  covers the real condition. Measured: with `.git` absent, test_stale_references failing
+  made this test fail with a child-run traceback.
+MINOR | conftest.py:103-110 | the fixture hands back the LIVE stash list, not a copy; and
+  the guard docstring (test_marker_discipline.py:87) says it "sees every item the run
+  collected", slightly stronger than the fixture's own accurate "from under this conftest's
+  tree". Measured: an item collected from outside the rootdir does NOT enter the record
+  (n_record=1 while 2 tests ran).
+MINOR | conftest.py:113-132 | `requires_rscript` ships with no consumer and no test; its
+  first user arrives in R7.4. Nothing catches it breaking until then.
+MINOR | pyproject.toml:110 / Makefile:62 | "needs Rscript and the copula package" is true
+  today, but R7.4(b) adds a meta-row test checking XICOR, energy and randtests versions
+  against the local R, which will make the description false again.
+INFO | budget | 7.2+7.3 add 9 collected tests (2 marker + 6 ledger + 1 bridge) against
+  stated envelopes of +1 (R7.2) and +2..+4 (R7.3). Under the 2x halt, but the banner should
+  state it.
+
+## MUTATIONS MEASURED BY THIS REVIEW (all 11 spec rows + 1 extra), in a scratch mirror
+M1 RED test_a_ledger_that_never_asked... | M2 RED same | M3 RED (OSError escape kills the
+ledger) test_a_version_probe_that_raises... | M4 RED test_an_unusable_r... | M5 RED
+test_the_recorded_n... | M6 RED test_c3_n_null_sim... (+ M5's test) | M7 RED
+test_the_record_is_pre_deselection_not_post (+ tryfirst test) | M8 RED
+test_the_record_survives_a_competing_tryfirst_deselector | M9 RED
+test_every_collected_test_carries_exactly_one_tier_marker (+2) | M10 RED / M11 RED
+test_a_probe_that_answers_nothing... | M12 (extra) RED test_with_no_rscript...
+SPEC MUTATION LEDGER IS HONEST: every row reproduces, caught by the test it names.
+ALSO VERIFIED: the `-p` plugin competitor does NOT beat the rejected modifyitems form
+(recorded=True) while the shipped subdirectory-conftest competitor DOES (recorded=False),
+so AGENTS.md:321-329's second instance and the test comment are both accurate.
+
+## GATES (real tree, read-only)
+ruff check 0 | ruff format --check 0 (164 files) | mypy src/quebra/core 0 | lint-imports 0
+mirror `pytest -m "not slow and not heavy and not r"`: 598 passed 3 skipped (the one extra
+skip vs the stated 599/2 is test_artifact_guard.py:319, which needs output/, excluded from
+the mirror). `pytest --collect-only -q`: 601. No planted files left in tests/ in either tree.
+
+## Group B verdict: DO NOT SHIP (no CRITICAL; 5 IMPORTANT, all text or latent)

@@ -232,7 +232,7 @@ markers = [
   "slow: >30 s",
   "heavy: full simulation grids or large memory",
   "real: requires gitignored data under data/real_private/",
-  "r: requires Rscript and the copula/randtests packages",
+  "r: needs Rscript and the copula package, which is all c3_serial_copula.R calls",
 ]
 ```
 
@@ -619,8 +619,15 @@ legitimately sit.
 
 1. **When the six-month clock starts** - public repo date, or first commit? A pre-submission
    editorial query to JOSS resolves it and determines whether JOSS is a thesis deliverable.
-2. **Does a Python Genest-Rémillard serial independence test already exist?** If so, Phase 6
-   collapses entirely. Nobody checked.
+2. **RESOLVED 2026-09-14. Does a Python Genest-Rémillard serial independence test already
+   exist?** No maintained one was located. Searched: the implementations found are R only,
+   `copula::serialIndepTest` and `copula::multSerialIndepTest`; neither `scipy.stats` nor
+   `statsmodels` provides the test; `statsmodels` is not installed here. **Phase 6 does not
+   collapse**, and SPEC 0007 proceeds on that answer. Two caveats bound this. A search is a
+   negative result with a date on it, not a proof, so it is worth one minute of re-checking
+   before anyone reimplements the statistic. And the answer does not change Phase 6's cost much
+   either way, because the phase turned out to be about provenance and the truth of tracked
+   documents rather than about the statistic: see `spec/specrboundary07.md` R7.0.
 3. **What passes as a "research impact statement"** for a tool with one dataset. The section is
    new; read three to five JOSS papers accepted after January 2026.
 4. **Licence.** GPL-3.0 versus permissive given vendor-adoption goals. One-way door, untouched by

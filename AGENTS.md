@@ -318,6 +318,16 @@ claims to pin, or because both sides of an identity descend from the helper bein
 three shapes were found in this suite. When a test is the evidence for a claim, break the code it
 guards and confirm it goes red.
 
+**Record the mutation and its result in the checkpoint banner.** An unrecorded mutation is
+indistinguishable from one that was not run, and the failure it guards against is silent: a test
+that cannot fail passes forever and reads as evidence. Two instances, both in one phase. A test
+written to catch a fixture being swapped probed the stash behind the fixture instead, so the swap
+left the suite green. A test written to prove a collection hook beats a competing deselector built
+the competitor as a `-p` plugin, which registers before the root conftest and therefore cannot win
+the race, so it passed whichever hook shipped. Both were mutation-verified only after review asked.
+A sentinel added in response to a review finding went in twice with no test at all, and deleting
+either left the whole suite green.
+
 **Test files are indexed by oracle and subject, not by source module.** Two test files sharing
 both an oracle and a subject are one file, at any length: splitting them duplicates the fixture
 and leaves neither able to show which one is the evidence.
@@ -389,6 +399,12 @@ per-requirement envelopes summed to +19 to +34; the phase landed at +99, every e
 2 to 4x, at every checkpoint, while the spec's own "any difference explained rather than absorbed"
 went unenforced. A budget nothing halts on is a budget that is not being kept.
 
+**Never review a tree that is being edited.** Freeze it, run the review once, apply the findings,
+then re-review if you must. A reviewer measuring a moving tree reports gate results that describe
+no state that ever existed, and it will keep finding defects indefinitely because it is reading the
+previous round's fixes. Measured: one review watched the tree change four times underneath it, and
+two of its findings were about tests the previous round had added an hour earlier.
+
 `Not done` and `Known risk` are mandatory and must not read "none" unless that is literally true.
 They are what makes the diff review fast. Do not proceed past a checkpoint on your own
 initiative, even when the next step seems obvious.
@@ -400,6 +416,14 @@ initiative, even when the next step seems obvious.
 These apply to every docstring, comment, spec, ADR and doc page you write.
 
 - **No em dashes anywhere.** Spaced hyphens.
+- **No measured wall-clock number as a claim about what the code costs.** State the order of
+  magnitude and say it is load-dependent. A timing is a property of a machine under a load nobody
+  recorded, so a quoted interval is falsified by the next run: three successive bands in one
+  docstring each were.
+  Two things this does NOT cover. A dated historical measurement that EXPLAINS A CONSTANT is a
+  design record, not a claim about current cost, and it stays: `c3_serial_copula.run()` keeps the
+  130.2 s that set its 900 s timeout, because deleting it would leave the constant unexplained.
+  And analytic values, counts and versions are reproducible; they belong in prose with their recipe.
 - No "surfacing", "brings into view", "data-driven", "delve", "leverage" as a verb, "firstly" as
   an orphaned ordinal, or "excellent" as hyperbole.
 - No overclaiming. "To our knowledge" is used deliberately and sparingly, not as a hedge.

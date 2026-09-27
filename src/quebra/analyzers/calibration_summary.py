@@ -249,7 +249,7 @@ def power_vs_dependence(
 def _representative_rows(power: dict[str, dict[int, list[float]]]) -> list[str]:
     """One row per check: the calibration a reader should actually use.
 
-    Drawing all seven put C1 and C2 on the page twice in visually identical panels - the
+    Drawing all nine put C1, C2 and CvM on the page twice in visually identical panels - the
     asymptotic and permutation power curves differ by less than the Monte Carlo error,
     while their SIZE (the other figure) differs enormously. Showing both here implies a
     distinction this figure cannot resolve.

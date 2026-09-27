@@ -13,11 +13,12 @@ against the calibration bench, so this reuses that verdict and prints the p insi
 as a secondary detail. That is the whole reason the survey is built on `check_ledger.run`
 rather than on raw check results.
 
-**Seven grids, because `battery.ROW_KEYS` has seven entries.** C1 and C2 each appear twice,
-once per calibration, because the asymptotic and permutation routes are different
-instruments that happen to share a statistic - the tier work measured them separately
-and they disagree. C5 appears twice for its two variants. C3 is NOT here: it is out of
-process, has no bench cell, and the survey turns it off to stay affordable.
+**One grid per entry of `SURVEY_KEYS`**, which is `battery.ROW_KEYS` plus C3. C1, C2 and
+CvM each appear twice, once per calibration, because the asymptotic and permutation routes
+are different instruments that happen to share a statistic - the tier work measured them
+separately and they disagree. C5 appears twice for its two variants. C3 is drawn but is
+the one instrument with no bench cell behind it, and the comment on `C3_KEY` below carries
+what that costs a reader.
 
 **Pure compute.** Ledger row tables in, typed artifact out. The job loads the datasets and
 runs the ledgers; nothing here touches disk or matplotlib.
@@ -50,7 +51,7 @@ C3_KEY = ("c3_serial_copula", "r_copula", "")
 # What the survey draws: everything the bench scores, plus C3.
 SURVEY_KEYS = tuple(ROW_KEYS) + (C3_KEY,)
 
-# Display names, in ROW_KEYS order. Kept here rather than in the plot because they name
+# Display names, looked up by key rather than by position. Kept here rather than in the plot because they name
 # the INSTRUMENT, which is a fact about the analysis and not about the axes.
 CHECK_LABELS: dict[tuple[str, str, str], str] = {
     ("c1_lewis_robinson", "asymptotic", ""): "C1 Lewis-Robinson (asymptotic)",
@@ -251,10 +252,10 @@ def build_independence_survey(
 
     # Rows that apply to EVERY check at a threshold. `check_ledger._blank_row` writes
     # `check_id="(all)"` when a rung produced no windows, or when segmentation declined it
-    # - one row standing for all seven instruments. Matching on `check_id` alone therefore
+    # - one row standing for every instrument. Matching on `check_id` alone therefore
     # drops them, and the cell renders as "no row" rather than as `not computed`.
     # Without this the 1 us and 10 us columns are
-    # 34/34 absent in EVERY one of the seven figures - 132 of 340 cells per grid silently
+    # 34/34 absent in EVERY per-instrument figure - 132 of 340 cells per grid silently
     # blank. A blank cell reads as "nothing to say here"; `not computed` says the rung was
     # reached and declined, which is the truth and is a different statement.
     blanket = everything[everything["check_id"] == "(all)"]

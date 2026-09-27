@@ -1,8 +1,8 @@
 """Is the independence assumption safe on this device, or only on the record we looked at?
 
 Runs the check ledger over EVERY 6D2S dataset and reshapes the result into one grid per
-instrument - datasets down, the T2* threshold ladder across, both clocks stacked. Seven
-figures, one per entry of `battery.ROW_KEYS`.
+instrument - datasets down, the T2* threshold ladder across, both clocks stacked. One
+figure per entry of `independence_survey.SURVEY_KEYS`, which is `battery.ROW_KEYS` plus C3.
 
 **Why this exists.** `jobs/composite/check_ledger_q1.py` answers the question for one qubit
 on two dates. A single record rejecting iid could be that record; thirty-four records
@@ -96,18 +96,24 @@ LAG_MAX = 5
 N_PERMUTATIONS = 999
 SEED = 20260814  # NOT equal to check_ledger_q1's, on purpose - see above.
 
-# C3 IS included. It is the only out-of-process check and by far the most expensive, and it
-# is here because a survey that silently omits an instrument answers a different question
-# from the one it appears to answer.
-#
-# The cost is paid down through the R side's own simulation count rather than through a
-# timeout. Projected from the measured curve (3.9 s at n=50, 14.7 s at 150, 130 s at 355)
-# over this survey's 415 populated cells, N = 1000 is about 6.5 hours. A per-cell timeout
-# would buy that back by discarding the LARGEST cells - exactly the ones with the most
-# events and the most to say - so it is the wrong lever. Dropping N to 200 keeps every cell
-# and costs resolution instead: the p-value floor becomes 1/201 = 0.005, still an order
-# below the 0.05 this ledger reads. The value is recorded in each result's `notes`, because
-# a C3 p-value at N = 200 is not the same object as one at N = 1000.
+# C3 IS included. It is the only out-of-process check and by far the most expensive, and
+# it is here because a survey that silently omits an instrument answers a different
+# question from the one it appears to answer.  The cost is paid down through the R
+# side's own simulation count rather than through a timeout. Per call at N = 1000 the
+# cost runs from seconds at n = 50 to about a minute at n = 355;
+# `analyzers/checks/c3_serial_copula.py` carries the measured spread. Over this survey's
+# populated cells (415 at the time this was written, not re-counted since) that SUGGESTS
+# a quarter of an hour if every cell were as small as n = 50 and about six hours if
+# every cell were as large as n = 355. It is not a bracket: those are the smallest and
+# largest n MEASURED, not the smallest and largest cell, and no cell has been checked
+# against them. The actual total has not been measured. A per-cell timeout would buy it
+# back by discarding the LARGEST cells - exactly the ones with the most events and the
+# most to say - so it is the wrong lever. Dropping N to 200 keeps every cell and costs
+# resolution instead: the p-value floor becomes 1/201 = 0.005, still an order below the
+# 0.05 this ledger reads. The value is recorded on the artifact as
+# `CheckLedger.c3_n_null_sim`, not on the row, whose note the verdict reason replaces -
+# and it has to be recorded somewhere, because a C3 p-value at N = 200 is not the same
+# object as one at N = 1000.
 INCLUDE_C3 = True
 C3_N_NULL_SIM = 200
 
@@ -277,7 +283,7 @@ _survey = job.step(
 
 job.materialize(_survey, name=f"{PREFIX}_grids")
 
-# The single-image overview first: it is the one a reader opens to orient, and the seven
+# The single-image overview first: it is the one a reader opens to orient, and the
 # per-instrument figures are where a p-value is actually read.
 job.figure(
     IndependenceSurveyOverviewPlot,

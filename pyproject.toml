@@ -107,7 +107,7 @@ markers = [
   "slow: full statistical grids; excluded from the fast gate",
   "heavy: large end-to-end job runs; excluded from the fast gate",
   "real: needs the private dataset tree; CI has none, so these skip there",
-  "r: needs Rscript plus the copula and randtests packages",
+  "r: needs Rscript and the copula package, which is all c3_serial_copula.R calls",
 ]
 
 [tool.importlinter]

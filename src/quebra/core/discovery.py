@@ -39,9 +39,10 @@ class DiscoveredJob:
     family: str | None
     path: Path
     # Whether a bare `run --all` includes this job. Composites `include` other jobs, so
-    # sweeping them re-runs every sub-job; `independence_survey` additionally costs ~6.5 h.
+    # sweeping them re-runs every sub-job, and `independence_survey` re-runs the R bridge on
+    # every eligible cell. The total has not been measured.
     # Declared, not encoded in the DIRECTORY (`jobs/active` swept, `jobs/composite` not).
-    # Dropping the distinction entirely silently widens `--all` from 9 jobs to 12.
+    # Dropping the distinction entirely silently widens `--all` from 9 jobs to 13.
     sweep: bool = True
 
 

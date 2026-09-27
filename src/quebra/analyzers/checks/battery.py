@@ -16,7 +16,10 @@ permuted matrix once here:
 
 C3 is not included. It is an out-of-process R call with its own simulated null, so it
 shares nothing with the permutation set and would serialise the whole battery behind a
-subprocess; the bench calls it separately when R exists (it does not here).
+subprocess. The bench does not call it at all: C3 has no arm, no `ROW_KEYS` entry and no
+row in either results table, so its size and power are unmeasured whether or not R is
+installed. A caller that wants C3 sets `include_c3` on the `check_ledger` inputs; the
+ledger invokes the bridge directly, never through this function.
 
 Nothing is caught. A degenerate record - every duration tied, a zero-length window, a
 segment whose last event lands exactly on its truncation time - raises out of here, and the

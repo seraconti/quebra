@@ -1,8 +1,9 @@
 """One figure per instrument: is the independence assumption safe across every dataset?
 
-Seven instruments, seven figures, because a reader asks about one instrument at a time and
-a seven-panel composite would make each grid unreadably small. `SURVEY_PLOTS` holds the
-seven classes in `ROW_KEYS` order so the job can wire them in a loop.
+One instrument, one figure, because a reader asks about one instrument at a time and a
+single composite of all of them would make each grid unreadably small. `SURVEY_PLOTS` holds
+one class per entry of `independence_survey.SURVEY_KEYS`, in that order, so the job can
+wire them in a loop.
 
 Each figure is one instrument, both clocks stacked: datasets down, threshold ladder across.
 
@@ -177,11 +178,10 @@ def _class_name(key: tuple[str, str, str]) -> str:
     return "".join(p.capitalize() for p in parts) + "SurveyPlot"
 
 
-# GENERATED from ROW_KEYS, one class per entry, rather than hand-listed by index. The
-# hand-written version referenced ROW_KEYS[0] through [6]; promoting CvM appended two
-# entries and would have left them silently undrawn while every index above shifted for any
-# insertion. Deriving the list means adding a check to the battery adds its figure here and
-# `test_there_is_exactly_one_figure_per_row_key` cannot drift.
+# GENERATED from SURVEY_KEYS, one class per entry, rather than hand-listed by index. A
+# hand-written list goes stale by omission: an entry appended to the tuple draws nothing and
+# an entry inserted shifts every index after it. Deriving the list means adding a check adds
+# its figure here, and `test_there_is_exactly_one_figure_per_surveyed_instrument` pins it.
 SURVEY_PLOTS: list[type[_InstrumentSurveyPlot]] = [
     _make(key, _class_name(key)) for key in SURVEY_KEYS
 ]
@@ -192,15 +192,15 @@ for _cls in SURVEY_PLOTS:
 
 
 class IndependenceSurveyOverviewPlot(BasePlot):
-    """ALL seven instruments in one image: 7 rows of instruments, 2 columns of clocks.
+    """EVERY instrument in one image: one row per instrument, one column per clock.
 
     The per-instrument figures above are for reading one instrument closely. This one is
     for the question they cannot answer between them - does the picture change when you
     swap the instrument, or only when you swap the CLOCK? Laid out so that comparison is a
-    left-right glance rather than a memory exercise across seven files.
+    left-right glance rather than a memory exercise across as many files.
 
     TRANSPOSED relative to the per-instrument figures: thresholds on y (10 of them) and
-    datasets on x (34). Keeping datasets on y would make each of the fourteen panels 34
+    datasets on x (34). Keeping datasets on y would make every panel 34
     rows tall and the image unusable; the ladder is the shorter axis and belongs on the
     short side. p-values are dropped here for the same reason - at this density they would
     be unreadable, and the per-instrument figure is where a number is read.
@@ -241,8 +241,8 @@ class IndependenceSurveyOverviewPlot(BasePlot):
                             labelpad=8,
                             **theme.LABEL_TEXT,
                         )
-                    # Dataset names only on the bottom row: fourteen copies of a
-                    # thirty-four-label axis is noise, not information.
+                    # Dataset names only on the bottom row: one copy of a
+                    # thirty-four-label axis per row is noise, not information.
                     if row == len(keys) - 1:
                         ax.set_xticks(np.arange(n_datasets) + 0.5)
                         ax.set_xticklabels(
@@ -261,9 +261,7 @@ class IndependenceSurveyOverviewPlot(BasePlot):
                 frameon=False,
                 **theme.LEGEND_TEXT,
             )
-            fig.suptitle(
-                "Window independence across every dataset - all seven instruments"
-            )
+            fig.suptitle("Window independence across every dataset - every instrument")
             fig.text(
                 0.5,
                 0.028,
@@ -273,9 +271,10 @@ class IndependenceSurveyOverviewPlot(BasePlot):
                 "information. The two clocks ask different questions of the same record: "
                 "in-spec time advances only while the metric is in spec and its events are "
                 "window DEATHS, calendar time is wall clock and its events are window "
-                "BIRTHS - so they can disagree without either being wrong. C3 is excluded: "
-                "out of process, and no bench cell to score it. Read a p-value off the "
-                "per-instrument figures, not this one.",
+                "BIRTHS - so they can disagree without either being wrong. C3 is drawn but "
+                "has no bench cell, so its cells are UNCALIBRATED: read them as a "
+                "statistic, never as a level. Read a p-value off the per-instrument "
+                "figures, not this one.",
                 ha="center",
                 wrap=True,
                 **theme.CAPTION,

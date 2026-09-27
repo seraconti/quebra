@@ -41,10 +41,17 @@ that ends out of spec.
 
 Where R is present C3 executes; where R is absent the bridge still degrades to
 `p_value=None` and the row reads `not computed`. What remains missing is CALIBRATION, not the
-interpreter: C3 has no bench cell, so its size and power are unmeasured. Two operational limits
-found on first contact: `--vanilla` implies `--no-environ` and so needs `R_LIBS` passed
-explicitly or `copula` is invisible, and the run cost grows about as n^2.8 (130 s at n = 355),
-so large windows can exhaust the timeout and report `not computed` for that reason alone.
+interpreter: C3 has no bench cell, so its size and power are unmeasured. Two operational
+limits: `--vanilla` implies `--no-environ` and so needs `R_LIBS` passed explicitly or
+`copula` is invisible, and the run cost climbs steeply with n - seconds at n = 50 against
+about a minute at n = 355, at `n.sim = 1000`; `analyzers/checks/c3_serial_copula.py` carries
+the cost and is the one place it is quoted. Whether a much larger window can reach the 900 s
+timeout is OPEN, and the two records that bear on it disagree: one unverified observation has
+n = 682 still running at 580 s, while the shipped ledger in
+`output/check_ledger_q1_070423_4fc898_20260813_170015/` has C3 completing at n_events = 682
+on the in-spec clock (statistic 1.511, p 0.0005) with no row timing out.
+No growth exponent is claimed: three points do not determine a power law, and measuring the
+cost for the n at hand is the only reliable answer.
 The promotion report scores five checks. No conclusion anywhere rests on C3.
 
 ## 5. The bench's censoring arm never reached its label
@@ -66,8 +73,21 @@ there the number is a placeholder rather than a calibrated threshold.
 
 The record has a closed schema. `alpha`, the ladder, the seed and every step kwarg reach
 the Mermaid label, and the bench table's sha256 enters `dataset_hashes` and the run
-identity. The **R version cannot**: it is discovered at runtime, so it lives in
-`CheckLedger.r_version` on the materialized artifact and nowhere else.
+identity. **What R produced a C3 p-value cannot**: it is discovered at runtime, so it lives
+on the materialized `CheckLedger` and nowhere else - `r_version` (the R build and the
+`copula` version), `r_executable` and `r_library_paths`. They separate three states: `not
+asked` when the run-set excluded C3, `absent` when it was asked for and no `Rscript` was
+found, and a real version when it was probed. Any probe failure against a present but
+unusable R - a non-zero exit, a hang, a vanished interpreter, a silent one, or one
+emitting bytes that are not valid UTF-8 (which the probes decode with `errors="replace"`,
+so the catch there is defence in depth) - is recorded
+on the artifact rather than stopping the ledger: a version-probe failure lands in
+`r_version`, a library-probe failure in `r_library_paths`.
+
+`c3_n_null_sim` sits beside them for a different reason. It does reach the label wherever a
+job passes it as a step kwarg, but the C3 row's `notes` holds the verdict reason rather than
+the simulation count, so the artifact is the only place a reader can recover the `N` a C3
+p-value was drawn against.
 
 ## 8. Bench numbers describe synthetic records
 

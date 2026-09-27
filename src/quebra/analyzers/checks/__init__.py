@@ -7,7 +7,7 @@ number from 355 events calibrated by permutation.
 
     C1  Lewis-Robinson trend, time-censored + multi-process   (Kvaloy & Lindqvist eq 4/16)
     C2  Anderson-Darling renewal, time-censored               (Kvaloy & Lindqvist eq 7)
-    C3  copula serial independence, via R                     (UNASSESSED - no R here)
+    C3  copula serial independence, via R                     (UNASSESSED - no bench cell)
     C5  studentized max-lag rank autocorrelation, permutation
     C6  portmanteau rank exchangeability, permutation
     CvM Cramer-von Mises renewal, time-censored               (promoted after C1-C6)

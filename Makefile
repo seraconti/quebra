@@ -59,7 +59,8 @@ test: require-selector
 test-all:
 	pytest -m "not real"
 
-## Separate CI job. Requires Rscript plus copula and randtests.
+## Local only today; the CI job is deferred. Requires Rscript and copula. `randtests` is only used by
+## jobs/rscripts/reference_values.R, which the suite never runs.
 test-r:
 	pytest -m "r"
 

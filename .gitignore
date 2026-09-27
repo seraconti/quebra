@@ -54,3 +54,9 @@ output_backup2/
 
 # OS
 .DS_Store
+
+# Planted by tests/test_marker_discipline.py's child-pytest probes. They are removed in a
+# `finally`, but a hard kill would otherwise leave a foreign conftest holding a deselector
+# where `git add -A` would sweep it into the tree.
+tests/_race_tmp/
+tests/test_zz_probe_tmp.py

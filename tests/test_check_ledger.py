@@ -2,11 +2,15 @@
 
 A p-value alone must never produce a `pass`. These tests pin each of the three conditions
 independently, so a regression that drops one of them fails here rather than in a figure.
+
+The file also pins what the ledger records about the R that produced its C3 rows, and that
+it still builds every row when R is absent, unusable, or was never asked for.
 """
 
 from __future__ import annotations
 
 import pathlib
+import sys
 
 import numpy as np
 import pandas as pd
@@ -22,7 +26,12 @@ from quebra.analyzers.check_ledger import (
     _verdict,
     stream_for,
 )
-from quebra.analyzers.checks.result import CALIB_PERMUTATION, CheckResult
+from quebra.analyzers.checks import battery
+from quebra.analyzers.checks.result import (
+    CALIB_PERMUTATION,
+    CALIB_R_COPULA,
+    CheckResult,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -206,3 +215,295 @@ def test_ledger_refuses_a_partial_artifact():
     ledger.check_thresholds(["3 µs"])
     with pytest.raises(ValueError, match="incomplete CheckLedger"):
         ledger.check_thresholds(["3 µs", "4 µs"])
+
+
+def _varied_carve() -> pd.DataFrame:
+    """A carve with ten distinct durations, above the tie cutoff of five.
+
+    It does NOT produce every battery row. On the in-spec clock `tau == T_N`, so C1 and C2
+    are singular there and read `not computed`, and CvM asymptotic is not re-emitted. Tests
+    asserting completeness must name those exclusions rather than pin a count.
+
+    A metric that alternates on a fixed period gives one repeated duration, and the battery
+    declines a constant rank vector, so a fixture built that way would report a blank row
+    and could not tell a lost check from a degenerate cell.
+    """
+    rng = np.random.default_rng(3)
+    values: list[float] = []
+    for _ in range(60):
+        values += [5.0] * int(rng.integers(2, 12))
+        values += [1.0] * int(rng.integers(2, 8))
+    series = np.asarray(values, dtype=float)
+    carved = windows.run(
+        windows.WindowsInputs(
+            t_rel_s=np.arange(len(series), dtype=float) * 60.0,
+            values=series,
+            thresholds=[("3 µs", 3.0, True)],
+            dataset_id="unit",
+        )
+    )
+    return carved.windows
+
+
+def _bench_table() -> pd.DataFrame:
+    # `Path(__file__)`, not `repo_root()`: the latter is defined by the working directory.
+    return pd.read_csv(
+        pathlib.Path(__file__).resolve().parents[1]
+        / "jobs"
+        / "bench"
+        / "results"
+        / "size_table.csv"
+    )
+
+
+def test_a_ledger_that_never_asked_for_c3_records_not_asked_and_never_probes(
+    monkeypatch,
+):
+    """Oracle: AGENTS.md section 3 - a silent fallback yields a wrong-but-plausible result.
+
+    A run-set without C3 builds no C3 row, so an R version on that artifact would describe
+    work that did not happen. `jobs/active/km_with_checks_6d2s.py` ships exactly this shape:
+    its run-set is the permutation keys, which set `include_c3=False`. The probe must not
+    run at all there, which is asserted by making it raise if anything calls it.
+    """
+    import quebra.analyzers.check_ledger as ledger_module
+    from quebra.analyzers.checks import c3_serial_copula as c3
+
+    def _forbidden() -> str:
+        raise AssertionError("rscript_path() was called for a ledger that excluded C3")
+
+    monkeypatch.setattr(c3, "rscript_path", _forbidden)
+
+    ledger = ledger_module.run(
+        ledger_module.CheckLedgerInputs(
+            windows=_varied_carve(),
+            bench_size_table=_bench_table(),
+            thresholds=[("3 \u00b5s", 3.0, True)],
+            n_permutations=19,
+            seed=7,
+            include_c3=False,
+        )
+    )
+
+    assert ledger.r_version == "not asked"
+    assert ledger.r_executable == "not asked"
+    assert ledger.r_library_paths == ()
+    assert not (ledger.rows["check_id"] == c3.CHECK_NAME).any(), (
+        "a ledger with include_c3=False must carry no C3 row"
+    )
+
+
+def test_with_no_rscript_the_r_fields_read_absent_and_every_row_is_still_built(
+    monkeypatch, tmp_path
+):
+    """Oracle: AGENTS.md section 3 - a check outcome never stops execution.
+
+    PATH is emptied rather than `rscript_path` patched, so this exercises the same
+    `shutil.which` miss a machine without R would produce. It must NOT carry the `r`
+    marker: it asserts the R-ABSENT path and has to run where there is no R.
+    """
+    import quebra.analyzers.check_ledger as ledger_module
+    from quebra.analyzers.checks import c3_serial_copula as c3
+
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert c3.rscript_path() is None, "the fixture did not actually hide Rscript"
+
+    ledger = ledger_module.run(
+        ledger_module.CheckLedgerInputs(
+            windows=_varied_carve(),
+            bench_size_table=_bench_table(),
+            thresholds=[("3 µs", 3.0, True)],
+            n_permutations=19,
+            seed=7,
+            include_c3=True,
+        )
+    )
+
+    assert ledger.r_version == "absent"
+    assert ledger.r_executable == "absent"
+    assert ledger.r_library_paths == ()
+
+    in_spec = ledger.rows[ledger.rows["clock"] == "in_spec"]
+    built = set(zip(in_spec["check_id"], in_spec["calibration"], in_spec["variant"]))
+    expected = set(battery.ROW_KEYS) | {(c3.CHECK_NAME, CALIB_R_COPULA, "")}
+    # The in-spec clock re-emits every battery row except CvM asymptotic, which it drops
+    # because `tau == T_N` makes it singular there. Asserting the SET rather than a count
+    # is what makes a dropped row name itself instead of moving a number.
+    assert built == expected - {("cvm_cramer_von_mises", "asymptotic", "")}, (
+        f"R absence changed which rows the in-spec cell carries: {built ^ expected}"
+    )
+    c3_rows = ledger.rows[ledger.rows["check_id"] == c3.CHECK_NAME]
+    assert set(c3_rows["clock"]) == {"in_spec", "calendar"}
+    assert set(c3_rows["verdict"]) == {VERDICT_NOT_COMPUTED}
+    assert set(c3_rows["notes"]) == {"R unavailable"}
+
+
+def test_c3_n_null_sim_reaches_the_artifact_as_the_caller_set_it(monkeypatch, tmp_path):
+    """The simulation count a C3 p-value was drawn against survives materialization.
+
+    Driven with a value that is neither the module default nor any job's, so a field that
+    silently fell back to `c3.N_NULL_SIM` would fail here. R is hidden: this pins the
+    bookkeeping, and running C3 for real is not needed to do it.
+    """
+    import pickle
+
+    import quebra.analyzers.check_ledger as ledger_module
+    from quebra.analyzers.checks import c3_serial_copula as c3
+
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert c3.rscript_path() is None, "the fixture did not actually hide Rscript"
+
+    ledger = ledger_module.run(
+        ledger_module.CheckLedgerInputs(
+            windows=_varied_carve(),
+            bench_size_table=_bench_table(),
+            thresholds=[("3 µs", 3.0, True)],
+            n_permutations=19,
+            seed=7,
+            c3_n_null_sim=137,
+        )
+    )
+    assert ledger.c3_n_null_sim == 137
+    assert c3.N_NULL_SIM != 137, "the fixture must not be the module default"
+    # `pickle` is what `job.materialize` writes, and the round trip runs the artifact
+    # guard, so this is the field on the materialized object rather than in memory only.
+    assert pickle.loads(pickle.dumps(ledger)).c3_n_null_sim == 137
+
+
+def test_the_recorded_n_is_the_n_handed_to_the_bridge(monkeypatch, tmp_path):
+    """Oracle: the kwargs `c3.run` actually receives, captured at the call.
+
+    The artifact field and the bridge argument are two separate reads of
+    `inputs.c3_n_null_sim`, so the ledger can record an N it did not use. Pinning only the
+    field leaves that undetectable: a call site reverted to the module default stays green.
+    """
+    import quebra.analyzers.check_ledger as ledger_module
+    from quebra.analyzers.checks import c3_serial_copula as c3
+
+    # PATH is emptied for the same reason as its siblings: this is a `unit` test in the
+    # fast gate, and one that shelled out to R would assert something different on a machine
+    # with R than on one without. The kwargs are captured before dispatch, so the bridge
+    # never needs to run for the assertion to hold.
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert c3.rscript_path() is None, "the fixture did not actually hide Rscript"
+
+    seen: dict[str, object] = {}
+    real_run = c3.run
+
+    def _capture(segments, **kwargs):
+        seen.update(kwargs)
+        return real_run(segments, **kwargs)
+
+    monkeypatch.setattr(c3, "run", _capture)
+
+    ledger = ledger_module.run(
+        ledger_module.CheckLedgerInputs(
+            windows=_varied_carve(),
+            bench_size_table=_bench_table(),
+            thresholds=[("3 \u00b5s", 3.0, True)],
+            n_permutations=19,
+            seed=7,
+            include_c3=True,
+            c3_n_null_sim=137,
+        )
+    )
+
+    assert seen.get("n_null_sim") == 137, (
+        f"the bridge was handed {seen.get('n_null_sim')}, not the 137 the inputs carried"
+    )
+    assert ledger.c3_n_null_sim == 137, "and the artifact must record the same N"
+
+
+def test_a_version_probe_that_raises_is_recorded_and_does_not_stop_the_ledger(
+    monkeypatch, tmp_path
+):
+    """Oracle: AGENTS.md section 3 - a check outcome never stops execution.
+
+    `r_version()` calls a subprocess, so it can raise where the interpreter hangs
+    (`TimeoutExpired`), vanishes mid-call (`OSError`), or emits bytes that are not valid
+    UTF-8 (`ValueError`). None is a `RuntimeError`. The probe runs above the threshold loop
+    and outside every check's own error handling, so an escape kills the ledger before a
+    single row exists. This pins the guard that stops it; without the test the guard can be
+    deleted with the suite green.
+    """
+    import quebra.analyzers.check_ledger as ledger_module
+    from quebra.analyzers.checks import c3_serial_copula as c3
+
+    stub = tmp_path / "Rscript"
+    stub.write_text("#!/bin/sh\nexit 0\n")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert c3.rscript_path() is not None, "the stub interpreter must be visible"
+
+    def _raises(*_args, **_kwargs):
+        raise OSError("interpreter vanished mid-call")
+
+    monkeypatch.setattr(c3, "r_version", _raises)
+
+    ledger = ledger_module.run(
+        ledger_module.CheckLedgerInputs(
+            windows=_varied_carve(),
+            bench_size_table=_bench_table(),
+            thresholds=[("3 \u00b5s", 3.0, True)],
+            n_permutations=19,
+            seed=7,
+            include_c3=True,
+        )
+    )
+
+    assert ledger.r_version == "probe failed (OSError)", ledger.r_version
+    assert ledger.r_executable == str(stub)
+    assert len(ledger.rows) > 0, "the ledger must still build every row"
+
+
+def test_an_unusable_r_is_recorded_on_the_ledger_and_does_not_stop_it(
+    monkeypatch, tmp_path
+):
+    """Oracle: AGENTS.md section 3, again - for R present but not usable.
+
+    The common case is `copula` not installed, and it is not the same case as no R at all:
+    `rscript_path` finds an executable, so both probes run and both fail. Stood in for by a
+    script that exits non-zero on every invocation, which is what such an R does; no `r`
+    marker, because no R is involved.
+    """
+    import quebra.analyzers.check_ledger as ledger_module
+    from quebra.analyzers.checks import c3_serial_copula as c3
+
+    broken = tmp_path / "Rscript"
+    broken.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        'sys.stderr.write(\'Error in packageVersion("copula") : '
+        "there is no package called \\'copula\\'\\nExecution halted\\n')\n"
+        "sys.exit(1)\n"
+    )
+    broken.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    ledger = ledger_module.run(
+        ledger_module.CheckLedgerInputs(
+            windows=_varied_carve(),
+            bench_size_table=_bench_table(),
+            thresholds=[("3 µs", 3.0, True)],
+            n_permutations=19,
+            seed=7,
+            include_c3=True,
+        )
+    )
+
+    assert ledger.r_executable == str(broken)
+    assert ledger.r_version.startswith("probe failed"), ledger.r_version
+    assert "copula" in ledger.r_version, "the record must say what failed"
+    assert ledger.r_library_paths == ("probe failed (RuntimeError)",), (
+        "a failed library probe must leave a visible sentinel: an empty tuple is also what "
+        "`not asked` and `absent` carry, so silence here would hide the failure"
+    )
+    in_spec = ledger.rows[ledger.rows["clock"] == "in_spec"]
+    built = set(zip(in_spec["check_id"], in_spec["calibration"], in_spec["variant"]))
+    expected = set(battery.ROW_KEYS) | {(c3.CHECK_NAME, CALIB_R_COPULA, "")}
+    assert built == expected - {("cvm_cramer_von_mises", "asymptotic", "")}, (
+        f"an unusable R changed which rows the in-spec cell carries: {built ^ expected}"
+    )
+    assert set(ledger.rows[ledger.rows["check_id"] == c3.CHECK_NAME]["verdict"]) == {
+        VERDICT_NOT_COMPUTED
+    }

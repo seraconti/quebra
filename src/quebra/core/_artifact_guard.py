@@ -1,7 +1,6 @@
-"""Unpickle staleness guard for materialized panel-data artifacts.
+"""Unpickle staleness guard for materialized dataclass artifacts.
 
-A panel-data pickle written before the builder/renderer split lacks the derived
-fields: unpickling restores ``__dict__`` directly, bypassing ``__init__`` defaults,
+A pickle written before a field was added to its dataclass lacks that field: unpickling restores ``__dict__`` directly, bypassing ``__init__`` defaults,
 so a composite reusing such an artifact would crash mid-render (AttributeError on
 a factory field) or silently draw a class-level default. Loading one must instead
 fail loudly at the pickle boundary ("errors are raised, not swallowed"). This guard
@@ -19,12 +18,12 @@ if TYPE_CHECKING:
 
 
 class StaleArtifactGuard:
-    """Mixin for non-slots panel-data dataclasses: validate state on unpickle.
+    """Mixin for non-slots dataclasses: validate state on unpickle.
 
     The required key set derives from ``dataclasses.fields()`` - never a
     hand-maintained list - so it tracks field additions automatically. A valid
     builder-produced pickle always carries every field in ``__dict__``
-    (default_factory fields included); a pre-split pickle does not.
+    (default_factory fields included); a pickle predating a field does not.
     """
 
     def __setstate__(self, state: dict[str, object]) -> None:
@@ -46,7 +45,7 @@ class StaleArtifactGuard:
         if missing:
             raise ValueError(
                 f"stale {cls.__name__} artifact: pickle lacks field(s) "
-                f"{sorted(missing)} - it predates the builder/renderer split. "
+                f"{sorted(missing)} - it predates a field added to this artifact. "
                 "Re-run the sub-job (run the composite without --reuse-deps)."
             )
         self.__dict__.update(state)

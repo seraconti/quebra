@@ -67,8 +67,9 @@ SEED = 20260903
 #
 # Run-set: the permutation rows. At the event counts these records carry, the asymptotic
 # calibrations are measured as oversized (`docs/iid_checks/C1_lewis_robinson.md`), and C3 is
-# excluded because it shells out to R at roughly 130 s per call and has no bench cell either
-# way. Both facts are about entitlement to the data, not about convenience.
+# excluded because it has no bench cell, so its rows carry no calibrated evidence. It also
+# shells out to R, which costs about a minute at the largest n this ladder produces.
+# Those reasons are about entitlement to the data, not about convenience.
 RUN_SET = PERMUTATION_KEYS
 # Display-set: C1 and C6. One asks whether durations TREND, the other whether their ORDER
 # carries information; between them they cover the two ways the renewal assumption fails that

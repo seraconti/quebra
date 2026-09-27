@@ -10,13 +10,17 @@ a specific R build and turns "R is missing" into an import-time failure of the w
 package, whereas a subprocess turns it into a per-call `None`. The pipeline must import
 cleanly on a machine without R.
 
-**C3 runs and is UNCALIBRATED.** Exercised under Rscript 4.5.3, Rscript 4.5.3 with
-`copula` from the user library, on iid exponential input AT `seed=1`: n=50 gives statistic
-0.00579 / p 0.958 in 3.9 s, n=150 gives 0.00713 / p 0.904 in 14.7 s, n=355 gives 0.00763 /
-p 0.866 in 130.2 s. The SEED IS PART OF THE NUMBER: the R side simulates its own null, so
-the statistic is seed-invariant and reproduces exactly, while the p-value does not - at the
-module default `seed=0` the same inputs give 0.948 and 0.912. Quoting a p without its seed
-is the defect this line exists to avoid.
+**C3 runs and is UNCALIBRATED.** Smoke test on iid exponential input at `lag.max=5`,
+`n.sim=1000`, `seed=1`: n=50 gives statistic 0.0057908 / p 0.9575, n=150 gives 0.0071326 /
+p 0.9036, n=355 gives 0.0076331 / p 0.8656.
+
+THE DATA RECIPE IS PART OF THE NUMBER. Those three series come from ONE
+`numpy.random.default_rng(0)` drawing `exponential(1.0)` sequentially in the order n=50,
+then n=150, then n=355 - not re-seeded per n, and not prefixes of one long draw. A statistic
+without its recipe cannot be reproduced, which is the defect this paragraph exists to avoid.
+SO IS THE SEED, for a different reason: the R side simulates its own null, so the statistic
+is seed-invariant and reproduces exactly while the p-value does not - at the module default
+`seed=0` the first two series give 0.9476 and 0.9116.
 
 Failing to reject data that satisfies the null is the expected outcome and is a SMOKE TEST,
 NOT calibration: C3 still has no size or power evidence, because the bench never ran it and
@@ -74,7 +78,7 @@ _UNAVAILABLE = "R unavailable"
 
 
 def rscript_path() -> str | None:
-    """Absolute path to `Rscript`, or None. The only environment probe in the module."""
+    """Absolute path to `Rscript`, or None. Every other probe here goes through it."""
     return shutil.which("Rscript")
 
 
@@ -93,6 +97,7 @@ def r_library_paths() -> tuple[str, ...]:
         [executable, "-e", "cat(paste(.libPaths(), collapse='\\n'))"],
         capture_output=True,
         text=True,
+        errors="replace",
         timeout=60,
         check=False,
     )
@@ -101,7 +106,54 @@ def r_library_paths() -> tuple[str, ...]:
             f"could not ask Rscript for .libPaths(): exited {completed.returncode}\n"
             f"stderr: {completed.stderr.strip()}"
         )
+    # Returns `()` for an empty answer rather than a sentinel. The other consumer of this
+    # function joins the tuple into `R_LIBS` for the real bridge call, so a diagnostic string
+    # here would become a filesystem search path. Telling an empty answer apart from a probe
+    # that never ran is the LEDGER's problem, and `check_ledger._r_provenance` does it.
     return tuple(line.strip() for line in completed.stdout.splitlines() if line.strip())
+
+
+def r_version() -> str | None:
+    """The R build and the installed `copula` version, or None when there is no `Rscript`.
+
+    Both halves are one answer. The statistic comes from `copula::serialIndepTest` and the
+    p-value from `copula`'s own simulated null, so an R build alone does not identify what
+    produced a C3 row. Asked without `--vanilla`, for the same reason `r_library_paths`
+    is: the package reported must be the one the bridge will load.
+
+    A non-zero exit is REPORTED in the returned string, not raised. That is the one place
+    this differs from `r_library_paths`, and the reason is the caller: this is a provenance
+    field built once per ledger, outside any check's own error handling, and its common
+    failure is R present with `copula` not installed. That must annotate the record rather
+    than stop a ledger whose other five checks are pure Python. The string names the
+    failure, so no reader can mistake it for a version.
+    """
+    executable = rscript_path()
+    if executable is None:
+        return None
+    completed = subprocess.run(
+        [
+            executable,
+            "-e",
+            'cat(R.version.string, "copula", as.character(packageVersion("copula")))',
+        ],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        timeout=60,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = " ".join(
+            (completed.stderr.strip() or completed.stdout.strip()).split()
+        )
+        return f"probe failed (exit {completed.returncode}): {detail}"[:200]
+    reported = " ".join(completed.stdout.split())
+    # An empty string is the CheckLedger field default, so a probe that ran and said
+    # nothing would be indistinguishable from one that never ran.
+    if not reported:
+        return "probe returned nothing"
+    return reported
 
 
 def _unavailable_result(
@@ -135,10 +187,10 @@ def _invoke_rscript(
     `Rscript --vanilla` does not, so `copula` was invisible and every call raised. Keeping
     `--vanilla` is right for a reproducibility tool - it refuses the user profile and any
     side effect hiding in it - so the fix is to pass the search path as an explicit
-    environment variable rather than to drop the flag. NOTE what this does and does not buy:
-    the path becomes explicit at the call, but it is NOT written to any provenance artifact,
-    so a run on a machine with a different library set is not distinguishable after the
-    fact. Recording it is open work, not a property of this fix.
+    environment variable rather than to drop the flag. The set searched is recorded as well
+    as made explicit: `check_ledger.CheckLedger.r_library_paths` carries it on the
+    materialized artifact, so a run against a different library set is distinguishable
+    after the fact.
     """
     executable = rscript_path()
     if executable is None:
@@ -202,22 +254,34 @@ def run(
 ) -> CheckResult:
     """Serial independence via `copula::serialIndepTest`, over the R file bridge.
 
-    `timeout_s` was 120.0 and that was too small to be honest. Measured on this machine
-    with `N_NULL_SIM = 1000`, iid exponential input, `seed=1`: 3.9 s at n = 50, 14.7 s at
-    n = 150, 130.2 s at n = 355. n = 355 alone overran the old default, so every such row
-    silently became `declined:` once the ledger stopped raising.
+    `timeout_s` was 120.0 and that was too small to be honest. Wall clock at
+    `N_NULL_SIM = 1000` on iid exponential input, `seed=1`, under R 4.5.3 with `copula`
+    1.1.7 on x86_64: SECONDS at n = 50, UNDER TEN SECONDS at n = 150, and OF ORDER A MINUTE
+    at n = 355. No interval is quoted, and that is deliberate: the cost depends on machine
+    load, which no run here controlled, and every interval this docstring has quoted was
+    falsified by the next run.
+
+    Whether that crosses a 120 s ceiling is a property of the MACHINE and its load, not of
+    the statistic. The measurement that set this default recorded 130.2 s at n = 355 and did
+    cross it, and such a row silently became `declined:` once the ledger stopped raising -
+    a timeout wearing the clothes of a check outcome.
 
     NO GROWTH EXPONENT IS CLAIMED. An earlier draft of this docstring said "roughly n^2.8";
-    that number is not in the data. The three points give an OLS log-log slope of 1.76, and
-    the pairwise slopes disagree with each other (1.21 from 50->150, 2.53 from 150->355), so
-    three points do not determine a power law here. A separate run had n = 682 unfinished at
-    580 s, which no fit through these points predicts - the cost also depends on the machine
-    and on `N_NULL_SIM`. Measure it for the n you actually have.
+    that number is not in the data, and three points do not determine a power law here. The
+    two segments disagree: n = 50 to 150 roughly triples the cost over a factor 3 in n,
+    while n = 150 to 355 multiplies it by roughly eight over a factor 2.4. The cost also
+    depends on the machine, on its load, and on `N_NULL_SIM`. Measure it for the n you
+    actually have.
 
-    900 s covers every n the T2* ladder has produced so far with margin, and still fails
-    fast rather than hanging a job forever. A row that exceeds it becomes `not computed`
-    with the timeout recorded, which is the correct outcome; raise `timeout_s` at the call
-    site if that row is wanted.
+    900 s covers every n the T2* ladder has produced so far, and the evidence above n = 355
+    is contradictory rather than thin. One unverified observation records n = 682 still
+    running at 580 s. The shipped ledger in
+    `output/check_ledger_q1_070423_4fc898_20260813_170015/` records a COMPLETION at the same
+    n: C3 at n_events = 682 on the in-spec clock, statistic 1.511, p 0.0005, with no row
+    timing out. The two are compatible rather than contradictory, and neither pins the
+    margin at larger n. It still fails fast rather than hanging a job forever. A row that
+    exceeds it becomes `not computed` with the timeout recorded, which is the correct
+    outcome; raise `timeout_s` at the call site if that row is wanted.
     """
     if not segments:
         raise ValueError("C3 needs at least one segment")

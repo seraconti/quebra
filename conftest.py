@@ -1,4 +1,4 @@
-"""Make the repository's own trees importable to the test suite.
+"""Session-wide setup for the test suite: import paths, hypothesis, and two shared probes.
 
 `quebra` itself is NOT provided here. It comes from the installed distribution, which is
 the entire point of dropping `pythonpath` when `pyproject.toml` landed: if the suite could
@@ -16,6 +16,13 @@ pytest's default `prepend` import mode puts the directory containing the rootdir
 on `sys.path`, so simply existing here is enough. It is spelled out rather than left
 implicit because a reader coming from the deleted `pytest.ini` will look for the setting
 that replaced `pythonpath` and should find this explanation instead of a bare file.
+
+Beyond the import paths this file holds two things the suite shares:
+
+  the collection record   every item as it was collected, before any selector deselected
+                          it, so a guard that is itself selected sees the whole run rather
+                          than only what its own `-m` expression kept.
+  `requires_rscript`      the single Rscript probe every `r`-marked test uses.
 """
 
 from pathlib import Path
@@ -76,3 +83,50 @@ def in_repo(monkeypatch):
     """
     monkeypatch.chdir(REPO_ROOT)
     return REPO_ROOT
+
+
+# Every collected item, recorded before anything can deselect it.
+#
+# Marker and keyword deselection both happen in `pytest_collection_modifyitems`, so
+# `session.items` is the post-deselection list and a guard reading it is only as total as
+# the selector that ran. `pytest_itemcollected` fires per item during collection itself,
+# which is strictly earlier than any `modifyitems` implementation, so the record it builds
+# does not depend on hook ordering between plugins.
+COLLECTED_PRE_DESELECTION: pytest.StashKey[list[pytest.Item]] = pytest.StashKey()
+
+
+def pytest_itemcollected(item: pytest.Item) -> None:
+    """Append one collected item to the session's pre-deselection record."""
+    item.session.stash.setdefault(COLLECTED_PRE_DESELECTION, []).append(item)
+
+
+@pytest.fixture(scope="session")
+def collected_pre_deselection(request) -> list[pytest.Item]:
+    """Every item collected from under this conftest's tree, deselected ones included.
+
+    Kept on the session stash rather than in a module global so two sessions in one
+    process cannot pool their items.
+    """
+    return request.session.stash.setdefault(COLLECTED_PRE_DESELECTION, [])
+
+
+@pytest.fixture(scope="session")
+def requires_rscript() -> str:
+    """Absolute path to `Rscript`, or a skip when the machine has none.
+
+    The one probe every `r`-marked test shares, so the tier does not accumulate a private
+    copy of it per file. It defers to the bridge's own `rscript_path()`, which is what
+    stops the suite and the pipeline disagreeing about whether R is present.
+
+    A missing interpreter skips. A present interpreter without the `copula` package does
+    NOT skip: `c3_serial_copula.R` stops on a missing `copula` and the bridge raises, and
+    that is the failure the `r` marker promises to report rather than hide. Never satisfy
+    this fixture with a mocked path: a test that goes green without R is evidence about
+    the mock.
+    """
+    from quebra.analyzers.checks.c3_serial_copula import rscript_path
+
+    executable = rscript_path()
+    if executable is None:
+        pytest.skip("Rscript is not on PATH, and the `r` tier needs a real interpreter")
+    return executable

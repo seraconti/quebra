@@ -532,12 +532,19 @@ def build(runtime_note: str = "") -> str:
     )
 
     add("\n## Scope, and what is NOT here\n")
+    # NOT probed. This file is TRACKED and its header says every number below is a row of
+    # the two CSVs; an environment probe would make it a function of the machine too, so
+    # regenerating on a box without R would rewrite a committed artifact. The claim below
+    # is written to hold in both directions instead, which is also the stronger claim: C3
+    # carries no evidence here because the BENCH never ran it, not because R was missing.
     add(
         "**Five checks are assessed, not six.** C3 (`copula::serialIndepTest`) needs R, "
-        "and `Rscript` is absent on this machine. Its bridge ships and degrades to "
-        '`p_value=None` with `notes="R unavailable"`, and `tests/test_checks_c3_bridge.py` '
-        "pins that behaviour - but no code path past `_invoke_rscript` has ever executed. "
-        "**C3 carries no evidence here. Its silence is not a pass.**\n"
+        "and whether R is present changes what the ledger produces elsewhere, not what "
+        "this bench measured. C3 is outside this bench either way: it has no arm here, no "
+        "entry in `battery.ROW_KEYS`, and no row in `size_table.csv` or `power_table.csv`, "
+        "so neither its size nor its power has been measured. "
+        "**C3 carries no evidence here. Its silence is not a pass, and neither is a "
+        "p-value it returns.**\n"
     )
     add(
         "\n**The transcription is pinned by test, and the pin is narrower than it looks.** "

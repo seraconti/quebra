@@ -17,10 +17,17 @@ accruing the moment the record ends out of spec, so `tau == T_N` and eqs (4)/(7)
 singular - measured at ~73% of synthetic replicates. Those rows read `not computed` with
 the reason, and the rank checks (which never touch `tau`) still run there.
 
-**What the provenance record cannot hold.** Its schema is closed, so the R version is
-discovered at runtime and lives in `CheckLedger.r_version` on the materialized artifact,
-not in the `.prov.json`. `alpha`, the ladder, the seed and the thresholds DO reach the
-label, because they are step kwargs.
+**What the provenance record cannot hold.** Its schema is closed, so what R produced the
+C3 p-values is discovered at runtime and lives on the materialized artifact, not in the
+`.prov.json`: `r_version` (the R build and the `copula` version), `r_executable` and
+`r_library_paths`. With no `Rscript` on PATH the two strings read `absent` and the tuple is
+empty. `alpha`, the ladder, the seed and the thresholds DO reach the label, because they
+are step kwargs.
+
+`c3_n_null_sim` is on the artifact for a different reason. It does reach the label wherever
+a job passes it as a step kwarg, but a C3 p-value simulated against 200 draws is not the
+same object as one simulated against 1000, and a ledger has to be readable without the job
+that produced it.
 """
 
 from __future__ import annotations
@@ -126,8 +133,16 @@ class CheckLedger(StaleArtifactGuard):
     lag_max: int = MAX_LAG_CAP
     n_permutations: int = 0
     seed: int = 0
-    # Runtime-discovered, and the provenance schema has no free-form field to hold it.
-    r_version: str = ""
+    # Runtime-discovered, and the provenance schema has no free-form field to hold them.
+    # `not asked` when the run-set excluded C3, `absent` when it was asked for and no
+    # interpreter was found. `r_library_paths` is R's own report of its search path, so it
+    # is only as trustworthy as the profile that produced it.
+    r_version: str = "not asked"
+    r_executable: str = "not asked"
+    r_library_paths: tuple[str, ...] = ()
+    # The value the inputs carried, recorded whether or not C3 ran. Not inferable from the
+    # rows: the verdict reason replaces the note that carried it.
+    c3_n_null_sim: int = c3.N_NULL_SIM
     thresholds: list[tuple[str, float, bool]] = field(default_factory=list)
 
     def check_thresholds(self, labels: list[str]) -> None:
@@ -166,9 +181,9 @@ class CheckLedgerInputs:
     n_permutations: int = 999
     seed: int = 0
     min_events_per_segment: int = 2
-    # C3 is the only out-of-process check and by far the most expensive: measured 130 s at
-    # n = 355, and the cost grows steeply. A survey across many datasets cannot afford it,
-    # and does not lose calibrated evidence by skipping it - C3 has no bench cell, so its
+    # C3 is the only out-of-process check and by far the most expensive: about a minute at
+    # n = 355 (see c3_serial_copula for the measured range and its machine). Skipping it
+    # loses no calibrated evidence - C3 has no bench cell, so its
     # rows are `not computed` or an uncalibrated p-value either way. When False the C3 rows
     # are OMITTED rather than written as `not computed`: a blank row would claim the check
     # was attempted and failed, when in fact it was never asked.
@@ -290,11 +305,53 @@ def _verdict(
     return VERDICT_PASS, ""
 
 
+def _r_provenance(asked: bool) -> tuple[str, str, tuple[str, ...]]:
+    """What R produced the C3 rows: `(version, executable, library paths)`.
+
+    THREE STATES, not two. `not asked` when the run-set excluded C3, so no R was consulted
+    and none was needed; `absent` when C3 was asked for and no interpreter was found; and a
+    real version string when it was asked for and probed. Collapsing the first two would put
+    a complete R provenance block on a ledger that never ran a C3 row, which reads as
+    evidence about work that did not happen.
+
+    Probed once per ledger, above the threshold loop: inside it, the two subprocesses would
+    be paid again on every row of every threshold and clock.
+
+    NOTHING HERE RAISES, and the except clause is wide because the failure modes are the
+    environment's, not the data's. A hung interpreter reaches the caller as
+    `subprocess.TimeoutExpired`, a deleted one as `OSError`, and one emitting bytes that are
+    not valid UTF-8 as a `ValueError`. That last one is defence in depth rather than a live
+    path: both probes pass `errors="replace"`, so the decode cannot raise today, and the
+    catch is what keeps that true if the decoding changes. None of the three is a
+    `RuntimeError`, and any of them
+    escaping would kill the ledger above the first row, which is the one thing a check outcome
+    may never do. `check_ledger`'s per-row C3 clause already lists `ValueError` for the same
+    reason. The reason is recorded in `r_version` instead.
+    """
+    if not asked:
+        return "not asked", "not asked", ()
+    executable = c3.rscript_path()
+    if executable is None:
+        return "absent", "absent", ()
+    try:
+        libraries = c3.r_library_paths() or ("probe returned nothing",)
+    except (RuntimeError, ValueError, subprocess.TimeoutExpired, OSError) as exc:
+        # A visible sentinel, not `()`. An empty tuple is also what `not asked` and `absent`
+        # carry, so a silent fallback here would make a failed probe indistinguishable from
+        # a run that never made one.
+        libraries = (f"probe failed ({type(exc).__name__})",)
+    try:
+        version = c3.r_version()
+    except (RuntimeError, ValueError, subprocess.TimeoutExpired, OSError) as exc:
+        return f"probe failed ({type(exc).__name__})", str(executable), libraries
+    return "absent" if version is None else version, str(executable), libraries
+
+
 def run(inputs: CheckLedgerInputs) -> CheckLedger:
     """Run every check on every threshold and score each answer."""
     acceptance = bench_acceptance_at_n(inputs.bench_size_table, alpha=inputs.alpha)
     grid = sorted({int(n) for n in acceptance["n_target"]})
-    r_path = c3.rscript_path()
+    r_version, r_executable, r_libraries = _r_provenance(inputs.include_c3)
 
     rows: list[dict[str, object]] = []
     for label, _value, _big_good in inputs.thresholds:
@@ -320,7 +377,10 @@ def run(inputs: CheckLedgerInputs) -> CheckLedger:
         lag_max=inputs.lag_max,
         n_permutations=inputs.n_permutations,
         seed=inputs.seed,
-        r_version="absent" if r_path is None else str(r_path),
+        r_version=r_version,
+        r_executable=r_executable,
+        r_library_paths=r_libraries,
+        c3_n_null_sim=inputs.c3_n_null_sim,
         thresholds=list(inputs.thresholds),
     )
     ledger.check_thresholds([label for label, _v, _b in inputs.thresholds])
