@@ -125,30 +125,34 @@ def test_the_record_is_pre_deselection_not_post(tmp_path) -> None:
             "child of the pre-deselection probe; spawning another would recurse"
         )
 
-    probe = tmp_path / "test_zz_record_probe.py"
+    # The probe lives under `tests/`, not in tmp_path, for the same reason the race test
+    # below plants its victim there: a hook and a fixture declared in the root conftest are
+    # dispatched through `node.ihook`, which skips conftests that do not apply to the item's
+    # path. A probe outside the rootdir cannot see `collected_pre_deselection` at all. That
+    # resolves differently under an editable install than under the clean non-editable
+    # resolve `make check-ci` builds, so a tmp_path probe passes here and fails there.
+    probe = REPO_ROOT / "tests" / "test_zz_record_probe_tmp.py"
     result = tmp_path / "counts.txt"
-    probe.write_text(
-        "import pytest\n"
-        "@pytest.mark.policy\n"
-        "def test_probe(collected_pre_deselection, request):\n"
-        f"    open({str(result)!r}, 'w').write(\n"
-        "        f'{len(collected_pre_deselection)} {len(request.session.items)}'\n"
-        "    )\n",
-        encoding="utf-8",
-    )
-    completed = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-m", "policy", "tests", str(probe)],
-        cwd=REPO_ROOT,
-        env={
-            **os.environ,
-            _CHILD_PROBE_ENV: "1",
-            "PYTHONPATH": os.pathsep.join(
-                [str(tmp_path), os.environ.get("PYTHONPATH", "")]
-            ).strip(os.pathsep),
-        },
-        capture_output=True,
-        text=True,
-    )
+    try:
+        probe.write_text(
+            "import pytest\n"
+            "@pytest.mark.policy\n"
+            "def test_probe(collected_pre_deselection, request):\n"
+            f"    open({str(result)!r}, 'w').write(\n"
+            "        f'{len(collected_pre_deselection)} {len(request.session.items)}'\n"
+            "    )\n",
+            encoding="utf-8",
+        )
+        completed = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "-m", "policy", "tests"],
+            cwd=REPO_ROOT,
+            env={**os.environ, _CHILD_PROBE_ENV: "1"},
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        probe.unlink(missing_ok=True)
+
     # The child's exit code is deliberately NOT asserted: it couples this test to every other
     # policy test in the child run, and a failure elsewhere would surface here as someone
     # else's traceback. The result file is the real condition.
