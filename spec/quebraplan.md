@@ -690,6 +690,31 @@ legitimately sit.
    same measurement the deferred `r-lib/actions/setup-r` CI job in `specrboundary07.md` needs.
    Do them together or not at all. Not scheduled, and not part of Phase 6.
 
+   **The scope grew during Phase 7, and the case is now stronger than the R install route.**
+   Two findings there share one root cause: nothing pins the versions a figure was produced
+   under, and nothing records them.
+   `pyproject.toml` declares LOWER BOUNDS ONLY (`matplotlib>=3.9`, and the same shape for every
+   runtime dependency), so a clean tree at a given commit does NOT fix what is installed: two
+   people on one commit can hold matplotlib 3.9 and 3.10.9, and CI resolves newest on every
+   leg. Identity folds the job file, the module hashes and a clean-tree check; it does not fold
+   the environment, and `core/identity.py:17` says so deliberately.
+   Phase 7 then removed matplotlib's version string from every written PDF, because leaving it
+   in made figure bytes move on each release even when the drawing did not. That was right for
+   the bytes, and it deleted the only record of which renderer produced a figure, because
+   `provenance.build_prov_record` carries no package version at all.
+
+   **The proposal, as ONE piece of work.** An image fixes the versions; provenance records
+   them. Neither half is worth much alone: recording an unpinned version documents drift
+   without preventing it, and pinning without recording leaves a reader unable to tell which
+   pin applied.
+
+   **The obstacle to name up front.** `check_ledger.py:20` states that the provenance record's
+   "schema is closed", which is why the R version went onto the materialized `CheckLedger`
+   artifact rather than into the `.prov.json`. Putting package versions into provenance
+   therefore REOPENS a decision Phase 6 made, and it should be reopened explicitly rather than
+   by accident. A figure has no typed artifact of its own to carry them, which is the asymmetry
+   that makes the R workaround unavailable here.
+
 ## 7B. Remaining statistical tools and checks
 
 What is implemented, what is calibrated, and what is neither. Calibration here means a bench

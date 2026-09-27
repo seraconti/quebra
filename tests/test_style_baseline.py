@@ -4,9 +4,17 @@ Colour and typography belong in plots/theme.py. Sweeping every existing call sit
 one pass is not worth the churn, so this pins the current count instead: the number
 may go DOWN, never up. A new panel that hardcodes its own hex or font sizes fails here.
 
-Scope is deliberately narrow - hex literals and `fontsize=`. It does not catch 3- or
-8-digit hex, named colours ("lightgray"), plt.cm.*, or size=/labelsize=/fontdict=.
-Widening it means re-pinning the baseline, which is a separate decision.
+Scope: a 6-digit hex literal, or a font size given as a LITERAL - numeric (`fontsize=9`) or
+named (`fontsize="x-small"`) - in either the keyword or the dict spelling, and either quote
+style. It does not catch 3- or 8-digit hex, named colours ("lightgray"), plt.cm.*, or
+size=/labelsize=.
+
+WHY THE VALUE MUST BE A LITERAL, not the key. `fontsize=theme.CAPTION["fontsize"]` is the
+behaviour this test exists to encourage, so matching the bare key would count it as a
+violation. Keying on the value instead means an identifier is never counted and a literal
+always is, whichever way it is spelled. Measured on the tree as it stands: the two dict-form
+sites both read from the theme and are correctly not counted, while `allan_plot.py`'s two
+`fontsize="x-small"` are hardcoded and are.
 """
 
 from __future__ import annotations
@@ -25,13 +33,15 @@ THEME_FILE = REPO_ROOT / "src" / "quebra" / "plots" / "theme.py"
 
 PATTERNS = {
     "hex": re.compile(r"#[0-9A-Fa-f]{6}\b"),
-    "fontsize": re.compile(r"fontsize="),
+    # Both spellings, both quote styles, and only when the VALUE is a literal.
+    "fontsize": re.compile(r"""fontsize\s*=\s*["'\d]|["']fontsize["']\s*:\s*["'\d]"""),
 }
 
-# An earlier baseline was 18 (`fontsize=` only; the 8 hex were the tab10 clone in
-# panels/within_calibration.py, deleted in favour of plots.theme.threshold_color).
-# It ratchets DOWN only. 17 is the current floor: the distribution histograms were written with explicit sizes,
-# this test rejected them, and the primary legend went to rcParams in the same edit.
+# It ratchets DOWN only. 17 is the current floor. An earlier attempt in this phase matched
+# only a NUMERIC literal and scored 15; the two it dropped were `allan_plot.py`'s
+# `fontsize="x-small"`, which are hardcoded sizes, so that pattern was blind to every named
+# size rather than stricter. Keying on any literal value restores them and adds the dict
+# spelling, which the original bare-key pattern never reached.
 BASELINE = 17
 
 

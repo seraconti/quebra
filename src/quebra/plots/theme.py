@@ -18,6 +18,7 @@ from typing import Iterator
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import colors as mcolors
+from matplotlib import font_manager
 
 
 QUBIT_COLOR_MAP = {
@@ -93,6 +94,18 @@ EPSILON_SHADE = {
     "alpha": 0.20,
 }
 
+# The poster's typeface, primary first. Roboto is not shipped with matplotlib and is not a
+# Python dependency: it is an environment requirement, which is exactly why a missing one has
+# to be reported rather than absorbed.
+POSTER_FONT_STACK = ["Roboto", "DejaVu Sans"]
+
+# Which targets REQUIRE their first-choice face, named explicitly. Keying the check on this
+# rather than on whether `font.family` happens to be a list matters: the poster's previous
+# spelling was a bare string, so a type test would let one reverted character disable the
+# guard with no signal, which is the class of silence the guard exists to end.
+REQUIRED_FIRST_FACE = {"poster": POSTER_FONT_STACK[0]}
+
+
 # rcParams by RENDER TARGET, not by matplotlib style name. `static` keeps the sans
 # default; `academic` goes serif at a smaller base for print.
 RCPARAMS: dict[str, dict[str, object]] = {
@@ -130,35 +143,12 @@ RCPARAMS: dict[str, dict[str, object]] = {
         "grid.linewidth": 0.4,
         "grid.alpha": 0.4,
     },
-    # A single figure printed large and read from a metre away, not a panel in a page of
-    # panels. Everything scales up together - type, line weight, tick length - because
-    # scaling only the fonts is what makes a poster figure look like a stretched paper
-    # figure. Same colours as the other targets: the palette is the tool's identity and
-    # does not change with the medium.
-    # "poster": {
-    #     "font.family": "Roboto",
-    #     "font.size": 27.4,
-    #     "axes.titlesize": 24.0,
-    #     "axes.labelsize": 20.0,
-    #     "xtick.labelsize": 17.0,
-    #     "ytick.labelsize": 17.0,
-    #     "legend.fontsize": 17.0,
-    #     "figure.titlesize": 26.0,
-    #     "axes.linewidth": 1.6,
-    #     "lines.linewidth": 2.6,
-    #     "xtick.major.width": 1.6,
-    #     "ytick.major.width": 1.6,
-    #     "xtick.major.size": 7.0,
-    #     "ytick.major.size": 7.0,
-    #     "axes.spines.top": False,
-    #     "axes.spines.right": False,
-    #     "axes.grid": True,
-    #     "grid.color": "#CCCCCC",
-    #     "grid.linewidth": 0.9,
-    #     "grid.alpha": 0.5,
-    # },
     "poster": {
-        "font.family": "Roboto",
+        # A LIST, not a name, and the list is the contract. matplotlib silently falls back
+        # to its default when a family is missing, so a poster rendered on a machine without
+        # the first face is a different figure that looks like the same one. `check_fonts`
+        # below refuses that rather than absorbing it.
+        "font.family": POSTER_FONT_STACK,
         "font.size": 28.0,
         # Hierarchy
         "axes.titlesize": 30.0,
@@ -189,6 +179,37 @@ RCPARAMS: dict[str, dict[str, object]] = {
         "grid.alpha": 0.30,
     },
 }
+
+
+class MissingFontError(RuntimeError):
+    """The configured typeface is not installed, so the figure would silently differ."""
+
+
+def check_fonts(target: str) -> None:
+    """Raise if this target's first-choice family is not installed.
+
+    matplotlib reports a missing family by logging a warning and substituting its default,
+    which means the figure still renders and still looks plausible. For a poster that is the
+    wrong-but-plausible result AGENTS.md section 3 is about: the same script produces
+    different typography on two machines and nothing says so.
+
+    Only the FIRST family is required, and only for the targets named in
+    `REQUIRED_FIRST_FACE`. The rest of the stack exists so a reader who cannot install it has
+    a stated fallback rather than an arbitrary one.
+    """
+    primary = REQUIRED_FIRST_FACE.get(target)
+    if primary is None:
+        return
+    try:
+        font_manager.findfont(primary, fallback_to_default=False)
+    except ValueError as exc:
+        raise MissingFontError(
+            f"the {target!r} target asks for {primary!r} and it is not installed, so "
+            f"matplotlib would substitute its default and the figure would differ from the "
+            f"one this project draws. Install it, or change POSTER_FONT_STACK in "
+            f"plots/theme.py to a face this machine has."
+        ) from exc
+
 
 # Renderers are handed matplotlib style names by plots/targets.py; the theme is keyed
 # by render target. One mapping, here, so no renderer has to know both vocabularies.
@@ -394,6 +415,7 @@ def style_context(style: str) -> Iterator[None]:
         raise ValueError(
             f"Unknown style: {style!r}. Known: {sorted(_TARGET_FOR_STYLE)}"
         )
+    check_fonts(target)
     with plt.style.context("default"):
         apply_rcparams(target)
         yield

@@ -8,6 +8,16 @@ import plotly.graph_objects as go
 
 from quebra.plots import theme
 
+# Written into every PDF instead of matplotlib's own version string, and the PNG's `Software`
+# key is suppressed for the same reason: those fields name the matplotlib that rendered the
+# file, so leaving them in makes the bytes move on every matplotlib release even when the
+# drawing is identical. `CreationDate` is the other variable field and is dropped outright.
+#
+# The KEYS DIFFER BY FORMAT. PDF has CreationDate/Creator/Producer; PNG has none of them and
+# seeds `Software` instead, so passing a PDF key to the PNG writer is a silent no-op.
+_PDF_METADATA = {"CreationDate": None, "Creator": "quebra", "Producer": "quebra"}
+_PNG_METADATA = {"Software": None}
+
 
 class _RenderablePlot(Protocol):
     name: str
@@ -50,7 +60,10 @@ def render_static(plot: _RenderablePlot, result: object, out_dir: Path) -> None:
         # Per-target filename: static and academic would otherwise write the same {name}.pdf,
         # so academic clobbered static while the prov record listed both targets.
         figure.savefig(
-            out_dir / f"{plot.name}_static.pdf", dpi=300, bbox_inches="tight"
+            out_dir / f"{plot.name}_static.pdf",
+            dpi=300,
+            bbox_inches="tight",
+            metadata=_PDF_METADATA,
         )
     plt.close(figure)
 
@@ -61,7 +74,10 @@ def render_academic(plot: _RenderablePlot, result: object, out_dir: Path) -> Non
     with theme.style_context("paper"):
         figure = plot.build_matplotlib(result, style="paper")
         figure.savefig(
-            out_dir / f"{plot.name}_academic.pdf", dpi=600, bbox_inches="tight"
+            out_dir / f"{plot.name}_academic.pdf",
+            dpi=600,
+            bbox_inches="tight",
+            metadata=_PDF_METADATA,
         )
     plt.close(figure)
 
@@ -82,6 +98,7 @@ def render_poster(plot: _RenderablePlot, result: object, out_dir: Path) -> None:
             dpi=600,
             bbox_inches="tight",
             facecolor="white",
+            metadata=_PNG_METADATA,
         )
     plt.close(figure)
 

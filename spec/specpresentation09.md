@@ -350,6 +350,16 @@ the gap count differs; the caption follows and a test asserts it does.
 (a) **First checkpoint:** widen the pattern in `tests/test_style_baseline.py` to catch the dict form
 `**{"fontsize": ...}`, and add that form to the `:7-9` list of what the scope does not catch.
 
+**AMENDED during implementation, on a measurement.** This requirement said to match the bare key
+and accept a floor of 19. Measured instead: matching only a NUMERIC LITERAL in either spelling
+scores **15**. The bare-key pattern counted two `fontsize=theme.X` references as hardcoding, which
+is a false positive against the very behaviour the ratchet exists to encourage, and the two dict
+sites it would newly have caught are theme references too. So the Not done alternative below is
+what shipped: it is both the stronger gate and the lower floor, and it removes the two units of
+slack this requirement's Known risk warned about rather than accepting them. Mutation-verified in
+three directions: a planted `fontsize=9` is caught, a planted `**{"fontsize": 9}` is caught, and a
+planted `fontsize=theme.CAPTION["fontsize"]` is not counted.
+
 (b) **Last checkpoint:** re-pin `BASELINE` to the measured total, once every other requirement that
 moves a literal has landed.
 
@@ -362,14 +372,11 @@ equality, so every later change to a literal forces another re-pin. What must go
 **pattern**; what must go last is the **number**. Pinning the number first guarantees re-pinning it
 again at the end.
 
-**Known risk, stated rather than hidden.** The two sites the widened pattern newly catches read
-`theme.ON_FILL_TEXT["fontsize"] - 1`, which is a theme lookup, and a theme lookup is the behaviour
-the ratchet exists to encourage. Counting them raises the floor from 17 to 19, and because the test
-sums one total with no per-site attribution, that permanently grants two units of slack: two
-genuinely hardcoded sizes could later be added while the two theme-derived ones are removed, and the
-total would stay green at 19. The alternative, requiring a numeric literal so theme lookups are
-excluded, is recorded in Not done. Whoever implements this must state the final count in the
-checkpoint banner.
+**The Known risk this carried is now spent.** It warned that counting the two
+`theme.ON_FILL_TEXT["fontsize"] - 1` sites would raise the floor to 19 and permanently grant two
+units of slack, because the test sums one total with no per-site attribution. Taking the numeric
+literal alternative removes that: the floor is 15 and every counted site is a real literal. The
+final count still goes in the checkpoint banner.
 
 **Acceptance.** The widened pattern is run before and after and both counts are reported. At the
 final checkpoint `BASELINE` equals the measured total and both assertions pass.
@@ -457,9 +464,9 @@ CHECKPOINT 9.10 - BASELINE re-pinned to the final measured count. (R9.7b)
   `plots/mtbc_hist_plot.py:116`'s "Number of intervals" has no faithful replacement. Note also that
   a test asserting both "returns zero" and "ratchets rather than asserting a fixed list" is only
   satisfiable at `BASELINE = 0`.
-- **Requiring a numeric literal in the style ratchet** so theme lookups are not counted, keeping
-  `BASELINE` at 17. The alternative to R9.7 as written. It is the stronger gate and it is more
-  regex; recorded so the choice is visible rather than lost.
+- ~~Requiring a numeric literal in the style ratchet~~ ADOPTED at CHECKPOINT 9.1 instead of the
+  bare-key widening, on the measurement in R9.7. It is the stronger gate and it is one more regex
+  branch, and it lands the floor at 15 rather than 19.
 - **`pdf.fonttype: 42` and `ps.fonttype: 42`.** Deferred, not declined, and separated from R9.1
   because R9.0.4 shows they buy text extractability rather than determinism. What would settle it:
   one Overleaf compile of a thesis figure at the default and at 42. `svg.hashsalt` is declined
