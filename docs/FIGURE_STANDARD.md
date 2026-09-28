@@ -3,11 +3,26 @@
 Binds every figure added or edited from here on. `plots/theme.py` owns the colour and
 typography half of this; the rules below are the half a module cannot enforce.
 
-**The existing panels do not conform yet.** `panels/comparison.py` and
-`plots/interpolation_stage_plot.py` label an axis `Elapsed time (h)`, and
-`panels/across_calibration.py` labels one `Inter-event interval (h)`, both of which the
-vocabulary below rules out; and no panel yet reports how much data it dropped. Those are targets, not a description of the current code. Conform a panel
-when you next touch it; do not sweep them.
+**The existing panels do not all conform yet.** Two backlogs, stated as they stand:
+
+- **Dropped data.** These report in the figure what they leave out:
+  `panels/within_calibration.py` (fit-error values above the view, relative errors
+  excluded, and censored windows each survival curve excluded), `panels/check_ledger.py`
+  (thresholds with no usable windows), `plots/check_outcome_plot.py` (checks shown of those
+  run, and checks asked for that produced no answer), `plots/independence_survey_plot.py`
+  (cells not computed, and that C3 is drawn with no bench cell) and
+  `plots/instrument_validation_plot.py` (the tier that is not drawn, and the censored gap the
+  load-haul-dump comparison drops). Two record a deviation in their own docstrings and carry
+  the count only on the artifact: `plots/km_survival_plot.py` (windows whose birth was not
+  observed) and `plots/mtbc_hist_plot.py` (non-positive intervals). `plots/tlf_plot.py` drops
+  non-finite values, and `plots/allan_plot.py` non-finite and non-positive fractional-deviation
+  points, with no note.
+- **Vocabulary.** The backlog is larger than a few axis labels, and part of it cannot be fixed
+  in the render layer: threshold labels are step kwargs and artifact keys. It is deferred to
+  its own spec; see `spec/specpresentation09.md`, Not done.
+
+Those are targets, not a description of every panel. Conform a panel when you next touch it;
+do not sweep them.
 
 This document uses spaced hyphens throughout, per its own rule.
 

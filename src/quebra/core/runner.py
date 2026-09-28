@@ -139,6 +139,35 @@ def _ancestors(job: Job, root_id: str) -> set[str]:
     return reachable
 
 
+def _check_render_targets(job: Job, included_by: tuple[str, ...] = ()) -> None:
+    """Refuse a figure sink that names a render target nobody registered, before any work.
+
+    Looked up at render time instead, the name fails as a bare KeyError after every step has
+    run. A target exists only once `plots.targets.register_target` has registered it. A
+    composite checks every job it includes, at any depth, whether or not it renders their
+    figures: a sub-job that declares a missing target is a broken job file either way, and
+    finding out after the composite has written its run dir is too late.
+    """
+    for inc in job.includes:
+        _check_render_targets(inc.job, (*included_by, f"{job.name!r} as {inc.alias!r}"))
+    for sink in job.sinks:
+        if not isinstance(sink, _FigureSink):
+            continue
+        unknown = sorted(set(sink.targets) - set(RENDER_TARGETS))
+        if unknown:
+            via = (
+                f", included by {' via '.join(reversed(included_by))}"
+                if included_by
+                else ""
+            )
+            raise ValueError(
+                f"figure {sink.name!r} in job {job.name!r}{via} asks for render target(s) "
+                f"{unknown}, which are not registered; the registered targets are "
+                f"{sorted(RENDER_TARGETS)}. A target exists only once "
+                "plots.targets.register_target has registered it."
+            )
+
+
 def _check_sink_artifact_names(job: Job) -> None:
     """Reject two sinks that would write the same artifact name from different nodes.
 
@@ -494,6 +523,7 @@ def run_job(
     is_composite = bool(job.includes)
 
     _check_sink_artifact_names(job)  # fail-fast before any output dir exists
+    _check_render_targets(job)
 
     # Resolve every dataset path once (fail-fast on a missing file, before any
     # output dir exists) - this mapping feeds BOTH the execution loop (loader) and

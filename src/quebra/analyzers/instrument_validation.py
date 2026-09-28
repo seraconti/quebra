@@ -20,9 +20,14 @@ tie experiment are all declared as Datasets by `jobs/active/instrument_validatio
 a figure's dependence on them runs through provenance rather than around it.
 
 **What this report is NOT.** It is not a promotion decision and it does not score power.
-`jobs/bench/results/promotion_report.md` does that, from the calibration bench, and only four
-checks have bench cells - C3 has none and CvM is deliberately unregistered. A routine can
-be perfectly validated here and still be unusable on a short window.
+`jobs/bench/results/promotion_report.md` does that, from the calibration bench, where every
+check in the battery has cells and C3 has none. A routine can be perfectly validated here and
+still be unusable on a short window.
+
+**Cited, not copied.** A number in the report is either computed here, from the published
+record, the R reference values or this run's own Monte Carlo, or it is not quoted: a claim
+resting on the test suite names the test, and one resting on the bench names the table and
+the cells. A copied number cannot follow its source.
 """
 
 from __future__ import annotations
@@ -272,6 +277,29 @@ def _published_lookup(published_df: pd.DataFrame) -> dict[str, float]:
     }
 
 
+def load_haul_dump_record(
+    gaps_df: pd.DataFrame, published_df: pd.DataFrame
+) -> tuple[int, float, int]:
+    """(complete gaps, censoring time in hours, censored gaps) of the published record.
+
+    The record is time censored at `tau_h`: observation stops there, so whatever time is left
+    after the last failure is one censored gap, which the complete-gap estimators drop. The
+    counts are derived from the record rather than written down, so a caption quoting them
+    cannot outlive it. `tau_h` is compared with `last_event_time` under `TAU_MARGIN`, as every
+    guard on a segment is, so summation order cannot decide whether a gap is censored.
+    """
+    from quebra.analyzers.checks.result import TAU_MARGIN, last_event_time
+
+    x = gaps_df["gap_h"].to_numpy(dtype=float)
+    tau_h = _published_lookup(published_df)["tau_h"]
+    t_n = last_event_time(x)
+    if tau_h < t_n * (1.0 - TAU_MARGIN):
+        raise ValueError(
+            f"the complete gaps end at {t_n:.10g} h, past the censoring time {tau_h:.10g} h"
+        )
+    return len(x), tau_h, int(tau_h > t_n * (1.0 + TAU_MARGIN))
+
+
 def build_published_comparisons(
     gaps_df: pd.DataFrame, published_df: pd.DataFrame
 ) -> list[PublishedComparison]:
@@ -300,7 +328,9 @@ def build_published_comparisons(
     pub = _published_lookup(published_df)
     tau = pub["tau_h"]
     n = len(x)
-    segment = Segment(x=x, tau=tau, n_censored_dropped=1)
+    segment = Segment(
+        x=x, tau=tau, n_censored_dropped=load_haul_dump_record(gaps_df, published_df)[2]
+    )
 
     gamma_complete = gamma_hat(x, tau, GAMMA_COMPLETE)
     gamma_truncated = gamma_hat(x, tau, GAMMA_TRUNCATED)
@@ -479,6 +509,22 @@ def _divergence_points(tie_df: pd.DataFrame, threshold: float) -> dict[int, floa
     return out
 
 
+SIZE_TABLE_PATH = "jobs/bench/results/size_table.csv"
+PROMOTION_REPORT_PATH = "jobs/bench/results/promotion_report.md"
+
+
+def _bench_size_note(check: str) -> str:
+    """What the bench's size cells show for one check, cited by table and cell key."""
+    return (
+        "On Weibull gaps its asymptotic cells at n = 20 have point estimates above nominal "
+        f"for both shapes the bench runs ({SIZE_TABLE_PATH}: check={check}, calibration=asymptotic, "
+        "arm=A_iid_weibull, clock=in_spec, quantised=False, censoring_target=0.0, "
+        "n_target=20). Its permutation cells hold size at n >= 35 and censoring <= 0.03 "
+        f"({SIZE_TABLE_PATH}: check={check}, calibration=permutation), as "
+        f"{PROMOTION_REPORT_PATH} judges them: Bonferroni within each row, none across rows"
+    )
+
+
 def build_instrument_validation(
     gaps_df: pd.DataFrame,
     published_df: pd.DataFrame,
@@ -508,6 +554,31 @@ def build_instrument_validation(
     )
     cross = build_cross_implementation(r_inputs_df, r_values_df)
 
+    def measured(instrument: str) -> str:
+        size = sizes[instrument]
+        se = asymptotic_size_se(size, asymptotic_size_replicates)
+        return (
+            f"size measured at tau={asymptotic_size_tau:g}: {size:.4f} +/- {se:.4f} on "
+            "exponential gaps (nominal 0.05). "
+        )
+
+    n_exact = sum(1 for row in published if row.agrees)
+    xi_exact = [r for r in cross if r.statistic == "xi" and not r.reference_is_random]
+    dcor_exact = [
+        r for r in cross if r.statistic == "dcor" and not r.reference_is_random
+    ]
+    r_ref = {
+        (str(r.case), str(r.quantity)): float(r.value)
+        for r in r_values_df.itertuples(index=False)
+    }
+    c3_seed = int(r_ref[("durations_iid", "serial_indep_sim_seed")])
+    c3_n_sim = int(r_ref[("durations_iid", "serial_indep_N")])
+    c3_lag_max = int(r_ref[("durations_iid", "serial_indep_lag_max")])
+    exactness = (
+        "tests/test_tier3_calibration.py::"
+        "test_the_permutation_p_value_is_exact_under_exchangeability"
+    )
+
     # Tier table. Every verdict here is a statement about evidence that EXISTS in this
     # repo, not a judgement of the underlying method.
     tiers = [
@@ -515,18 +586,14 @@ def build_instrument_validation(
             "C1 Lewis-Robinson",
             2,
             TIER_PARTIAL,
-            "4 of 7 published quantities exact; 3 differ by the 1/N vs 1/(N-1) divisor",
+            f"{n_exact} of {len(published)} published quantities exact; "
+            f"{len(published) - n_exact} differ by the 1/N vs 1/(N-1) divisor",
         ),
         TierRow(
             "C1 Lewis-Robinson",
             3,
             TIER_PARTIAL,
-            f"size measured at tau={asymptotic_size_tau:g}: {sizes['C1 Lewis-Robinson']:.4f} +/- {asymptotic_size_se(sizes['C1 Lewis-Robinson'], asymptotic_size_replicates):.4f} on "
-            "exponential gaps (nominal 0.05). The bench measures 0.0640 and 0.0740 on "
-            "Weibull shapes 0.75 and 1.50 - but ONLY in the fully specified cell "
-            "arm=A_iid_weibull, clock=in_spec, quantised=False, censoring=0.00; "
-            "ten rows share n=20/asymptotic/shape=0.75 and span 0.063 to 0.176. "
-            "The DIRECTION depends on the gap distribution, so none is claimed",
+            measured("C1 Lewis-Robinson") + _bench_size_note("c1_lewis_robinson"),
         ),
         TierRow(
             "C1 Lewis-Robinson", 4, TIER_ABSENT, "no independent implementation in hand"
@@ -535,24 +602,24 @@ def build_instrument_validation(
             "C2 Anderson-Darling",
             2,
             TIER_PASS,
-            "four published critical values reproduced",
+            "the published limiting critical values reproduced "
+            "(tests/test_checks_statistics.py::"
+            "test_ad_limiting_cdf_reproduces_published_critical_values)",
         ),
         TierRow(
             "C2 Anderson-Darling",
             3,
             TIER_PARTIAL,
-            f"size measured at tau={asymptotic_size_tau:g}: {sizes['C2 Anderson-Darling']:.4f} +/- {asymptotic_size_se(sizes['C2 Anderson-Darling'], asymptotic_size_replicates):.4f} on exponential "
-            "gaps. Bench 0.0650 and 0.0865 on Weibull shapes 0.75 and 1.50, in the "
-            "cell arm=A_iid_weibull, clock=in_spec, quantised=False, censoring=0.00 "
-            "only - other rows at n=20 and the same shape run to 0.176",
+            measured("C2 Anderson-Darling") + _bench_size_note("c2_anderson_darling"),
         ),
         TierRow(
             "C2 Anderson-Darling",
             4,
             TIER_PARTIAL,
-            "gamma=1 path equals `_classical_ad` to float precision - but that is five "
-            "hand-written lines in our own test file, same language and same author, so "
-            "it is tier-1 evidence wearing a tier-4 label. No independent "
+            "the gamma=1 path equals a textbook Anderson-Darling written in our own test "
+            "file (tests/test_checks_statistics.py::"
+            "test_eq7_is_the_classical_anderson_darling) - same language and same author, "
+            "so it is tier-1 evidence wearing a tier-4 label. No independent "
             "implementation of eq (7) is in hand",
         ),
         TierRow(
@@ -562,37 +629,43 @@ def build_instrument_validation(
             "C3 serial copula",
             3,
             TIER_ABSENT,
-            "no bench cell; smoke-tested on iid input only",
+            "no bench cell; run only on the iid reference input "
+            "(tests/test_r_cross_implementation.py::"
+            "test_the_bridge_reproduces_the_reference_serial_indep_values, which needs R)",
         ),
         TierRow(
             "C3 serial copula",
             4,
             TIER_PARTIAL,
             "BRIDGE FIDELITY, not cross-implementation agreement. "
-            "tests/test_r_cross_implementation.py reproduces "
+            "tests/test_r_cross_implementation.py::"
+            "test_the_bridge_reproduces_the_reference_serial_indep_values reproduces "
             "jobs/reference/r_reference_values.csv on BOTH the statistic and the p-value at "
-            "seed 707, N 1000, lag.max 5, which pins argument marshalling and the CSV round "
-            "trip. It is not tier-4 evidence: the fixture and the bridge both call "
-            "copula::serialIndepTest, so this is R against itself. An independent "
-            "implementation of the statistic is still absent",
+            f"seed {c3_seed}, N {c3_n_sim}, lag.max {c3_lag_max}, which pins argument "
+            "marshalling and the CSV round trip. It is not tier-4 evidence: the fixture and "
+            "the bridge both call copula::serialIndepTest, so this is R against itself. An "
+            "independent implementation of the statistic is still absent",
         ),
         TierRow(
             "C5 rank autocorr",
             3,
             TIER_PASS,
-            "permutation exactness asserted at 3 alphas x 3 layouts",
+            f"permutation exactness asserted ({exactness})",
         ),
         TierRow(
             "C5 rank autocorr",
             4,
-            TIER_PARTIAL,
-            "lag-1 rank autocorrelation matches R; the max-over-lags aggregation has no reference",
+            TIER_ABSENT,
+            "no independent implementation of C5's statistic is in hand. R's lag-1 rank "
+            "autocorrelation in the reference fixture is a Pearson correlation of the lagged "
+            "pairs; C5 divides every lag by the full centred sum of squares, so the two "
+            "differ by construction and one cannot vouch for the other",
         ),
         TierRow(
             "C6 exchangeability",
             3,
             TIER_PASS,
-            "permutation exactness asserted at 3 alphas x 3 layouts",
+            f"permutation exactness asserted ({exactness})",
         ),
         TierRow(
             "C6 exchangeability",
@@ -600,45 +673,51 @@ def build_instrument_validation(
             TIER_ABSENT,
             "no independent implementation in hand",
         ),
-        TierRow("CvM", 2, TIER_PASS, "four published critical values reproduced"),
+        TierRow(
+            "CvM",
+            2,
+            TIER_PASS,
+            "the published limiting critical values reproduced (tests/test_checks_cvm.py::"
+            "test_the_limiting_cdf_reproduces_the_published_critical_values)",
+        ),
         TierRow(
             "CvM",
             3,
             TIER_PASS,
-            f"size measured at tau={asymptotic_size_tau:g}: {sizes['CvM']:.4f} +/- {asymptotic_size_se(sizes['CvM'], asymptotic_size_replicates):.4f} on exponential gaps. "
-            "Benched over 219 size rows: in the cell arm=A_iid_weibull, "
-            "clock=in_spec, quantised=False, censoring=0.00, asymptotic size is 0.0610 "
-            "and 0.0770 at n=20 for Weibull shapes 0.75 and 1.50, and within 0.007 of "
-            "nominal from n=35 up. Mean |size - 0.05| over those 12 cells is 0.0070, "
-            "against 0.0072 for C1 and 0.0084 for C2 - CvM is the best calibrated of "
-            "the three, though the margin is near the 0.005 Monte Carlo error in most "
-            "cells and only n=20 shape 1.50 separates them clearly",
+            measured("CvM") + _bench_size_note("cvm_cramer_von_mises"),
         ),
         TierRow(
             "CvM",
             4,
             TIER_PASS,
-            "gamma=1 path equals scipy.stats.cramervonmises to 4e-16",
+            "the gamma=1 path equals scipy.stats.cramervonmises (tests/test_checks_cvm.py::"
+            "test_at_gamma_one_it_is_the_classical_cramer_von_mises)",
         ),
         TierRow(
             "Chatterjee xi",
             3,
             TIER_PARTIAL,
-            "closed-form null holds at nominal on tie-free data; under ties it is not entitled",
+            "closed-form null holds at nominal on tie-free data; under ties it is not "
+            "entitled (the xi tie experiment, below)",
         ),
         TierRow(
             "Chatterjee xi",
             4,
             TIER_PASS,
-            "matches `scipy.stats.chatterjeexi` to 1e-10 on all four cases INCLUDING "
-            "the tied one, and XICOR to 1e-10 tie-free. Two independent "
-            "implementations, one of which runs in the suite without R",
+            f"matches XICOR on the {len(xi_exact)} exact cases of the tier-4 detail (max "
+            f"abs difference {max(r.abs_difference for r in xi_exact):.1e}) and lies inside "
+            "its tie-break distribution on tied data (tests/test_r_cross_implementation.py::"
+            "test_xi_lies_inside_the_XICOR_tie_break_distribution_on_TIED_data); matches "
+            "scipy.stats.chatterjeexi too (tests/test_r_cross_implementation.py::"
+            "test_xi_matches_scipys_chatterjeexi). Two independent implementations, one of "
+            "which runs in the suite without R",
         ),
         TierRow(
             "distance correlation",
             4,
             TIER_PASS,
-            "matches the energy package on three cases",
+            f"matches the energy package on the {len(dcor_exact)} cases of the tier-4 "
+            f"detail (max abs difference {max(r.abs_difference for r in dcor_exact):.1e})",
         ),
         TierRow(
             "Kaplan-Meier",
@@ -665,18 +744,20 @@ def build_instrument_validation(
             "Kaplan-Meier",
             4,
             TIER_PARTIAL,
-            "agrees with scipy.stats.ecdf on CensoredData to 1e-12, point estimate and "
-            "log-log band, over five censoring shapes. The point estimate is compared as step "
-            "functions on the union grid; the band at Kaplan-Meier's own jump points, "
-            "where both are finite. PARTIAL and not pass because that comparison runs in the suite "
-            "and produces no CrossImplementation row here, so this verdict rests on prose "
-            "rather than on a number this artifact computed - the defect class recorded "
-            "above for tier 3. scipy is a hard dependency, so computing it in is the fix",
+            "agrees with scipy.stats.ecdf on CensoredData, point estimate and log-log band "
+            "(tests/test_kaplan_meier.py::"
+            "test_the_product_limit_estimate_agrees_with_scipys_ecdf, "
+            "tests/test_kaplan_meier.py::"
+            "test_the_log_log_band_agrees_with_scipys_log_log_interval). The point estimate "
+            "is compared as step functions on the union grid; the band at Kaplan-Meier's own "
+            "jump points, where both are finite. PARTIAL and not pass because that "
+            "comparison runs in the suite and produces no CrossImplementation row here",
         ),
     ]
 
     divergence = _divergence_points(tie_df, divergence_threshold)
     divergence_levels = _divergence_levels(tie_df, divergence_threshold)
+    n_gaps, tau_h, n_censored = load_haul_dump_record(gaps_df, published_df)
     return InstrumentValidationData(
         published=published,
         cross_implementation=cross,
@@ -685,8 +766,10 @@ def build_instrument_validation(
         divergence_tie_fraction=divergence,
         divergence_levels=divergence_levels,
         mc_floor=0.5 / float(np.sqrt(n_perm_in_tie_study)),
-        dropped={},
+        dropped={"load_haul_dump_censored_gaps": n_censored},
         meta={
+            "load_haul_dump_complete_gaps": n_gaps,
+            "load_haul_dump_tau_h": tau_h,
             "divergence_threshold": divergence_threshold,
             "n_published_quantities": len(published),
             "n_cross_checks": len(cross),
@@ -706,6 +789,12 @@ def build_instrument_validation(
             "band_coverage_censor_at": BAND_COVERAGE_CENSOR_AT,
         },
     )
+
+
+def _span(values: pd.Series, fmt: str) -> str:
+    """`lo to hi` of a column, formatted; one value when they coincide."""
+    lo, hi = format(float(values.min()), fmt), format(float(values.max()), fmt)
+    return lo if lo == hi else f"{lo} to {hi}"
 
 
 def render_tier_table_markdown(data: InstrumentValidationData) -> str:
@@ -739,7 +828,8 @@ def render_tier_table_markdown(data: InstrumentValidationData) -> str:
         "",
         "**None of this is power.** An instrument can be fully validated here and still be",
         "unable to detect anything on a window this project actually carves. Power is in",
-        "`promotion_report.md`, which scores five checks - C3 has no bench cell.",
+        "`promotion_report.md`, which scores every check in the battery; C3 has no bench",
+        "cell.",
         "",
         "## The table",
         "",
@@ -757,8 +847,13 @@ def render_tier_table_markdown(data: InstrumentValidationData) -> str:
         "",
         "## Tier 2 detail - published values",
         "",
-        "Kvaloy and Lindqvist Section 6.1, load-haul-dump record, 36 complete gaps,",
-        "time censored at 2000 h.",
+        "Kvaloy and Lindqvist Section 6.1, load-haul-dump record, "
+        f"{data.meta['load_haul_dump_complete_gaps']} complete gaps,",
+        (
+            f"time censored at {data.meta['load_haul_dump_tau_h']:.10g} h."
+            if data.dropped["load_haul_dump_censored_gaps"]
+            else f"observed to {data.meta['load_haul_dump_tau_h']:.10g} h, ending on a failure."
+        ),
         "",
         "| quantity | ours | published | agrees | note |",
         "|---|---|---|---|---|",
@@ -788,6 +883,26 @@ def render_tier_table_markdown(data: InstrumentValidationData) -> str:
         )
 
     threshold = data.meta["divergence_threshold"]
+    tie = data.tie_experiment
+    # Each sentence selects by the property it states: the control is tie-FREE, and the
+    # saturation claim is about quantising to a number of levels.
+    free = tie.loc[tie["tie_fraction_y"] == 0.0, "p_abs_diff_mean"]
+    control = (
+        "On the tie-FREE control cells, where the true difference is ~0, `|dp|` still "
+        f"reads {_span(free, '.4f')} across n."
+        if len(free)
+        else "The table holds no tie-free control cell."
+    )
+    quantised = tie[tie["y_levels"] > 0]
+    if len(quantised):
+        finest = int(quantised["y_levels"].max())
+        tied = quantised.loc[quantised["y_levels"] == finest, "tie_fraction_y"]
+        saturation = (
+            f"saturates: quantising to {finest} levels already ties {_span(tied, '.1%')} of "
+            "a sample across n, so"
+        )
+    else:
+        saturation = "saturates as the response coarsens, so"
     lines += [
         "",
         "## The xi tie experiment",
@@ -797,11 +912,11 @@ def render_tier_table_markdown(data: InstrumentValidationData) -> str:
         "",
         "Read off the signed mean, not `|dp|`: the permutation p-value carries Monte Carlo",
         f"error near {data.mc_floor:.4f}, which is most of the threshold, so `|dp|` reports",
-        "its own noise as a divergence. Measured on the tie-FREE control cell, where the",
-        "true difference is ~0, `|dp|` still reads about 0.010.",
+        "its own noise as a divergence.",
+        control,
         "",
         "Reported in DISTINCT RESPONSE VALUES rather than tie fraction, because tie fraction",
-        "saturates: quantising to 20 levels already ties 83-99 per cent of a sample, so",
+        saturation,
         "'diverges at tie fraction 1.000' is true of several different cells and cannot be",
         "checked against a real metric.",
         "",

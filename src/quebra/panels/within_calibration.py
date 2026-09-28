@@ -37,7 +37,6 @@ from quebra.analyzers.windows import STATE_UNOBSERVED
 from quebra.analyzers.within_calibration_data import WithinCalibrationPanelData
 from quebra.plots import theme
 from quebra.plots.base import BasePlot
-from quebra.plots.fidelity_helpers import apply_common_style
 
 
 # Per-threshold colours come from plots.theme.threshold_color: used on primary-axis
@@ -144,7 +143,7 @@ class WithinCalibrationPanel(BasePlot):
                 ax_surv,
             ]
             for ax in axes:
-                apply_common_style(ax)
+                theme.apply_common_style(ax)
 
             if has_extra_row:
                 if has_cum_time and has_cum_dmg:
@@ -218,10 +217,10 @@ class WithinCalibrationPanel(BasePlot):
             self._draw_survival(ax_surv, pd_)
 
             if ax_cum_time is not None:
-                apply_common_style(ax_cum_time)
+                theme.apply_common_style(ax_cum_time)
                 self._draw_cumulative_time(ax_cum_time, pd_)
             if ax_cum_dmg is not None:
-                apply_common_style(ax_cum_dmg)
+                theme.apply_common_style(ax_cum_dmg)
                 self._draw_cumulative_damage(ax_cum_dmg, pd_)
 
             self._draw_summary(ax_sum, pd_)
@@ -831,13 +830,33 @@ class WithinCalibrationPanel(BasePlot):
             ax.axis("off")
             return
 
+        legend_kwargs = dict(
+            frameon=False,
+            fontsize=7,
+            loc="upper left",
+            bbox_to_anchor=(1.01, 1.0),
+            borderaxespad=0.0,
+        )
         plotted = 0
+        excluded_only = 0
         for i, (label, _thr_val, _bvg) in enumerate(pd_.thresholds):
+            color = theme.threshold_color(i, len(pd_.thresholds))
+            # FIGURE_STANDARD: a panel that drops data says how much, in the panel. The
+            # estimator drops censored windows, so each threshold's entry carries its count,
+            # a threshold whose every window was censored included: it has no curve to label.
+            dropped = pd_.reliability.n_censored_dropped[label]
+            carved = pd_.reliability.n_windows[label]
+            note = f"{label} - excluded: {dropped} of {carved} windows (censored)"
             survival = pd_.reliability.survival_curve_min.get(label, [])
             if not survival:
+                if carved:
+                    # No line sample: the entry reports a count, not a curve.
+                    ax.plot(
+                        [], [], color=color, linestyle="none", label=f"{note}, no curve"
+                    )
+                    excluded_only += 1
                 continue
             surv_x, surv_y = zip(*survival)
-            color = theme.threshold_color(i, len(pd_.thresholds))
             ax.semilogy(
                 surv_x,
                 surv_y,
@@ -845,7 +864,7 @@ class WithinCalibrationPanel(BasePlot):
                 markersize=4,
                 markevery=max(1, len(surv_x) // 10),
                 color=color,
-                label=label,
+                label=note,
                 linestyle="-",
             )
             plotted += 1
@@ -854,11 +873,15 @@ class WithinCalibrationPanel(BasePlot):
             ax.text(
                 0.5,
                 0.5,
-                "No in-spec windows for defined thresholds",
+                "No complete in-spec windows for defined thresholds"
+                if excluded_only
+                else "No in-spec windows for defined thresholds",
                 ha="center",
                 va="center",
                 transform=ax.transAxes,
             )
+            if excluded_only:
+                ax.legend(**legend_kwargs)
             ax.axis("off")
             return
 
@@ -869,13 +892,7 @@ class WithinCalibrationPanel(BasePlot):
             f"({estimator_name(pd_.reliability.estimator)})"
         )
         ax.grid(True, which="both", color="lightgray", alpha=0.4)
-        ax.legend(
-            frameon=False,
-            fontsize=7,
-            loc="upper left",
-            bbox_to_anchor=(1.01, 1.0),
-            borderaxespad=0.0,
-        )
+        ax.legend(**legend_kwargs)
 
     def _draw_cumulative_time(
         self, ax: plt.Axes, pd_: WithinCalibrationPanelData

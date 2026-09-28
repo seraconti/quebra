@@ -237,7 +237,7 @@ panels/      within_calibration.py, across_calibration.py   generic render compo
              functions-of-axes half. The artifact itself is built in
              analyzers/within_calibration_compute.py and typed in
              analyzers/within_calibration_data.py.
-plots/       base.py, targets.py, theme.py, *_plot.py   targets: static, academic, interactive
+plots/       base.py, targets.py, theme.py, *_plot.py   targets: static, academic, poster
 jobs/active/ ramsey_*.py, ramsey_2x2_*.py, t2star_*.py, mtbf_*.py, check_calibration.py
 jobs/composite/ compare_*.py   job.include + .ref across datasets; declares JOB_SWEEP = False
 src/quebra/recipes.py          RAMSEY_CONFIG + configure_ramsey_job orchestrator.

@@ -1,10 +1,17 @@
+"""Render targets: how a figure sink writes a built figure to disk, registered by name.
+
+Three are registered. `static` writes `{name}_static.pdf` in the default style, `academic`
+writes `{name}_academic.pdf` in the paper style, and `poster` writes a 600 dpi PNG in the
+poster style. A job names targets in `job.figure(..., targets=[...])`, and the runner refuses
+an unregistered name before any step runs. A new target is one decorated function.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable, Protocol
 
 import matplotlib.pyplot as plt
-import plotly.graph_objects as go
 
 from quebra.plots import theme
 
@@ -25,8 +32,6 @@ class _RenderablePlot(Protocol):
     def build_matplotlib(
         self, result: object, style: str = "default"
     ) -> plt.Figure: ...
-
-    def build_plotly(self, result: object) -> go.Figure: ...
 
 
 RenderFn = Callable[[_RenderablePlot, object, Path], None]
@@ -101,10 +106,3 @@ def render_poster(plot: _RenderablePlot, result: object, out_dir: Path) -> None:
             metadata=_PNG_METADATA,
         )
     plt.close(figure)
-
-
-@register_target("interactive")
-def render_interactive(plot: _RenderablePlot, result: object, out_dir: Path) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    figure = plot.build_plotly(result)
-    figure.write_html(out_dir / f"{plot.name}.html", include_plotlyjs="cdn")

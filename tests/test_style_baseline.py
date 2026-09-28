@@ -37,12 +37,11 @@ PATTERNS = {
     "fontsize": re.compile(r"""fontsize\s*=\s*["'\d]|["']fontsize["']\s*:\s*["'\d]"""),
 }
 
-# It ratchets DOWN only. 17 is the current floor. An earlier attempt in this phase matched
-# only a NUMERIC literal and scored 15; the two it dropped were `allan_plot.py`'s
-# `fontsize="x-small"`, which are hardcoded sizes, so that pattern was blind to every named
-# size rather than stricter. Keying on any literal value restores them and adds the dict
-# spelling, which the original bare-key pattern never reached.
-BASELINE = 17
+# It ratchets DOWN only. 15 is the current floor. The pattern keys on any literal VALUE, so
+# a named size such as `fontsize="x-small"` counts as the hardcoded size it is, and it reaches
+# the dict spelling `"fontsize": 9` as well as the keyword; a size read from `theme` does not
+# count.
+BASELINE = 15
 
 
 def _counts() -> dict[str, int]:

@@ -47,6 +47,76 @@ def test_sink_artifact_name_collision_raises(
     assert not list((tmp_path / "out").glob("collide_*"))  # failed before mkdir
 
 
+def test_a_figure_naming_an_unregistered_target_fails_before_any_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Oracle: a job declaring `interactive`, a target no renderer could serve and none registers.
+
+    Looked up at render time, an unregistered name fails as a bare KeyError after every step
+    has run. It must fail at run start, before any output dir exists, with a message naming the
+    target, saying it is not registered, and listing the ones that are. Those are exactly the
+    ones `plots/targets.py` documents. A composite checks every job it includes the same way,
+    before it writes anything, whether or not it renders their figures.
+    """
+    import quebra.plots.targets as targets
+    from quebra.plots.base import BasePlot
+
+    import re
+
+    assert "interactive" not in targets.RENDER_TARGETS
+    documented = set(re.findall(r"`(\w+)`\s+writes", targets.__doc__ or ""))
+    assert documented == set(targets.RENDER_TARGETS), (
+        documented,
+        set(targets.RENDER_TARGETS),
+    )
+
+    (tmp_path / "data.csv").write_text("a,b\n1,2\n")
+    job_py = tmp_path / "unregistered.py"
+    job_py.write_text("# job\n")
+    job = Job(name="unregistered")
+    node = job.load_df(Dataset(path="data.csv", schema=None))
+    job.figure(BasePlot, node, targets=["static", "interactive"], title="t")
+    job.job_file = job_py.resolve()
+
+    monkeypatch.chdir(tmp_path)
+    registered = sorted(targets.RENDER_TARGETS)
+    with pytest.raises(ValueError) as refused:
+        run_job(job, tmp_path / "out", force=True, data_root=tmp_path)
+    message = str(refused.value)
+    assert "['interactive'], which are not registered" in message, message
+    assert f"the registered targets are {registered}" in message, message
+    assert not list((tmp_path / "out").glob("unregistered_*"))  # failed before mkdir
+
+    # A composite whose included sub-job declares the missing target, with the default
+    # `figures=False`, so the composite would never render that figure itself.
+    sub_py = tmp_path / "broken_sub.py"
+    sub_py.write_text(
+        "from quebra.core.job import Job\n"
+        "from quebra.core.dataset import Dataset\n"
+        "from quebra.plots.base import BasePlot\n"
+        'job = Job(name="broken_sub")\n'
+        'node = job.load_df(Dataset(path="data.csv", schema=None))\n'
+        'job.materialize(node, name="out")\n'
+        'job.figure(BasePlot, node, targets=["interactive"], title="t")\n'
+    )
+    comp_py = tmp_path / "wraps_broken.py"
+    comp_py.write_text("# composite\n")
+    comp = Job(name="wraps_broken")
+    inc = comp.include(sub_py, alias="s1")
+    comp.materialize(comp.step(_passthrough, inc.ref("out"), name="kept"), name="kept")
+    comp.job_file = comp_py.resolve()
+    with pytest.raises(ValueError) as refused:
+        run_job(comp, tmp_path / "out", force=True, data_root=tmp_path)
+    assert (
+        "in job 'broken_sub', included by 'wraps_broken' as 's1' asks for render "
+        "target(s) ['interactive']"
+    ) in str(refused.value), refused.value
+    written = (
+        sorted((tmp_path / "out").rglob("*")) if (tmp_path / "out").exists() else []
+    )
+    assert written == [], f"the composite wrote before refusing: {written}"
+
+
 def _seed_run(
     root: Path, name: str, identity: str, commit: str, tree_clean: bool = True
 ) -> Path:

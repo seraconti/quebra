@@ -417,7 +417,31 @@ that does not exist is worse than an undeclared deviation.
 report. The censored count is visible in the rendered panel. `git grep -n "print(" src/quebra/analyzers/reliability_band.py`
 returns nothing. The km legend either carries `n` or no longer claims to.
 
-**Budget.** Collect +1 to +2. Files 4.
+**AMENDED at the checkpoint, on a sweep of the render layer.** "Seven now do" counted sites, not
+renderers: the seven cites fall in five renderers, two each in `panels/within_calibration.py` and
+`panels/check_ledger.py` (at `278a2fd`, `:14` is its docstring promising the count and `:193`
+the in-panel note).
+`FIGURE_STANDARD.md` now names those five and what each reports:
+`panels/within_calibration.py`, `panels/check_ledger.py`, `plots/check_outcome_plot.py`,
+`plots/independence_survey_plot.py` and `plots/instrument_validation_plot.py`. It also names
+`plots/km_survival_plot.py` and `plots/mtbc_hist_plot.py` as recording their own deviation, and
+`plots/tlf_plot.py` as dropping non-finite values with no note.
+
+**Scope addition, recorded at the checkpoint.** (b) as written covered only thresholds that draw
+a curve. A threshold whose every window was censored has no curve, so its dropped windows were
+the ones no entry reported: on the two-gap test record, 3 of 3 at 2 µs. Such a threshold now gets a
+legend entry with its count and "no curve". When no threshold draws a curve, the panel's
+message reads "No complete in-spec windows", because "No in-spec windows" would be false.
+
+**Not done.** `print` to stdout remains in other steps: `windows.py`, `signal_band.py` and
+`distinguish_band.py` on the within-calibration path, `allan.py`, `fidelity.py`,
+`kaplan_meier.py`, `mtbf.py` and `t2star.py` in `analyzers/`, and `transforms/filter.py`. Two of
+those print a dropped-data count no figure carries: `kaplan_meier.py:366-372` prints
+`dropped_unobserved_birth` (the km figure's recorded deviation), and `transforms/filter.py`
+prints the point count at each filter stage. This requirement names `reliability_band.py` only.
+
+**Budget.** Collect +1 to +2. Files 4. Measured: collect +2, files 6 (the four named, plus
+`tests/test_within_calibration_builder.py` and the new `tests/test_km_survival_plot.py`).
 
 ---
 
@@ -435,7 +459,46 @@ source, because nothing recomputes it and a reader cannot tell.
 **Acceptance.** `git grep -n "36 complete gaps"` returns nothing. MUTATION: change the generator so
 the gap count differs; the caption follows and a test asserts it does.
 
-**Budget.** Collect +1. Files 3.
+**AMENDED at the checkpoint.** The same literal had a second site, the tier-2 heading of
+`render_tier_table_markdown` (`analyzers/instrument_validation.py`), and a third number of the
+same kind: `Segment(..., n_censored_dropped=1)` in `build_published_comparisons`. All three now
+come from `load_haul_dump_record`, which derives the gap count, the censoring time and the
+censored-gap count from the record, and the artifact carries them in `meta` and `dropped`. The
+acceptance grep is read over `src/`: it cannot return nothing over the whole repository, because
+this spec quotes the literal and `jobs/bench/results/instrument_report.md` is generated from the
+artifact and legitimately reads "36 complete gaps" while the record has 36. The generated report
+is byte-identical after the change (`tests/test_instrument_report_currency.py` passes). The
+`Segment` count is an equivalent mutant: `c1.statistic`, the only reader in tier 2, never reads
+`n_censored_dropped`, so the value reaches nothing. The residual test follows the segment guards'
+convention (`last_event_time` under `TAU_MARGIN`), and a record that ends on a failure is
+described as "observed to ... ending on a failure" rather than as time censored.
+
+**Extended at the review of 9.7-9.10, on Sera's decisions.** The rest of the generated report
+carried hand-typed numbers too, two of them false: CvM "within 0.007 of nominal from n=35 up"
+(0.017 off at n = 35, shape 1.50) and C2's other rows "run to 0.176" (C1's figure). The report
+now quotes a measured number only when it computes it, from the published record, the R reference
+values, the tie study it loads or its own Monte Carlo. A claim resting on the test suite names
+the test. A claim resting on the bench names `size_table.csv` and the cell key, and states only
+what the bench audit found supportable: the asymptotic cells at n = 20 on Weibull gaps read
+above nominal, and the permutation cells hold size at n >= 35 and censoring <= 0.03 as
+`promotion_report.md` judges them. A test resolves every cited test and checks the bench claim
+against the committed table, and the permutation half against the promotion report's own
+verdict inside its envelope. One grade changed, because its evidence did not exist: C5's tier 4
+said "lag-1 rank autocorrelation matches R", but the cited test computes a Pearson correlation
+inline and never calls C5, whose lag autocorrelation divides by the full centred sum of squares
+and so differs from R's by construction. It is now `absent`. The xi and distance-correlation
+case counts are computed from this artifact's R comparison rows; a mutation that types them back
+in is equivalent on today's reference values.
+
+**Not done.** The gold-standard values themselves (Kvaloy-Lindqvist Section 6.1 and Table 2,
+the Anderson-Darling and Cramer-von Mises limiting critical values) await a check against the
+sources. The bench's own defects, found by the same audit, are deferred to a bench spec: its
+statistics are guarded by no test that can fail, the C1/C2 retry never succeeds, a pooled mean is
+presented as a cell, and nothing ties its tables to the code that produced them. The audit
+ledgers are kept outside the repository.
+
+**Budget.** Collect +1. Files 3. Measured: collect +2, at the 2x line, and files 4 (the three,
+plus the regenerated `jobs/bench/results/instrument_report.md`).
 
 ---
 
@@ -479,6 +542,11 @@ final checkpoint `BASELINE` equals the measured total and both assertions pass.
 
 **Budget.** Collect +0. Files 2.
 
+**Measured at the final checkpoint.** 15 under the shipped pattern (any literal value, both
+spellings), against 17 when (a) landed. This is not the "15" of the paragraph above, which was
+the numeric-only pattern that was not shipped; that pattern now scores 13. The two gone are the two literals of
+`plots/interpolation_stage_plot.py`, deleted by R9.8; no other file's count moved.
+
 ---
 
 ## R9.8 - Remove render code that nothing reaches
@@ -507,7 +575,26 @@ target that cannot render is machinery a reader will reasonably assume works.
 nothing. `sorted(RENDER_TARGETS)` matches what `targets.py` documents. A test asserts a job
 declaring an unregistered target fails with a message naming the reason.
 
-**Budget.** Collect +0 to +1. Files 6.
+**Budget.** Collect +0 to +1. Files 6. Measured: collect +1, files 10 (the six, plus
+`plots/targets.py`, `core/runner.py`, `AGENTS.md` and `tests/test_reuse_gate.py`), under 2x.
+
+**AMENDED at the checkpoint.** Four things the requirement did not say.
+
+- An unregistered target failed as a bare `KeyError` in the render loop, after every step had
+  run. `core/runner.py` now refuses it at run start, next to the sink-name check, naming the
+  target and listing the registered ones, and a composite runs the same check over every job it
+  includes, at any depth, before it writes anything, whether or not it renders their figures.
+  It sits in the runner, not in `job.figure`, because `core.runner -> plots.targets` is the one
+  core-to-plots exception the contract already grants.
+- `plots/targets.py` had no documentation of its targets, so "matches what `targets.py`
+  documents" had nothing to match. It now has a module docstring naming the three, and the test
+  checks every registered name appears there.
+- `AGENTS.md` listed the targets as "static, academic, interactive": it omitted `poster`. Now
+  "static, academic, poster".
+- The acceptance greps are read over `src/`, `tests/`, `jobs/`, `docs/` and `AGENTS.md`. Over the
+  whole repository they cannot return nothing: this spec quotes both names. One
+  `plots.fidelity_helpers` mention remains, in `tests/test_identity_closure.py`, as the history
+  of what a compute closure once reached; it is true as history and is kept.
 
 **Follow-through this requirement should claim.** `plotly>=6.0` (`pyproject.toml:34`) is a hard
 runtime dependency existing only for the dead target and its `-> go.Figure` annotations.
@@ -563,7 +650,10 @@ CHECKPOINT 9.10 - BASELINE re-pinned to the final measured count. (R9.7b)
   satisfiable at `BASELINE = 0`.
 - ~~Requiring a numeric literal in the style ratchet~~ ADOPTED at CHECKPOINT 9.1 instead of the
   bare-key widening, on the measurement in R9.7. It is the stronger gate and it is one more regex
-  branch, and it lands the floor at 15 rather than 19.
+  branch, and it lands the floor at 15 rather than 19. SUPERSEDED at the 9.1 review: a
+  numeric-only pattern misses named sizes such as `fontsize="x-small"`, so the shipped pattern
+  keys on any literal value, with a floor of 17 at 9.1 and 15 now (R9.7, "Measured at the final
+  checkpoint").
 - **`pdf.fonttype: 42` and `ps.fonttype: 42`.** Deferred, not declined, and separated from R9.1
   because R9.0.4 shows they buy text extractability rather than determinism. What would settle it:
   one Overleaf compile of a thesis figure at the default and at 42. `svg.hashsalt` is declined

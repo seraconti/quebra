@@ -444,3 +444,125 @@ def test_a_cumulative_curve_longer_than_the_scan_clock_is_refused() -> None:
                     getattr(panel, method)(ax, pd_)
             finally:
                 plt.close(fig)
+
+
+def test_the_survival_panel_states_how_many_censored_windows_it_excluded(
+    capsys,
+) -> None:
+    """Oracle: censored windows counted per threshold from the carve's own window table.
+
+    docs/FIGURE_STANDARD.md: a panel that drops data says how much it dropped, in the panel,
+    not in the log. The survival estimator drops censored windows, so every threshold that
+    carved a window has a legend entry with that count, including one whose every window was
+    censored and which therefore has no curve (its entry draws no line sample); and the
+    reliability band step prints nothing.
+    """
+    import matplotlib.pyplot as plt
+
+    t_h = np.concatenate(
+        [
+            np.linspace(0.0, 5.0, 200),
+            np.linspace(8.0, 12.0, 160),
+            np.linspace(15.0, 20.0, 200),
+        ]
+    )
+    s = 3.0 + 0.6 * np.sin(t_h) + 0.3 * np.cos(3.0 * t_h)
+    carved = windows.run(
+        windows.WindowsInputs(
+            t_rel_s=t_h * 3600.0, values=s, thresholds=_THRESHOLDS, dataset_id="unit"
+        )
+    )
+    pd_ = build_within_calibration_panel_data(
+        t_h=t_h,
+        primary_series=s,
+        primary_label="T2* (µs)",
+        thresholds=_THRESHOLDS,
+        meta={},
+        windows=carved.windows,
+        reads=carved.reads,
+        gap_spans_s=carved.diagnostics["gap_spans_s"],
+    )
+    from quebra.analyzers import reliability_band
+
+    capsys.readouterr()
+    reliability_band.run(
+        reliability_band.make_inputs_from_windows(
+            t_h=t_h,
+            values=s,
+            reads=carved.reads,
+            windows=carved.windows,
+            thresholds=_THRESHOLDS,
+            gap_spans_h=pd_.signal.gap_spans_h,
+            damage_fn=None,
+        )
+    )
+    printed = capsys.readouterr()
+    assert printed.out == "" and printed.err == "", f"the band step printed: {printed}"
+
+    fig, ax = plt.subplots()
+    try:
+        WithinCalibrationPanel(name="survival_probe")._draw_survival(ax, pd_)
+        entries = ax.get_legend()
+        legend = [text.get_text() for text in entries.get_texts()]
+        samples = {
+            text.get_text(): handle.get_linestyle()
+            for text, handle in zip(entries.get_texts(), entries.legend_handles)
+        }
+    finally:
+        plt.close(fig)
+    no_curve = [text for text in samples if text.endswith(", no curve")]
+    assert no_curve, "no no-curve entry to check"
+    for text in no_curve:
+        assert samples[text] == "None", f"{text!r} draws a line sample"
+
+    table = carved.windows
+    with_curve = without_curve = 0
+    for label, _, _ in _THRESHOLDS:
+        mine = table[table["threshold_label"] == label]
+        if len(mine) == 0:
+            assert not any(t.startswith(label) for t in legend), (label, legend)
+            continue
+        n_censored = int(mine["censored"].sum())
+        expected = f"{label} - excluded: {n_censored} of {len(mine)} windows (censored)"
+        if n_censored == len(mine):
+            expected += ", no curve"
+            without_curve += 1
+        else:
+            with_curve += 1
+        assert expected in legend, (expected, legend)
+    assert with_curve and without_curve, (
+        "the fixture no longer has both kinds of threshold"
+    )
+
+    # Every threshold fully censored: no curve at all, and the counts must still show.
+    only = [thr for thr in _THRESHOLDS if thr[0] == "2 µs"]
+    carved_only = windows.run(
+        windows.WindowsInputs(
+            t_rel_s=t_h * 3600.0, values=s, thresholds=only, dataset_id="unit"
+        )
+    )
+    pd_only = build_within_calibration_panel_data(
+        t_h=t_h,
+        primary_series=s,
+        primary_label="T2* (µs)",
+        thresholds=only,
+        meta={},
+        windows=carved_only.windows,
+        reads=carved_only.reads,
+        gap_spans_s=carved_only.diagnostics["gap_spans_s"],
+    )
+    fig, ax = plt.subplots()
+    try:
+        WithinCalibrationPanel(name="survival_probe")._draw_survival(ax, pd_only)
+        assert ax.get_legend() is not None, "no legend when no curve is drawn"
+        legend = [text.get_text() for text in ax.get_legend().get_texts()]
+        # Windows exist and were all censored, so "no in-spec windows" would be false.
+        notes = [text.get_text() for text in ax.texts]
+        assert notes == ["No complete in-spec windows for defined thresholds"], notes
+    finally:
+        plt.close(fig)
+    n_only = len(carved_only.windows)
+    assert n_only, "the single-threshold carve produced no window"
+    assert legend == [
+        f"2 µs - excluded: {n_only} of {n_only} windows (censored), no curve"
+    ], legend

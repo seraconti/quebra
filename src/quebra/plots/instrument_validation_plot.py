@@ -216,6 +216,16 @@ class PublishedValuesPlot(BasePlot):
             ax_rel.set_xlim(left=-0.15)
 
             n_disagree = sum(1 for r in rows if not r.agrees)
+            n_gaps = pd_.meta["load_haul_dump_complete_gaps"]
+            tau_h = pd_.meta["load_haul_dump_tau_h"]
+            n_censored = pd_.dropped["load_haul_dump_censored_gaps"]
+            # A record ends either on a failure or at the censoring time; only the second
+            # leaves a gap the complete-gap estimators drop.
+            record = (
+                f"time censored at {tau_h:.10g} h, {n_censored} censored gap dropped"
+                if n_censored
+                else f"observed to {tau_h:.10g} h, ending on a failure, so no gap is censored"
+            )
             fig.suptitle(
                 "Transcription against published values - load-haul-dump record, "
                 "Kvaloy and Lindqvist Section 6.1"
@@ -223,7 +233,7 @@ class PublishedValuesPlot(BasePlot):
             fig.text(
                 0.5,
                 0.015,
-                f"36 complete gaps, time censored at 2000 h, 1 censored gap dropped. "
+                f"{n_gaps} complete gaps, {record}. "
                 f"{len(rows) - n_disagree} of {len(rows)} quantities reproduce exactly; "
                 f"{n_disagree} differ ONLY by the 1/N against 1/(N-1) divisor, which this "
                 "tool chooses deliberately to match eq (10). That direction makes our C1 "

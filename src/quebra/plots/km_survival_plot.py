@@ -179,7 +179,7 @@ def _legend_label(curve: KaplanMeierCurve) -> str:
     """
     median = curve.median_survival_min
     median_text = "not reached" if median is None else f"{median:.1f} min"
-    return f"{curve.label}, median {median_text}"
+    return f"{curve.label}, n = {curve.n_windows}, median {median_text}"
 
 
 def _title(comparison: KaplanMeierComparison) -> str:

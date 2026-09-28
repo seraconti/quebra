@@ -237,10 +237,4 @@ def run(inputs: ReliabilityBandInputs) -> ReliabilityBand:
             "n_dropped_censored": band.n_censored_dropped[label],
         }
 
-    total_dropped = sum(band.n_censored_dropped.values())
-    print(
-        f"[reliability_band] estimator={band.estimator} "
-        f"thresholds={len(thresholds)} censored_dropped={total_dropped}",
-        flush=True,
-    )
     return band

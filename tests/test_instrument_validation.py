@@ -247,6 +247,12 @@ def test_no_tier_verdict_claims_evidence_that_does_not_exist():
     assert c2_t4 is not None and c2_t4.verdict != TIER_PASS, (
         "a reimplementation in the same language by the same author is tier-1 evidence"
     )
+    c5_t4 = data.tier_verdict("C5 rank autocorr", 4)
+    assert c5_t4 is not None and c5_t4.verdict != TIER_PASS
+    assert "matches R" not in c5_t4.detail, (
+        "no test compares C5's own statistic with R: the lag-1 check computes a Pearson "
+        "correlation inline, and C5 divides by the full centred sum of squares instead"
+    )
     c3_t4 = data.tier_verdict("C3 serial copula", 4)
     assert c3_t4 is not None
     assert c3_t4.verdict != TIER_PASS, (
@@ -336,3 +342,172 @@ def test_the_tier_3_rows_quote_a_number_this_run_produced():
         "CvM",
         "Kaplan-Meier",
     }, f"re-measured {sorted(remeasured)}; a row stopped quoting its number"
+
+
+def test_the_caption_and_report_carry_the_record_they_were_built_from(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Oracle: a record with known counts, made by keeping 30 published gaps and ending at them.
+
+    AGENTS.md section 4: a measured number in prose comes from the artifact it cites, in the
+    state it ships. The load-haul-dump caption and the report's tier-2 heading quote the
+    record's gap count, censoring time and censored-gap count. The published record must give
+    36, 2000 h and 1; a shortened one, 30 gaps observed to their own sum, must give 30, that
+    sum, and none. A number fixed in the text reads the same on both, so it fails one of them.
+
+    Tier 2 compares against the published values, and its agreement flags are fixed per
+    quantity, so a shortened record cannot pass it: its rows are taken from the published
+    record, and every other part of the build runs on the shortened one.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    import quebra.analyzers.instrument_validation as iv
+    from quebra.plots.instrument_validation_plot import PublishedValuesPlot
+
+    import dataclasses
+
+    # One agreeing row flipped, so tier 2's counts differ from the published record's.
+    published_rows = iv.build_published_comparisons(GAPS, PUBLISHED)
+    first = next(i for i, row in enumerate(published_rows) if row.agrees)
+    published_rows[first] = dataclasses.replace(published_rows[first], agrees=False)
+    n_rows, n_exact = len(published_rows), sum(r.agrees for r in published_rows)
+    monkeypatch.setattr(
+        iv, "build_published_comparisons", lambda _g, _p: published_rows
+    )
+    # The C3 bridge's seed moved too, so a seed typed into its tier-4 row would disagree.
+    r_values = R_VALUES.copy()
+    r_values.loc[r_values["quantity"] == "serial_indep_sim_seed", "value"] = 708
+    fewer = GAPS.iloc[:30]
+    tau_h = float(fewer["gap_h"].sum())
+    ending_on_a_failure = PUBLISHED.copy()
+    ending_on_a_failure.loc[ending_on_a_failure["quantity"] == "tau_h", "value"] = tau_h
+    data = build_instrument_validation(
+        fewer, ending_on_a_failure, R_INPUTS, r_values, _tie_frame()
+    )
+    tier2 = data.tier_verdict("C1 Lewis-Robinson", 2).detail
+    assert tier2.startswith(
+        f"{n_exact} of {n_rows} published quantities exact; {n_rows - n_exact} differ"
+    ), tier2
+    assert "seed 708," in data.tier_verdict("C3 serial copula", 4).detail
+    assert data.meta["load_haul_dump_complete_gaps"] == 30
+    assert data.meta["load_haul_dump_tau_h"] == tau_h
+    assert data.dropped == {"load_haul_dump_censored_gaps": 0}
+
+    fig = PublishedValuesPlot(name="unit").build_matplotlib(data)
+    try:
+        caption = " ".join(text.get_text() for text in fig.texts)
+    finally:
+        plt.close(fig)
+    expected = (
+        f"30 complete gaps, observed to {tau_h:.10g} h, ending on a failure, "
+        "so no gap is censored."
+    )
+    assert expected in caption, caption
+
+    report = render_tier_table_markdown(data)
+    assert "load-haul-dump record, 30 complete gaps," in report
+    assert f"observed to {tau_h:.10g} h, ending on a failure." in report
+
+    real = _build()
+    assert real.meta["load_haul_dump_complete_gaps"] == len(GAPS) == 36
+    assert real.meta["load_haul_dump_tau_h"] == 2000.0
+    assert real.dropped == {"load_haul_dump_censored_gaps": 1}
+    fig = PublishedValuesPlot(name="unit").build_matplotlib(real)
+    try:
+        caption = " ".join(text.get_text() for text in fig.texts)
+    finally:
+        plt.close(fig)
+    assert (
+        "36 complete gaps, time censored at 2000 h, 1 censored gap dropped." in caption
+    )
+
+    # A record whose gaps run past its own censoring time is not a record: refuse it.
+    past = PUBLISHED.copy()
+    past.loc[past["quantity"] == "tau_h", "value"] = 1000.0
+    with pytest.raises(ValueError, match="past the censoring time"):
+        iv.load_haul_dump_record(GAPS, past)
+
+
+def test_every_citation_in_the_report_resolves_and_the_bench_claim_holds():
+    """Oracle: the test files on disk, and the committed size table the report cites.
+
+    The report cites instead of copying. A pointer naming a test that no longer exists, or a
+    bench claim its own cells no longer bear out, is a copied number's failure in a new form:
+    text that outlives its evidence.
+    """
+    import re
+    from pathlib import Path
+
+    from quebra.analyzers.instrument_validation import SIZE_TABLE_PATH
+
+    repo = Path(__file__).resolve().parents[1]
+    text = render_tier_table_markdown(_build())
+
+    # The tie paragraph is computed from the tie table it was given. `_tie_frame()` has a
+    # tie-free |dp| of 0.0110 at every n and no quantised row, unlike the bench's table.
+    assert "`|dp|` still reads 0.0110 across n." in text, text
+    assert "saturates as the response coarsens" in text
+
+    pointers = set(re.findall(r"(tests/[\w/]+\.py)::(\w+)", text))
+    assert len(pointers) >= 10, (
+        f"the report cites too few tests to be the new report: {pointers}"
+    )
+    for path, name in sorted(pointers):
+        source = (repo / path).read_text(encoding="utf-8")
+        assert re.search(rf"^def {name}\(", source, re.MULTILINE), (
+            f"{path}::{name} is gone"
+        )
+
+    table = pd.read_csv(repo / SIZE_TABLE_PATH)
+    key = re.compile(
+        r"check=(\w+), calibration=asymptotic, arm=(\w+), clock=(\w+), "
+        r"quantised=(\w+), censoring_target=([\d.]+), n_target=(\d+)"
+    )
+    cited = key.findall(text)
+    assert sorted({c[0] for c in cited}) == [
+        "c1_lewis_robinson",
+        "c2_anderson_darling",
+        "cvm_cramer_von_mises",
+    ], cited
+    for check, arm, clock, quantised, censoring, n_target in set(cited):
+        cells = table[
+            (table["kind"] == "size")
+            & (table["check"] == check)
+            & (table["calibration"] == "asymptotic")
+            & (table["arm"] == arm)
+            & (table["clock"] == clock)
+            & (table["quantised"].astype(str) == quantised)
+            & (table["censoring_target"] == float(censoring))
+            & (table["n_target"] == int(n_target))
+        ]
+        assert sorted(cells["shape"]) == [0.75, 1.5], (check, cells["shape"].tolist())
+        assert (cells["rejection_rate"] > 0.05).all(), (
+            f"the report says {check}'s cited asymptotic cells have point estimates above "
+            f"nominal; the table says {cells['rejection_rate'].tolist()}"
+        )
+
+    # The permutation half is the promotion report's own verdict, inside its envelope, and the
+    # envelope the report states is the one the promotion report defines.
+    promotion_text = (repo / "jobs/bench/results/promotion_report.md").read_text()
+    assert "**The envelope is `censoring <= 0.03`**" in promotion_text
+    assert "cell with n >= 35 INSIDE" in promotion_text
+    assert "hold size at n >= 35 and censoring <= 0.03" in text
+    promotion = promotion_text.splitlines()
+    start = promotion.index("Size inside the envelope, per row:")
+    envelope = {}
+    for line in promotion[start + 3 :]:
+        if not line.startswith("|"):
+            break
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        envelope[cells[0]] = cells[5]
+    for check in {c[0] for c in cited}:
+        assert f"check={check}, calibration=permutation" in text
+        assert envelope[f"{check} [permutation]"] == "True", (check, envelope)
+
+    from quebra.analyzers.instrument_validation import _span
+
+    assert _span(pd.Series([0.25, 0.5]), ".2f") == "0.25 to 0.50"
+    assert _span(pd.Series([0.25, 0.25]), ".2f") == "0.25"

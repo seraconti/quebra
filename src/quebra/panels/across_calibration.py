@@ -40,8 +40,7 @@ import plotly.graph_objects as go
 from quebra.analyzers.mtbf import MtbfResult
 from quebra.core._artifact_guard import StaleArtifactGuard
 from quebra.plots.base import BasePlot
-from quebra.plots.fidelity_helpers import apply_common_style
-from quebra.plots.theme import qubit_color, style_context
+from quebra.plots.theme import apply_common_style, qubit_color, style_context
 
 
 def _empty() -> np.ndarray:

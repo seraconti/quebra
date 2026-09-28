@@ -489,3 +489,9 @@ def scaled_text(base: Mapping[str, object], style: str) -> dict[str, object]:
     if "fontsize" in out:
         out["fontsize"] = float(out["fontsize"]) * _TEXT_SCALE[target]
     return out
+
+
+def apply_common_style(ax: plt.Axes) -> None:
+    """Apply common axis styling (no grey background, light grid)."""
+    ax.set_facecolor("white")
+    ax.grid(True, which="both", color="lightgray", alpha=0.35)
