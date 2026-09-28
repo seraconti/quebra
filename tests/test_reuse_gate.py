@@ -111,7 +111,9 @@ def test_within_calibration_incomplete_construction_raises() -> None:
     # class owns the ladder and delegates the sweep, so the error comes from the band.
     with pytest.raises(ValueError, match="incomplete DistinguishBand"):
         WithinCalibrationPanelData(
-            signal=SignalBand(t_h=np.array([0.0, 1.0]), values=np.array([1.0, 2.0])),
+            signal=SignalBand(
+                t_h=np.array([0.0, 1.0]), values=np.array([1.0, 2.0]), gap_spans_h=[]
+            ),
             distinguish=DistinguishBand(),
             reliability=ReliabilityBand(),
             meta={},

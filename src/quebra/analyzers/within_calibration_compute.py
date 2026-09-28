@@ -229,7 +229,7 @@ def _cumulative_time_out_of_spec(
     t_h: np.ndarray,
     primary_series: np.ndarray,
     thresholds: list[tuple[str, float, bool]],
-    gap_spans_h: list[tuple[float, float]] | None = None,
+    gap_spans_h: list[tuple[float, float]],
 ) -> dict[str, np.ndarray]:
     """Left-Riemann cumulative time out of spec per threshold (OBSERVED hours)."""
     t = np.asarray(t_h, dtype=float)
@@ -243,7 +243,7 @@ def _cumulative_time_out_of_spec(
             result[label] = _to_full_length(np.zeros(len(t_f)), mask)
             continue
         oos = _out_of_spec_mask(s_f, thr_val, big_values_good)
-        dt_h = _observed_dt_h(t_f, gap_spans_h or [])
+        dt_h = _observed_dt_h(t_f, gap_spans_h)
         increments = oos[:-1].astype(float) * dt_h
         cum = np.zeros(len(t_f))
         cum[1:] = np.cumsum(increments)
@@ -256,7 +256,7 @@ def _cumulative_damage(
     primary_series: np.ndarray,
     thresholds: list[tuple[str, float, bool]],
     damage_fn: Callable[[np.ndarray], np.ndarray] | None,
-    gap_spans_h: list[tuple[float, float]] | None = None,
+    gap_spans_h: list[tuple[float, float]],
 ) -> dict[str, np.ndarray]:
     """Trapezoidal cumulative damage per threshold (primary_unit · h).
 
@@ -288,7 +288,7 @@ def _cumulative_damage(
         damage_rate = apply_damage(excess)
         # Gap intervals are zeroed here too: trapezoidal integration would otherwise
         # accrue damage across hours the instrument was not reporting.
-        dt_h = _observed_dt_h(t_f, gap_spans_h or [])
+        dt_h = _observed_dt_h(t_f, gap_spans_h)
         trap_steps = 0.5 * (damage_rate[:-1] + damage_rate[1:]) * dt_h
         cum = np.zeros(len(t_f))
         cum[1:] = np.cumsum(trap_steps)
@@ -326,7 +326,7 @@ def _threshold_in_spec_frac(
     t_h: np.ndarray,
     primary_series: np.ndarray,
     thresholds: list[tuple[str, float, bool]],
-    gap_spans_h: list[tuple[float, float]] | None = None,
+    gap_spans_h: list[tuple[float, float]],
 ) -> dict[str, float]:
     """Occupancy: fraction of OBSERVED time in spec, per threshold.
 
@@ -344,7 +344,7 @@ def _threshold_in_spec_frac(
         if len(t_f) < 2:
             result[label] = 0.0
             continue
-        dt = _observed_dt_h(t_f, gap_spans_h or [])
+        dt = _observed_dt_h(t_f, gap_spans_h)
         observed_h = float(np.sum(dt))
         if observed_h == 0.0:
             result[label] = 0.0
@@ -359,7 +359,7 @@ def _threshold_summary(
     t_h: np.ndarray,
     primary_series: np.ndarray,
     thresholds: list[tuple[str, float, bool]],
-    gap_spans_h: list[tuple[float, float]] | None = None,
+    gap_spans_h: list[tuple[float, float]],
 ) -> dict[str, dict[str, float] | None]:
     """Per-threshold out-of-spec summary (time_oos_h, frac_oos_pct).
 
@@ -379,7 +379,7 @@ def _threshold_summary(
         oos = _out_of_spec_mask(s_f, thr_val, big_values_good)
         # Same observed-time denominator as _threshold_in_spec_frac: these two land
         # on the same band and a reader compares them, so they must not disagree.
-        dt = _observed_dt_h(t_f, gap_spans_h or [])
+        dt = _observed_dt_h(t_f, gap_spans_h)
         total_h = float(np.sum(dt))
         time_oos_h = float(np.sum(dt[oos[:-1]])) if len(dt) > 0 else 0.0
         frac_oos = 100.0 * time_oos_h / total_h if total_h > 0 else 0.0
@@ -401,7 +401,7 @@ def build_within_calibration_panel_data(
     meta: dict[str, object],
     windows: pd.DataFrame,
     reads: pd.DataFrame,
-    gap_spans_s: list[tuple[float, float]] | None = None,
+    gap_spans_s: list[tuple[float, float]],
     primary_sigma: np.ndarray | None = None,
     traces: list[tuple[str, np.ndarray]] | None = None,
     use_log_scale: bool = False,
@@ -426,11 +426,21 @@ def build_within_calibration_panel_data(
     carve, so there is exactly one carve in the repo and the gap policy, censoring and
     per-read state cannot diverge between the artifact and the figure.
 
+    `gap_spans_s` is the carve's `WindowsResult.diagnostics["gap_spans_s"]`, and it is
+    required too: the tables do not hold every gap, and a record read as gap-free draws
+    through its holes and counts unobserved hours as observed. Pass `[]` for a record with
+    no gaps.
+
     `primary_sigma` is the per-read 1-sigma on `primary_series` (same units), used for
     error bars. None when the dataset carries no uncertainty.
 
     `damage_fn` is the descoped damage seam - see _cumulative_damage.
     """
+    if gap_spans_s is None:
+        raise ValueError(
+            "gap_spans_s is required: pass WindowsResult.diagnostics['gap_spans_s'], "
+            "or [] for a record with no gaps"
+        )
     t_arr = np.asarray(t_h, dtype=float)
     s_arr = np.asarray(primary_series, dtype=float)
     sigma_arr = (
@@ -460,7 +470,7 @@ def build_within_calibration_panel_data(
             values=s_arr,
             sigma=sigma_arr,
             reads=reads,
-            gap_spans_s=gap_spans_s or [],
+            gap_spans_s=gap_spans_s,
         )
     )
     distinguish = distinguish_band.run(

@@ -193,7 +193,7 @@ def _fidelity_panel_data(
         result,
         windows=window_result.windows,
         reads=window_result.reads,
-        gap_spans_s=window_result.diagnostics.get("gap_spans_s"),
+        gap_spans_s=window_result.diagnostics["gap_spans_s"],
         # `windows.run` always records this, so a missing key is a broken artifact rather
         # than an old one; defaulting it to False would silently redraw the panel in the
         # other mode. This repo raises instead of falling back.
@@ -377,7 +377,7 @@ def configure_t2star_job(
             result,
             windows=window_result.windows,
             reads=window_result.reads,
-            gap_spans_s=window_result.diagnostics.get("gap_spans_s"),
+            gap_spans_s=window_result.diagnostics["gap_spans_s"],
             thresholds=thresholds,
             shape_min_reads=shape_min_reads,
             use_uncertainty=use_uncertainty,

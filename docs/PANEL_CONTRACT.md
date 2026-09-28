@@ -229,8 +229,9 @@ To add a new metric that uses `WithinCalibrationPanel`:
 
 1. Write a compute function or analyzer that returns a typed result.
 2. Write an adapter function `make_<metric>_panel_data(result) -> WithinCalibrationPanelData`.
-   Set `t_h`, `values` and `sigma` on the `SignalBand`, and `thresholds` (whose third
-   element carries polarity) on the panel data.
+   Set `t_h`, `values`, `gap_spans_h` and `sigma` on the `SignalBand`, and `thresholds` (whose
+   third element carries polarity) on the panel data. `gap_spans_h` has no default: pass the
+   carve's gaps, or `[]` for a record with none.
 3. Write a plot class that calls the adapter and delegates to `WithinCalibrationPanel`.
 
 **No metric needs to modify the panel.** The panel's internal computations

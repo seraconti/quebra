@@ -142,8 +142,8 @@ and hashable". Measured:
 
 First, **the pickles do not preserve the numbers**: 21 of 27 fail on the tightest denominator. A
 pickle stores the fully qualified module path of its class, so a rename or a move makes it
-unreadable. `core/_artifact_guard.py:43-51` additionally raises by design whenever a dataclass
-gains a field.
+unreadable. `StaleArtifactGuard` in `core/_artifact_guard.py` additionally raises by design
+when a pickle of one of its subclasses lacks a field the class has since gained.
 
 Second, **"beside every published figure" has no addressee**. A published figure is one promoted by
 `scripts/promote_run.py`, and promotion copies only `provenance/*.prov.json` and `*.prov.md`. It
@@ -224,23 +224,55 @@ resolve to the current class: a custom `Unpickler.find_class`, or pickling under
 name rather than the defining module path. One module, plus its registration at the read sites.
 
 **Why.** R9.0.5, and it is chosen over writing a second file beside the pickle for three measured
-reasons. It **repairs the existing artifacts**, all 21 of the live-job failures, where a new
-sidecar format would leave them dead and help only future runs. It fixes the **composite transport**:
-`core/runner.py:360-363` reads the pickle back with `pickle.load` as the mechanism by which a
-composite consumes a sub-job's output, and that path stays module-path-coupled no matter what else
-is written next to it. And it is one module against roughly fifteen artifact types, one of which is
-a plain `dict` (`plots/tlf_plot.py:12-18`) with nowhere to hang a method.
+reasons. It **repairs the existing artifacts**, where a new sidecar format would leave them dead
+and help only future runs.
+
+**AMENDED during implementation, on a measurement.** This paragraph first said the remap repairs
+"all 21 of the live-job failures". Measured on the latest run of every job file under
+`jobs/active/` and `jobs/composite/`, every `*.pkl` directly in it (the compare job's
+`subjobs_output/` holds 4 more, not counted): 29 pickles, 8 load without the alias,
+24 load through it, and **20 load complete, so the alias repairs 12**. Of the 16 it makes
+loadable, 4 are stale. `KaplanMeierComparison` in both `km_poster_6d2s` pickles lacks the four
+check-outcome fields and would read as "NOT ASSESSED"; `TLFResult` in both `ramsey_q1_100423` TLF
+pickles lacks `fit_failed` and would crash `plots/tlf_plot.py:88`. Neither class carries
+`StaleArtifactGuard`, so `load_artifact` checks every dataclass it can reach and refuses all four.
+
+The 5 it cannot load are not a gap in the alias table. Every one references a class that was
+RENAMED AND RESTRUCTURED, not moved: `NonRepairablePanelData`, `RepairablePanelData` and
+`CompareNonRepairableData`, from the vocabulary AGENTS.md section 5 retired, the first of them
+before the within-calibration panel was split into three bands. An alias maps a moved package to
+the same class; mapping these onto their successors would load old field values into a new shape.
+They stay unreadable with an error that says so, and the tests pin that the alias refuses to
+rename a class. Re-running those jobs is the only honest repair.
+
+The denominator moved from the Preconditions' 27 (6 loading) to 29 (8 loading) because of one
+run. At `278a2fd` the latest `independence_survey` run was `a21fd1_20260830_110425`, which holds
+no pickle; the run written since, `d6fe38_20260927_095456`, adds 2 that load without the alias.
+That accounts for both moves, and the 21 failures are the same 21: the same rule with runs cut at
+`278a2fd` gives 27, 6 and 21.
+
+**It does not repair the composite transport**, which an earlier draft gave as the second
+reason. `core/runner.py` reads a sub-job's pickle back in `_locate_artifact`, now through
+`load_artifact`, but its reuse gate admits only a run at the current commit on a clean tree, and
+such a run is written under current paths, so no pre-move artifact reaches that read in
+production. The runner uses the loader so that every read gets the completeness check; the test
+that drives it fakes a provenance record and proves the wiring only. The choice therefore rests on
+the first reason, artifacts opened by hand, and the third: it is one module against roughly
+fifteen artifact types, one of which is a plain `dict` (`plots/tlf_plot.py:12-18`) with nowhere
+to hang a method.
 
 **Acceptance.** A test writes an artifact, renames the defining module, and loads it back through
 the remap. MUTATION: remove the alias entry; the load fails. Run both. Separately, re-run the
 Preconditions measurement and report how many of the 27 live-job pickles load after the change; the
-number is the requirement's whole justification and must be stated, not asserted.
+number is the requirement's whole justification and must be stated, not asserted. (29 at
+re-measurement; see the amendment.)
 
-**Budget.** Collect +1 to +2. Files 2 to 3.
+**Budget.** Collect +1 to +2. Files 2 to 3. Measured: collect +4, files 3, at the 2x line.
 
-**Known risk.** The alias table must be extended on every future rename. That is one line per
-rename, and omitting it fails loudly at load rather than silently, which is the same failure mode as
-today and no worse.
+**Known risk.** The alias table must be extended on every future package move. That is one line
+per move, and omitting it fails loudly at load rather than silently, which is the same failure mode
+as today and no worse. A module renamed inside a package cannot be expressed in the table: the
+lookup key is only the first component of the pickled path.
 
 ---
 
@@ -265,10 +297,13 @@ it is not the same severity as the primary trace would be.
 gap for both curves, against the same `observed_slices` the primary trace uses. MUTATION: restore
 the full-array draw at one site; the test goes red naming that curve.
 
-**Budget.** Collect +1 to +2. Files 3.
+**Budget.** Collect +1 to +2. Files 3. Measured: collect +4, files 2, at the 2x line.
 
 **Known risk.** This changes a shipped figure, which is why `quebraplan.md` §1 puts this phase
 before regenerating thesis figures.
+
+**FOUND during implementation.** The primary trace, called the already-correct site above, is only
+correct when its caller supplies the carve's gap list. That trap is its own requirement, R9.4c.
 
 ## R9.4b - The across-calibration median line must not bridge empty bins
 
@@ -288,7 +323,68 @@ that a line joining two points asserts something about the interval between them
 pass under a NaN-emitting variant, so a new assertion is required rather than an existing one
 tightened.
 
-**Budget.** Collect +1 to +2. Files 3.
+**Scope addition, recorded at the checkpoint.** The same function dropped the latest event
+whenever the span is an exact multiple of `bin_days`: `np.digitize` puts a value on the last
+edge one past the final bin. The final bin is now closed on the right, as in `np.histogram`,
+with its own test. On `mtbf_q1` (2894 intervals between 2895 events, 903.007 d) the drop does not
+fire, one bin is empty (centre day 77), and the 64 populated bins are identical to the shipped
+artifact.
+
+**Fixed at review on Sera's decision.** A line needs two consecutive finite points, so a
+populated bin with no populated neighbour, interior between two empty bins or first or last beside
+one, drew nothing on the median or p90 line (its IQR fill is a hairline). The renderer marks
+exactly those bins on both lines. A record of two or more bins with no empty bin draws as before;
+a one-bin record gains the markers, since its single point drew nothing before either. `mtbf_q1`
+has no lone bin.
+
+**Budget.** Collect +1 to +2. Files 3. Measured: collect +3, files 3.
+
+## R9.4c - The gap list cannot be omitted on the way to the panel builder
+
+**Added at the review of 9.4-9.6, on Sera's decision.** Found while implementing R9.4a, whose
+"already-correct" primary trace is only correct when its caller supplies the gaps.
+
+**What.** `build_within_calibration_panel_data`, `t2star.make_panel_data` and
+`fidelity.make_panel_data` took `gap_spans_s` as an OPTIONAL parameter defaulting to empty, and
+`recipes.py:196` and `:380` read it with `diagnostics.get("gap_spans_s")`. Below them, the four
+private helpers that hand the list to `_observed_dt_h` took `gap_spans_h=None`, and
+`SignalBand.gap_spans_h` defaulted to empty. Make it required at every one of these, have the
+builder refuse `None`, and index the key in `recipes.py`.
+
+**Why.** Omit the list and the panel has no gaps at all, silently, so:
+
+- every curve on the scan clock, the primary trace included, draws straight across the hole; and
+- cumulative time, cumulative damage and occupancy count the unobserved hours as observed, because
+  `_observed_dt_h` is handed the same empty list. That is a wrong NUMBER, not just ink.
+
+The window and read tables cannot stand in for the list: the read table has no gap column, and
+the window table marks a gap only where an in-spec read borders it, so a gap during an
+out-of-spec stretch leaves no trace there. Measured on the shipped two-gap fixture
+(`_with_read_gaps`) with the list omitted: the primary trace is one line from 0 to 20 h while the
+carve logged `gaps=2`; cumulative time out of spec at 4 µs reads 20.0 h against 14.0 h; occupancy
+at 3 µs reads 0.2915 against 0.4165.
+Production was not affected: both adapters threaded the value through from the carve, and
+`windows.run` always populates it. The defect is the API, in a codebase whose rule is that errors
+are raised, not swallowed.
+
+**Acceptance.** A test fails if any of these regains a default, if the builder accepts `None`, or if
+either adapter softens `None` before the builder sees it. MUTATION: re-add the default at each
+site in turn, remove the `None` check, and make each adapter forward `gap_spans_s or []`; each
+goes red. A second test pins the NUMBER on the two-gap fixture against a hand sum: cumulative
+time out of spec at 4 µs ends at the observed 14 h, and every state timeline marks both holes
+unobserved. MUTATION: hand the reliability band or the distinguish band an empty list, or stop
+`_observed_dt_h` zeroing gap intervals; each goes red. Reverting `recipes.py` to `.get` is an equivalent mutant
+once the builder refuses `None`, and is recorded as such.
+
+**Budget.** Recorded as measured, not forecast, because the requirement was added after the work:
+collect +2. Files 9 (`within_calibration_compute.py`, `t2star.py`, `fidelity.py`, `recipes.py`,
+`signal_band.py`, `docs/PANEL_CONTRACT.md`, and the three test files whose gap-free fixtures now
+pass the list explicitly).
+
+**Not done.** The same pattern in the independence-check path, `analyzers/check_ledger.py:176`
+and `:231` and `analyzers/checks/_multiprocess.py:160` and `:202`. `jobs/bench/arms.py:314` calls
+`segments_from_windows` without a gap list on a gap-free synthetic grid, so changing it is a
+check-machinery decision. Filed in `quebraplan.md` section 7B.
 
 ---
 
@@ -430,8 +526,9 @@ CHECKPOINT 9.0 - this spec lands. No behaviour change.
 CHECKPOINT 9.1 - the style ratchet catches the dict form; its docstring is honest. (R9.7a)
 CHECKPOINT 9.2 - PDF and PNG output is byte-reproducible; the poster is included. (R9.1)
 CHECKPOINT 9.3 - the poster font no longer fails silently; the dead theme block is gone. (R9.2)
-CHECKPOINT 9.4 - figure artifacts survive a rename; the 27 live-job pickles are re-measured. (R9.3)
+CHECKPOINT 9.4 - figure artifacts survive a rename; the live-job pickles are re-measured. (R9.3)
 CHECKPOINT 9.5 - no cumulative curve is drawn across a read gap. One shipped figure changes. (R9.4a)
+                 The gap list cannot be omitted on the way to the builder. (R9.4c, added at review)
 CHECKPOINT 9.6 - the across-calibration median line breaks at empty bins. (R9.4b)
 CHECKPOINT 9.7 - FIGURE_STANDARD is accurate; the censored count is in the panel; the km legend
                  claim is true. (R9.5)

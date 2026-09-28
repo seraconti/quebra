@@ -223,7 +223,7 @@ def make_panel_data(
     result: FidelityResult,
     windows: pd.DataFrame,
     reads: pd.DataFrame,
-    gap_spans_s: list[tuple[float, float]] | None = None,
+    gap_spans_s: list[tuple[float, float]],
     shape_min_reads: int = 5,
     xi_seed: int = 0,
     k: float = 1.0,

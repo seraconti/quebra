@@ -60,3 +60,4 @@ output_backup2/
 # where `git add -A` would sweep it into the tree.
 tests/_race_tmp/
 tests/test_zz_probe_tmp.py
+tests/test_zz_record_probe_tmp.py

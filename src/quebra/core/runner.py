@@ -24,6 +24,7 @@ from quebra.provenance import (
     is_tree_clean,
     save_prov,
 )
+from quebra.core._artifact_guard import load_artifact
 from quebra.plots.targets import RENDER_TARGETS
 
 
@@ -359,7 +360,7 @@ def _locate_artifact(ref: ArtifactRef, context: ResolutionContext) -> LocatedArt
 
     artifact_path = produced_dir / artifact_rel
     with artifact_path.open("rb") as handle:
-        obj = pickle.load(handle)
+        obj = load_artifact(handle)
     artifact_hash = f"sha256:{hash_file(artifact_path)}"
     # Record the sub-job's provenance dir relative to the top output/ pool root:
     # stable and copy-pasteable at every nesting depth (consistent with how depth-1

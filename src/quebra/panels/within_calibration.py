@@ -895,18 +895,29 @@ class WithinCalibrationPanel(BasePlot):
 
         cum_time = pd_.reliability.cumulative_time_per_threshold
         t = np.asarray(pd_.signal.t_h, dtype=float)
+        slices = render.observed_slices(pd_)
         plotted = 0
         for i, (label, _, _) in enumerate(pd_.thresholds):
             arr = cum_time.get(label)
-            if arr is None or len(arr) == 0:
+            if arr is None:
                 continue
-            ax.plot(
-                t,
-                arr,
-                color=theme.threshold_color(i, len(pd_.thresholds)),
-                linewidth=1.2,
-                label=label,
-            )
+            if len(arr) != len(t):
+                raise ValueError(
+                    f"cumulative time for {label!r} has {len(arr)} points against {len(t)} "
+                    "reads on the scan clock"
+                )
+            if len(arr) == 0:
+                continue
+            # One line per observed stretch: nothing is drawn across a gap. Only the first
+            # stretch carries the legend label.
+            for j, (lo, hi) in enumerate(slices):
+                ax.plot(
+                    t[lo:hi],
+                    arr[lo:hi],
+                    color=theme.threshold_color(i, len(pd_.thresholds)),
+                    linewidth=1.2,
+                    label=label if j == 0 else None,
+                )
             plotted += 1
 
         if plotted == 0:
@@ -946,19 +957,30 @@ class WithinCalibrationPanel(BasePlot):
 
         cum_dmg = pd_.reliability.cumulative_damage_per_threshold
         t = np.asarray(pd_.signal.t_h, dtype=float)
+        slices = render.observed_slices(pd_)
         ylabel = f"Cumulative damage ({pd_.primary_label} · h)"
         plotted = 0
         for i, (label, _, _) in enumerate(pd_.thresholds):
             arr = cum_dmg.get(label)
-            if arr is None or len(arr) == 0:
+            if arr is None:
                 continue
-            ax.plot(
-                t,
-                arr,
-                color=theme.threshold_color(i, len(pd_.thresholds)),
-                linewidth=1.2,
-                label=label,
-            )
+            if len(arr) != len(t):
+                raise ValueError(
+                    f"cumulative damage for {label!r} has {len(arr)} points against {len(t)} "
+                    "reads on the scan clock"
+                )
+            if len(arr) == 0:
+                continue
+            # One line per observed stretch: nothing is drawn across a gap. Only the first
+            # stretch carries the legend label.
+            for j, (lo, hi) in enumerate(slices):
+                ax.plot(
+                    t[lo:hi],
+                    arr[lo:hi],
+                    color=theme.threshold_color(i, len(pd_.thresholds)),
+                    linewidth=1.2,
+                    label=label if j == 0 else None,
+                )
             plotted += 1
 
         if plotted == 0:

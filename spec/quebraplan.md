@@ -771,6 +771,32 @@ question (what is the oracle, and what does the bench cell mean) and the same bl
 list. It is not Phase 6, which stops at making the R boundary honest about what it does and does
 not know.
 
+### The check path reads a record as gap-free when its gap list is omitted
+
+Found at the Phase 7 review and not fixed there. The panel builders now require the carve's
+`gap_spans_s` (`specpresentation09.md` R9.4c). The independence-check path does not:
+`CheckLedgerInputs.gap_spans_s` defaults to `None` (`analyzers/check_ledger.py:176`),
+`make_inputs_from_windows` reads it through `getattr(window_result, "diagnostics", {}) or {}` and
+`.get("gap_spans_s")` (`:225-231`), and `_segment_starts` and `segments_from_windows` take it as
+optional (`analyzers/checks/_multiprocess.py:160`, `:202`). Omitted, segmentation falls back to
+birth types alone, which the module's own docstring says cannot see a gap flanked by out-of-spec
+reads: two renewal processes separated by unobserved hours are scored as one segment. What
+happens next depends on the clock. On the in-spec clock, a censored window left mid-segment
+raises, and the ledger reports that cell as not computed. On the calendar clock the merge is
+silent. On both, a merge with no censored window between the two processes is silent.
+
+Production is not affected today: the ledger is built from a `WindowsResult`, and `windows.run`
+always records the key. The defect is the API, the same one R9.4c closed for the panel.
+
+**Why it is here rather than fixed.** `jobs/bench/arms.py:314` calls `segments_from_windows`
+without a gap list, on a regular synthetic grid that has no gaps, so requiring the argument
+changes the bench's calling code, and the bench is the calibration evidence.
+
+**Open question.** Require it everywhere and have the bench pass `[]` explicitly, which should
+change no bench number because its grid has no gaps, but that has to be shown by re-running a
+bench cell rather than asserted; or keep the fallback and name the callers allowed to use it. No
+source located for which is right; it is a design decision.
+
 ---
 
 ## 8. Three things worth being told bluntly

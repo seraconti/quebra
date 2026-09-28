@@ -28,10 +28,11 @@ class SignalBand(StaleArtifactGuard):
     # the series the panel draws, in display units
     t_h: np.ndarray
     values: np.ndarray
+    # (t_before_h, t_after_h) per read gap; the trace is broken across these. Required:
+    # a band read as gap-free draws through its holes, so there is no empty default.
+    gap_spans_h: list[tuple[float, float]]
     # per-read 1-sigma in the same units; None when the dataset carries no error column
     sigma: np.ndarray | None = None
-    # (t_before_h, t_after_h) per read gap; the trace is broken across these
-    gap_spans_h: list[tuple[float, float]] = field(default_factory=list)
 
     # marginal distribution of the metric
     value_hist_counts: np.ndarray = field(default_factory=lambda: np.array([]))

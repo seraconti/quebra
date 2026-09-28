@@ -207,6 +207,24 @@ class AcrossCalibrationPanel(BasePlot):
         ax.plot(
             centers, medians, "-", linewidth=1.4, color=color, label="Median", zorder=2
         )
+        # A line needs two consecutive finite points, so a populated bin with no populated
+        # neighbour draws nothing on the median or p90 line (its IQR fill is a hairline).
+        # Mark both there, so no populated bin vanishes from either line.
+        finite = np.isfinite(medians)
+        lone = finite & ~np.r_[False, finite[:-1]] & ~np.r_[finite[1:], False]
+        if lone.any():
+            ax.plot(
+                centers[lone], medians[lone], "o", markersize=3, color=color, zorder=2
+            )
+            ax.plot(
+                centers[lone],
+                p90s[lone],
+                "o",
+                markersize=2.5,
+                color=color,
+                alpha=0.55,
+                zorder=2,
+            )
         ax.fill_between(
             centers, q1s, q3s, color=color, alpha=0.2, zorder=1, label="IQR"
         )

@@ -4,13 +4,15 @@ A pre-split pickle restores __dict__ without the derived fields; the guard must
 fail loudly at the pickle boundary instead of crashing mid-render or silently
 drawing class defaults. Synthetic tests drive __setstate__ exactly as pickle
 protocol 2 does (``cls.__new__(cls)`` then ``__setstate__(state)``); the
-real-artifact test exercises the actual pickle.load path end-to-end.
+real-artifact test loads the pickles on disk through `load_artifact`, end to end.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import pickle
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -26,6 +28,7 @@ from quebra.analyzers.within_calibration_compute import (
 from quebra.panels._across_calibration_compute import (
     build_across_calibration_panel_data,
 )
+from quebra.core._artifact_guard import StaleArtifactGuard
 from quebra.panels.within_calibration import WithinCalibrationPanelData
 from quebra.panels.across_calibration import AcrossCalibrationPanelData
 
@@ -67,6 +70,7 @@ def _valid_within_calibration() -> WithinCalibrationPanelData:
         meta={"qubit": "1"},
         windows=_carved(t_h, series, _GUARD_THRESHOLDS)[0],
         reads=_carved(t_h, series, _GUARD_THRESHOLDS)[1],
+        gap_spans_s=[],  # uniform spacing: the carve records no gap
     )
 
 
@@ -246,25 +250,18 @@ def test_composite_reuse_of_reuse_eligible_stale_artifact_aborts(
 
 
 def test_real_pre_split_artifact_raises() -> None:
-    """The actual pre-split artifacts on disk must fail to load, one way or the other.
+    """The actual pre-split artifacts on disk must fail to load through `load_artifact`.
 
-    TWO failure modes now, and the second one is a deliberate, accepted loss.
+    Two failure modes, and the second one is a deliberate, accepted loss.
 
-    `ValueError` is the guard working as designed: the artifact loaded, its field names
-    did not match the current contract, and `StaleArtifactGuard` said so.
+    `ValueError` is a stale artifact: it loaded, and a dataclass in it lacks a field its class
+    declares now, which `StaleArtifactGuard` or the loader's completeness check reports.
 
-    `ModuleNotFoundError` is a rename. THREE have now landed: the vocabulary rename of
-    (`panels.non_repairable` -> `panels.within_calibration`), the
-    src-layout move (`panels.*` -> `quebra.panels.*`), and the move of the
-    within-calibration COMPUTE out of the render package
-    (`panels._within_calibration_{data,compute}` -> `analyzers.within_calibration_{data,compute}`),
-    which is where `WithinCalibrationPanelData` is defined and therefore what a pickle names.
-    A pickle stores the fully qualified module path, so any one of them is enough to make an
-    artifact unloadable, and after the second every artifact written before that phase was
-    already out of reach regardless of its vocabulary. 77 pickles under `output/` and `output_backup*/` are affected,
-    plus 5 naming `panels.repairable`. A compatibility shim would not have helped: the
-    MODULE is gone, not just the symbol, so `pickle.load` fails before any re-export could
-    be consulted. Recovering them means re-running the jobs that wrote them.
+    `ModuleNotFoundError` or `AttributeError` is a class that was renamed or restructured, not
+    moved: the vocabulary rename (`panels.non_repairable` -> `panels.within_calibration`) and
+    the move of the within-calibration compute out of the render package. The src-layout move
+    itself is resolved by the alias, so what remains here is what an alias must refuse.
+    Recovering these means re-running the jobs that wrote them.
 
     This is recorded rather than hidden because `output/` is append-only and those
     artifacts are evidence. They are not recoverable by editing code; they are recovered by
@@ -273,6 +270,10 @@ def test_real_pre_split_artifact_raises() -> None:
     Post-rename artifacts in the same locations must still load cleanly. Skips if no
     pre-split artifact exists (a fresh checkout has none).
     """
+    import io
+
+    from quebra.core._artifact_guard import load_artifact
+
     candidates = [
         p
         for root in ("output", "output_backup2")
@@ -281,39 +282,363 @@ def test_real_pre_split_artifact_raises() -> None:
     stale_errors: list[str] = []
     for pkl in candidates:
         try:
-            with pkl.open("rb") as fh:
-                obj = pickle.load(fh)
+            obj = load_artifact(io.BytesIO(pkl.read_bytes()))
         except ValueError as exc:
             assert "stale" in str(exc) and "--reuse-deps" in str(exc)
             stale_errors.append(str(exc))
         except (ModuleNotFoundError, AttributeError) as exc:
-            # Two renames put artifacts out of reach, and both are accepted losses:
-            #   vocabulary: panels.non_repairable -> panels.within_calibration
-            #   layout:     panels.*              -> quebra.panels.*
-            # Assert the failure names one of the modules those renames removed, so this
-            # clause cannot swallow an unrelated packaging break.
+            # The loader says "renamed or restructured, not moved" only after the package's
+            # new home imported, so a wheel that failed to ship `quebra/panels/` raises its own
+            # error and fails here instead of passing as an accepted loss.
             missing = str(exc)
-            # Match the MODULE PATHS the renames removed, not bare package names: the token
-            # "panels" would also swallow a wheel that simply failed to ship
-            # `quebra/panels/`, and the test would pass on a broken distribution.
-            #
-            # FROZEN VOCABULARY. `panels.non_repairable` and `panels.repairable` are not our
-            # words any more - AGENTS.md forbids them - but these are not identifiers. They
-            # are quoted data about bytes already on disk, and renaming them to
-            # within/across-calibration would stop this clause matching the very pickles it
-            # exists to recognise. Leave them.
-            assert any(
-                token in missing
-                for token in (
-                    "panels.non_repairable",
-                    "panels.repairable",
-                    "No module named 'panels'",
-                    "No module named 'analyzers'",
-                    "No module named 'core'",
-                )
-            ), exc
+            assert "renamed or restructured, not moved" in missing, exc
             stale_errors.append(missing)
         else:
             assert isinstance(obj, WithinCalibrationPanelData)
     if not stale_errors:
         pytest.skip("no pre-split artifact present on this machine")
+
+
+# ------------------------------------------------------------------ moved-module aliasing
+
+
+@dataclasses.dataclass(frozen=True)
+class _HashableRecord:
+    """A hashable record with a defaulted field, so a stale one can be a key or set member."""
+
+    name: str
+    note: str = ""
+
+
+@dataclasses.dataclass
+class _WithDerivedField:
+    """A current class whose `init=False` fields are never in a fresh instance's state."""
+
+    name: str
+    derived: int = dataclasses.field(default=0, init=False)
+    never_set: int = dataclasses.field(init=False)
+
+
+@dataclasses.dataclass
+class _GuardedWithDerivedField(StaleArtifactGuard):
+    """The guarded twin: `StaleArtifactGuard.__setstate__` must exempt `init=False` too."""
+
+    name: str
+    derived: int = dataclasses.field(default=0, init=False)
+
+
+def _as_if_written_before_the_move(obj: object, package: str = "analyzers") -> bytes:
+    """Bytes of `obj` as a pickle written when its package sat at the repository root.
+
+    Protocol 2 records each class as a text GLOBAL, `c<module>\\n<name>\\n`, so the module path
+    can be rewritten without disturbing any length prefix. That is a faithful stand-in for the
+    artifacts under `output/` that predate `src/quebra/`: same class, old path.
+    """
+    raw = pickle.dumps(obj, protocol=2)
+    new_path = f"cquebra.{package}.".encode()
+    assert new_path in raw, "fixture no longer exercises a quebra class"
+    return raw.replace(new_path, f"c{package}.".encode())
+
+
+def _check_result():
+    from quebra.analyzers.checks.result import CheckResult
+
+    return CheckResult(
+        check="c1_lewis_robinson",
+        statistic=1.25,
+        p_value=0.5,
+        calibration="permutation",
+        clock="in_spec",
+        n_events=40,
+        n_segments=1,
+        n_censored_dropped=0,
+        notes="",
+    )
+
+
+def test_an_artifact_written_before_its_package_moved_loads_through_the_alias():
+    """Oracle: the object written, compared field by field with the object read back.
+
+    Checks the negative first. If a plain unpickle could read these bytes, the alias would not
+    be what is being tested and the positive half would pass for the wrong reason.
+    """
+    import io
+
+    from quebra.core._artifact_guard import load_artifact
+
+    written = _check_result()
+    old_bytes = _as_if_written_before_the_move(written)
+
+    with pytest.raises(ModuleNotFoundError):
+        pickle.loads(old_bytes)
+
+    loaded = load_artifact(io.BytesIO(old_bytes))
+    assert type(loaded) is type(written), "the alias resolved to a different class"
+    assert loaded == written, (
+        "the alias resolved the class but the fields came back wrong"
+    )
+
+
+def test_a_stale_artifact_is_refused_whatever_its_class() -> None:
+    """Oracle: hand-built pickles, each with one field its class declares removed.
+
+    The alias makes pickles written before the move loadable, and some of those classes have
+    gained fields since. Only `StaleArtifactGuard` subclasses check themselves, so
+    `load_artifact` checks every dataclass it can reach, and a class default never counts as
+    the missing field: that default is what a stale pickle would silently read. Three shapes,
+    each the shape of a real cached artifact: a plain dataclass with a default (the
+    `KaplanMeierComparison` case), a slots dataclass inside a container (the TLF case), and a
+    guarded class that moved and went stale.
+    """
+    import dataclasses
+    import io
+
+    from quebra.analyzers.tlf import TLFResult
+    from quebra.core._artifact_guard import load_artifact
+
+    def complete_tlf():
+        fields = [
+            f.name for f in dataclasses.fields(TLFResult) if f.name != "diagnostics"
+        ]
+        return TLFResult(**dict.fromkeys(fields))
+
+    plain = _check_result()
+    del plain.__dict__["notes"]  # frozen blocks setattr, not the state dict
+    holder = complete_tlf()
+    holder.gmm1 = plain  # a complete dataclass whose FIELD holds the stale one
+    for where, root in (
+        ("a dict value", {"result": plain}),
+        ("a list", [plain]),
+        ("a tuple", (plain,)),
+        ("a dataclass field", holder),
+    ):
+        with pytest.raises(
+            ValueError, match=r"stale CheckResult artifact.*\['notes'\]"
+        ):
+            load_artifact(io.BytesIO(_as_if_written_before_the_move(root)))
+            pytest.fail(f"a stale dataclass in {where} loaded")
+
+    # A key or a set member must hash while it unpickles, which a stale frozen record does
+    # only when its missing field has a class default: the silent case. `CheckResult` holds
+    # a dict and cannot hash, so a hashable record stands in.
+    record = _HashableRecord(name="grid")
+    del record.__dict__["note"]
+    for where, root in (("a dict key", {record: "grid"}), ("a set", {record})):
+        with pytest.raises(
+            ValueError, match=r"stale _HashableRecord artifact.*\['note'\]"
+        ):
+            load_artifact(io.BytesIO(pickle.dumps(root, protocol=2)))
+            pytest.fail(f"a stale dataclass in {where} loaded")
+
+    tlf = TLFResult(
+        **{
+            f.name: None
+            for f in dataclasses.fields(TLFResult)
+            if f.name != "diagnostics"
+        }
+    )
+    raw_complete = _as_if_written_before_the_move({"tlf": [tlf]})
+    assert load_artifact(io.BytesIO(raw_complete))["tlf"][0] == tlf, (
+        "control: complete loads"
+    )
+    del tlf.fit_failed
+    with pytest.raises(ValueError, match=r"stale TLFResult artifact.*\['fit_failed'\]"):
+        load_artifact(io.BytesIO(_as_if_written_before_the_move({"tlf": [tlf]})))
+
+    # Control: `__init__` never writes an `init=False` field, so a FRESH instance lacks it
+    # too. Refusing it would refuse a current artifact.
+    fresh = _WithDerivedField(name="x")
+    assert "derived" not in fresh.__dict__, "control no longer exercises init=False"
+    assert "never_set" not in fresh.__dict__, (
+        "control no longer exercises an unset field"
+    )
+    loaded = load_artifact(io.BytesIO(pickle.dumps(fresh, protocol=2)))
+    assert (type(loaded), loaded.name) == (_WithDerivedField, "x")
+    guarded_fresh = _GuardedWithDerivedField(name="y")
+    assert "derived" not in guarded_fresh.__dict__, (
+        "control no longer exercises init=False"
+    )
+    assert (
+        load_artifact(io.BytesIO(pickle.dumps(guarded_fresh, protocol=2))).name == "y"
+    )
+
+    guarded = _valid_across_calibration()
+    del guarded.__dict__["histogram_edges"]
+    with pytest.raises(ValueError, match="stale AcrossCalibrationPanelData artifact"):
+        load_artifact(io.BytesIO(_as_if_written_before_the_move(guarded, "panels")))
+
+
+def test_an_alias_failure_names_its_real_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Oracle: nine hand-built failure causes, each checked for the error it must raise.
+
+    The alias never renames a class. A moved module whose class is not there under the same
+    name, and a module that did not arrive at all, are the case of the three retired panel
+    classes (`NonRepairablePanelData` and its siblings): renamed and restructured, not moved.
+    Mapping them onto their successors would load old field values into a new shape, the
+    wrong-but-plausible result AGENTS.md section 3 refuses, so both stay unreadable and say why.
+
+    Everything else is a real error and must reach the reader as itself: a broken import
+    inside the moved module, a missing dependency, and a missing new home (a broken install).
+    None of them may be reported as a rename.
+    """
+    import io
+
+    from quebra.core import _artifact_guard
+    from quebra.core._artifact_guard import load_artifact
+
+    renamed = _as_if_written_before_the_move(_check_result()).replace(
+        b"\nCheckResult\n", b"\nNoSuchRenamedClass\n"
+    )
+    with pytest.raises(AttributeError, match="renamed or restructured, not moved"):
+        load_artifact(io.BytesIO(renamed))
+
+    gone = _as_if_written_before_the_move(_check_result()).replace(
+        b"canalyzers.checks.result\n", b"canalyzers.checks.no_such_module\n"
+    )
+    with pytest.raises(ModuleNotFoundError, match="renamed or restructured, not moved"):
+        load_artifact(io.BytesIO(gone))
+    # A whole moved subpackage gone: the missing name is a dotted prefix of the module.
+    gone_pkg = b"canalyzers.no_such_pkg.mod\nX\n."
+    with pytest.raises(ModuleNotFoundError, match="renamed or restructured, not moved"):
+        load_artifact(io.BytesIO(gone_pkg))
+
+    # Protocol 4 names a nested class by its dotted qualname; a missing inner name is a
+    # rename too, not a bare lookup failure.
+    module, qualname = b"analyzers.checks.result", b"CheckResult.Missing"
+    nested = (
+        b"\x80\x04\x8c"
+        + bytes([len(module)])
+        + module
+        + b"\x8c"
+        + bytes([len(qualname)])
+        + qualname
+        + b"\x93."
+    )
+    with pytest.raises(AttributeError, match="renamed or restructured, not moved"):
+        load_artifact(io.BytesIO(nested))
+
+    pkg = tmp_path / "qre_moved_probe"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "broken.py").write_text(
+        'raise ImportError("boom: a bug inside the moved module")\n'
+    )
+    (pkg / "needs_dep.py").write_text("import qre_no_such_dependency_probe\n")
+    # A missing module whose name is a string prefix, not a dotted prefix, of the moved one.
+    (pkg / "needs_sibling.py").write_text("import qre_moved_probe.needs_sib\n")
+    (pkg / "raises_bare.py").write_text(
+        'raise ModuleNotFoundError("bare, with no name")\n'
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setitem(_artifact_guard.MODULE_ALIASES, "oldprobe", "qre_moved_probe")
+    monkeypatch.setitem(
+        _artifact_guard.MODULE_ALIASES, "lostprobe", "qre_no_such_home_probe"
+    )
+    try:
+        with pytest.raises(ImportError, match="boom") as bug:
+            load_artifact(io.BytesIO(b"coldprobe.broken\nX\n."))
+        assert bug.type is ImportError, (
+            f"a broken import surfaced as {bug.type.__name__}"
+        )
+
+        with pytest.raises(ModuleNotFoundError) as dep:
+            load_artifact(io.BytesIO(b"coldprobe.needs_dep\nX\n."))
+        assert dep.value.name == "qre_no_such_dependency_probe", dep.value
+        assert "renamed" not in str(dep.value), "a missing dependency read as a rename"
+
+        with pytest.raises(ModuleNotFoundError) as home:
+            load_artifact(io.BytesIO(b"clostprobe.mod\nX\n."))
+        assert home.value.name == "qre_no_such_home_probe", home.value
+        assert "renamed" not in str(home.value), "a broken install read as a rename"
+
+        with pytest.raises(ModuleNotFoundError) as sibling:
+            load_artifact(io.BytesIO(b"coldprobe.needs_sibling\nX\n."))
+        assert sibling.value.name == "qre_moved_probe.needs_sib", sibling.value
+        assert "renamed" not in str(sibling.value), (
+            "a sibling-prefix name read as a rename"
+        )
+
+        with pytest.raises(ModuleNotFoundError, match="bare, with no name") as bare:
+            load_artifact(io.BytesIO(b"coldprobe.raises_bare\nX\n."))
+        assert "renamed" not in str(bare.value), (
+            "a nameless import error read as a rename"
+        )
+    finally:
+        sys.modules.pop("qre_moved_probe", None)
+
+
+def test_a_composite_reuses_a_sub_job_artifact_written_before_its_package_moved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Oracle: the object seeded into the cache, compared with what the composite received.
+
+    Proves the WIRING only: the runner's composite transport, the pipeline's one artifact read,
+    goes through `load_artifact`, both halves of it. The alias resolves an old path, and the
+    completeness check refuses a stale artifact at that read. The state built here cannot arise
+    in production. The reuse gate admits only a run at the current commit on a clean tree, and
+    such a run is written under current paths, so this test fakes a provenance record claiming
+    the current commit over an old-path pickle, set up as
+    `test_composite_reuse_of_reuse_eligible_stale_artifact_aborts` sets up a stale one.
+    """
+    from quebra.core.dataset import Dataset  # noqa: F401  (sub-job module imports it)
+    from quebra.core.job import Job
+    from quebra.core import runner
+    from quebra.core.runner import run_job
+
+    (tmp_path / "data.csv").write_text("a,b\n1,2\n")
+    out = tmp_path / "out"
+    monkeypatch.chdir(tmp_path)
+    fake_commit = "cafe123"
+    monkeypatch.setattr(runner, "get_git_commit", lambda: fake_commit)
+    monkeypatch.setattr(runner, "is_tree_clean", lambda: True)
+
+    def compose(tag: str, cached_bytes: bytes) -> Path:
+        """Seed a reuse-eligible sub-job run holding `cached_bytes`, then run a composite."""
+        sub_py = tmp_path / f"{tag}_sub.py"
+        sub_py.write_text(
+            "from quebra.core.job import Job\n"
+            "from quebra.core.dataset import Dataset\n"
+            f'job = Job(name="{tag}_sub")\n'
+            'node = job.load_df(Dataset(path="data.csv", schema=None))\n'
+            'job.materialize(node, name="panel_data")\n'
+        )
+        sub_identity = _import_job_module(sub_py).build_identity(tmp_path).digest
+        cached = out / f"{tag}_sub_{sub_identity[:6]}_20200101_000000"
+        (cached / "provenance").mkdir(parents=True)
+        (cached / "panel_data.pkl").write_bytes(cached_bytes)
+        (cached / "provenance" / "panel_data.prov.json").write_text(
+            json.dumps(
+                {
+                    "identity": sub_identity,
+                    "git_commit": fake_commit,
+                    "tree_clean": True,
+                }
+            )
+        )
+        comp_py = tmp_path / f"{tag}_comp.py"
+        comp_py.write_text("# synthetic composite job file\n")
+        comp = Job(name=f"{tag}_comp")
+        inc = comp.include(sub_py, alias="s1")
+        node = comp.step(_identity, inc.ref("panel_data"), name="reused")
+        comp.materialize(node, name="reused_out")
+        comp.job_file = comp_py.resolve()
+        run_job(comp, out, force=True, data_root=tmp_path, reuse_deps=True)
+        produced = sorted(out.glob(f"{tag}_comp_*/reused_out.pkl"))
+        assert produced, (
+            "the composite wrote nothing, so it never reached the transport"
+        )
+        return produced[-1]
+
+    written = _check_result()
+    with compose("moved", _as_if_written_before_the_move(written)).open("rb") as fh:
+        received = pickle.load(fh)
+    assert received == written, (
+        "the composite received a different object than was seeded"
+    )
+
+    stale = _check_result()
+    del stale.__dict__["notes"]
+    with pytest.raises(ValueError, match=r"stale CheckResult artifact.*\['notes'\]"):
+        compose("stale", _as_if_written_before_the_move(stale))
