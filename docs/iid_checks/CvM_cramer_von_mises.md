@@ -3,8 +3,9 @@
 ## The equation
 
 The third functional of the same tied-down Brownian bridge that gives C1 and C2. Kvaloy &
-Lindqvist (arXiv:1802.08339) derive a class of tests by applying different functionals to the
-normalised counting process; this one integrates the square without a weight:
+Lindqvist (Technometrics 62(1):101-115, 2020, Section 3.3) derive a class of tests by applying
+different functionals to the normalised counting process; this one integrates the square
+without a weight:
 
 ```
 integral W0(s)^2 ds            <- CvM
@@ -12,9 +13,12 @@ integral W0(s)^2/(s(1-s)) ds   <- C2 (Anderson-Darling)
 integral W0(s) ds              <- C1 (Lewis-Robinson)
 ```
 
-Derived rather than transcribed. The reference prints its eq (7) middle term as
+Derived rather than transcribed. The paper prints its eq (6) middle term as
 `- i N (T^2_{i+1} - T^2_i)/tau`, which is dimensionally inconsistent with the first term
-`i^2 X_{i+1}/tau`. Integrating from the definition gives `/tau^2`:
+`i^2 X_{i+1}/tau`. The typo is in the paper itself, in both versions: eq (6), p. 103, of
+the Technometrics paper and eq (6), p. 5, of its preprint arXiv:1802.08339v1. The authors' own R code (`CvMtestobs` in
+github.com/jtkgithub/trendtests, identical to the journal's supplementary material) divides
+by `tau^2`. Integrating from the definition gives `/tau^2`:
 
 ```
 integral_0^1 (N(s tau) - sN)^2 ds
@@ -22,7 +26,7 @@ integral_0^1 (N(s tau) - sN)^2 ds
       + N^2 [ u_N^2 - u_N + 1/3 ],        u_i = T_i / tau,  u_0 = 0
 ```
 
-which reproduces the reference's own tail term exactly. The normalised bridge is
+which reproduces the paper's own tail term exactly. The normalised bridge is
 `V0(s) = (N(s tau) - sN) / (gamma_hat sqrt(N))`, giving the `(1/gamma_hat^2)(1/N)` prefactor.
 
 At `gamma_hat = 1` the statistic is exactly the classical one-sample Cramer-von Mises `W^2` on
@@ -40,11 +44,14 @@ computed by quadrature, the limiting CDF against published critical values, and
 
 ## Why it is in the battery
 
-The reference reverses its own single-process preference for `m > 1`: it drops
-Anderson-Darling for several processes "as the Cramer-von Mises test had better level
-properties in this case". Gapped records are routine here and `m > 1` is the gap case, so CvM
-is the source's own recommendation for the regime this project operates in - whereas the
-`m > 1` Anderson-Darling route is an unweighted sum the paper never proposes.
+The paper reverses its own single-process preference for `m > 1`: its simulation study
+(Technometrics Section 6, p. 106; arXiv v1 Section 5) leaves Anderson-Darling out for several
+processes "as the Cramer-von Mises test had better level properties in this case". Gapped
+records are routine here and `m > 1` is the gap case, so CvM is the goodness-of-fit form the
+paper keeps for several processes in its own simulations. The paper's own `m > 1` CvM and AD
+statistics are sums weighted by `tau_j` with a simulated null (Section 8.2, Table 4); the
+`m > 1` route here is an UNWEIGHTED sum with a permutation null. The paper does not propose
+the unweighted sum; it suggests a permutation null only in general terms (Section 9, p. 113).
 
 It also survives a case C2 cannot. On the in-spec clock of a carved record `tau == T_N`, which
 makes eq (7) singular and silences C1 and C2; CvM's integrand carries no `1/(s(1-s))` weight,

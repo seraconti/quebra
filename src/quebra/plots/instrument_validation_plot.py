@@ -228,16 +228,18 @@ class PublishedValuesPlot(BasePlot):
             )
             fig.suptitle(
                 "Transcription against published values - load-haul-dump record, "
-                "Kvaloy and Lindqvist Section 6.1"
+                "Kvaloy and Lindqvist (Technometrics 2020) Section 8.1"
             )
             fig.text(
                 0.5,
                 0.015,
                 f"{n_gaps} complete gaps, {record}. "
-                f"{len(rows) - n_disagree} of {len(rows)} quantities reproduce exactly; "
-                f"{n_disagree} differ ONLY by the 1/N against 1/(N-1) divisor, which this "
-                "tool chooses deliberately to match eq (10). That direction makes our C1 "
-                "statistic larger, which is anti-conservative.",
+                f"{len(rows) - n_disagree} of {len(rows)} quantities reproduce exactly"
+                + (
+                    f"; {n_disagree} differ, each row's note says why."
+                    if n_disagree
+                    else "."
+                ),
                 ha="center",
                 **theme.CAPTION,
                 wrap=True,
@@ -320,7 +322,7 @@ class CrossImplementationPlot(BasePlot):
                 ax_rand.text(
                     0.02,
                     0.78,
-                    f"eq (8) breaks x-ties at random, so XICOR is a random variable here\n"
+                    f"Chatterjee (2021) breaks x-ties at random, so XICOR is a random variable here\n"
                     f"(sd {spread:.4f}). Equality is not the right test; membership is.",
                     transform=ax_rand.transAxes,
                     **theme.ANNOTATION,
@@ -330,7 +332,7 @@ class CrossImplementationPlot(BasePlot):
             fig.text(
                 0.5,
                 0.015,
-                "XICOR is Chatterjee's own package; energy is Szekely and Rizzo's. "
+                "XICOR is by Holmes and Chatterjee; energy is by Rizzo and Szekely. "
                 "randtests::bartels.rank.test is NOT compared: it is the rank von Neumann "
                 "ratio, a different functional from our studentized max-over-lags C5. "
                 "The lag-1 rank autocorrelation the two share is pinned by test instead.",

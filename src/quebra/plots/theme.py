@@ -350,8 +350,8 @@ REFERENCE_LINE = {
     "alpha": 0.75,
 }
 
-# Where the REAL data sits on a swept axis. Shaded rather than outlined so it reads as a
-# region of interest behind the curves instead of competing with them.
+# A region of interest behind the curves, such as a Monte Carlo floor. Shaded rather than
+# outlined so it does not compete with them.
 HIGHLIGHT_SHADE = {
     "color": "#C8A85A",
     "alpha": 0.22,

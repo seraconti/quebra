@@ -13,16 +13,18 @@ example. It cannot tell you whether the p-value means what it says. That is this
   GAP DISTRIBUTION, which is why no direction is asserted here.
 
   Under WEIBULL gaps the bench measures, at n = 20, alpha = 0.05, in-spec clock, arm
-  A_iid_weibull, asymptotic calibration - four cells, not two, because shape varies:
-      C1  shape 0.75 -> 0.0640 (mc_se 0.0055),  shape 1.50 -> 0.0740 (0.0059)
-      C2  shape 0.75 -> 0.0650 (0.0055),        shape 1.50 -> 0.0865 (0.0063)
-  Anti-conservative in all four. An earlier draft of this docstring quoted "0.069" and
+  A_iid_weibull, unquantised, uncensored, asymptotic calibration - four cells, not two,
+  because shape varies:
+      C1  shape 0.75 -> 0.0580 (mc_se 0.0052),  shape 1.50 -> 0.0635 (0.0055)
+      C2  shape 0.75 -> 0.0575 (0.0052),        shape 1.50 -> 0.0790 (0.0060)
+  Above nominal in all four, two of them by less than 1.5 MC SE. An earlier draft of this docstring quoted "0.069" and
   "0.0757", which are the POOLED MEANS over the two shapes and are in no cell of the table -
   the first instance CLAUDE.md's claims-discipline section records, reintroduced here.
 
   Under EXPONENTIAL gaps, which is what `measure_asymptotic_size` generates, tau = 20 gives
-  C1 0.0708, C2 0.0700, CvM 0.0642 - anti-conservative as well, and close to the Weibull
-  cells. Both are legitimate iid nulls (these check trend against renewal, not
+  C1 0.0650, C2 0.0575, CvM 0.0575, the tier-3 cells of
+  `jobs/bench/results/instrument_report.md`: C1 above nominal, C2 and CvM about one MC SE
+  (0.0067) above it. Both are legitimate iid nulls (these check trend against renewal, not
   exponentiality), so the size of an asymptotic check here still depends on the gap
   distribution through the estimated gamma_hat, and the assertion below stays a wide bound
   rather than a direction.
@@ -216,7 +218,8 @@ def test_the_asymptotic_size_is_in_the_documented_range(check_name):
 
     The bound catches a BROKEN limit - a mis-transcribed CDF, a wrong scaling - not a
     small-n cost. A tight band would encode one gap distribution's miss as correct, and the
-    module docstring shows the direction flips between Weibull and exponential gaps.
+    size depends on the gap distribution (the module docstring gives both), so a direction
+    measured on one generator is not a property of the check.
 
     The magnitudes are not asserted here. They are measured into the artifact by
     `analyzers.instrument_validation.measure_all_asymptotic_sizes` and drawn by the report,

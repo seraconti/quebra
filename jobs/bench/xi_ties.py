@@ -11,7 +11,7 @@ coincide, not because anything was measured. This measures the cost of being wro
 0.02, as a number.
 
 **Q2 - what does our deterministic X-tie break cost against a randomised one?**
-Reference eq (8) breaks ties in x uniformly at random. We use a deterministic stable sort,
+Chatterjee (2021) breaks ties in x uniformly at random. We use a deterministic stable sort,
 on purpose: "a seeded shuffle inside a reproducibility tool is its own problem". Tier 4
 established that this makes `XICOR::xicor` a random variable while ours is a constant -
 7 distinct values in 8 calls on the same tied input. So the honest question is not whether
@@ -145,7 +145,7 @@ def _make_pair(
 def _xi_random_tie_break(
     x: np.ndarray, y: np.ndarray, rng: np.random.Generator
 ) -> float:
-    """Eq (8) with x-ties broken uniformly at random, which is what the reference specifies.
+    """The tie-corrected xi with x-ties broken uniformly at random, as Chatterjee (2021) says.
 
     Implemented here rather than in `shape_stats` deliberately: the shipped estimator is
     deterministic by decision, and this exists only to measure what that decision costs.

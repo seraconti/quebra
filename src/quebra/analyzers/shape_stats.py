@@ -77,7 +77,9 @@ NON_NUMERIC_STAT_COLUMNS = frozenset({"window_index", "xi_p_method"})
 def chatterjee_xi(x: np.ndarray, y: np.ndarray) -> float:
     """Chatterjee's rank correlation, TIE-CORRECTED form; -> 1 iff y is a function of x.
 
-    Chatterjee (2021), JASA 116(536):2009-2022, in the general form that admits ties:
+    Chatterjee (2021), JASA 116(536):2009-2022, in the general form that admits ties,
+    called the tie-corrected form throughout this repository. Its page and equation
+    locators are recorded in `docs/GOLD_STANDARD.md` section 6, NOT RE-CHECKED:
 
         xi = 1 - n * sum_i |r_{i+1} - r_i| / (2 * sum_i l_i (n - l_i))
 
@@ -121,7 +123,7 @@ def chatterjee_xi(x: np.ndarray, y: np.ndarray) -> float:
     if float(np.max(x)) == float(np.min(x)):
         return float("nan")
     if float(np.max(y)) == float(np.min(y)):
-        # Constant y makes l_i = n for every i, so the eq (8) denominator is exactly 0.
+        # Constant y makes l_i = n for every i, so the tie-corrected denominator is 0.
         # It is also the degenerate case: a constant response is trivially a function of
         # anything, and reporting xi = 1 for it would be an artefact, not a finding.
         return float("nan")
@@ -156,10 +158,10 @@ XI_METHOD_PERMUTATION = "permutation"
 XI_METHOD_NONE = "none"
 
 # Above this fraction of tied observations the closed form is refused outright. The 2/5
-# null is derived for continuous tie-free data, and the reference document (10.3, caveat 1)
-# is explicit: "Where ties dominate, the closed-form p-value must not be used and a
-# permutation calibration should replace it." Any tie at all makes the null approximate;
-# this is where it stops being usable, not where it starts being wrong.
+# null is Chatterjee (2021) Theorem 2.1, p. 2011, which assumes Y continuous; with ties in
+# Y the limiting variance is the tau^2 of Theorem 2.2 (formula (3)), not 2/5. Any tie at
+# all makes the closed form approximate, so the cutoff is zero and tied data goes to a
+# permutation null instead.
 XI_TIE_CUTOFF = 0.0
 
 
@@ -195,8 +197,8 @@ def xi_p_value(
 
     Tie-free -> the closed form, which is what the T2* ladder gets (measured: 0 of 309
     windows tied on either axis) and costs nothing. Tied -> a permutation against the
-    independence null, which is exact whatever the ties and is the reference's own
-    prescription. Switching on a measurement rather than picking one globally is what
+    independence null, which is exact whatever the ties. The choice is this repository's,
+    recorded in `.claude/qre_checks_reference.tex`. Switching on a measurement rather than picking one globally is what
     keeps the cheap path cheap without leaving the tied path invalid.
     """
     x = np.asarray(x, dtype=float)

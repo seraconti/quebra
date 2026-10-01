@@ -13,8 +13,10 @@ If any fails, the verdict is NOT `pass`. That is the entire point of the ledger:
 non-rejection must never print as a pass on a p-value alone.
 
 **Which clock.** Both are run. On the in-spec clock of a carved record, time stops
-accruing the moment the record ends out of spec, so `tau == T_N` and eqs (4)/(7) are
-singular - measured at ~73% of synthetic replicates. Those rows read `not computed` with
+accruing the moment the record ends out of spec, so `tau == T_N` - measured at ~73% of
+synthetic replicates. Kvaloy and Lindqvist's eq (7) (Technometrics 2020, p. 104) is
+singular there, and every asymptotic row's limiting null assumes a `tau` chosen
+independently of the events. Those rows read `not computed` with
 the reason, and the rank checks (which never touch `tau`) still run there.
 
 **What the provenance record cannot hold.** Its schema is closed, so what R produced the

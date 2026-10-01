@@ -17,20 +17,20 @@ carve's doing and not the check's.
 
 **Arm C turned out to be a null arm, and Arm E was added because of it.** The plan had
 Arm C as the power arm for C5/C6, on the assumption that correlated reads yield correlated
-durations. They do not: measured induced duration-level lag-1 is -0.005 at rho = 0 and
-still only -0.086 at rho = 0.99, never positive, because successive level crossings of a
-stationary Gaussian process are very nearly a renewal process. Arm C is kept exactly as
-briefed since that is a real and reportable finding - and it accounts for the real data
-showing read-level lag-1 of ~0 alongside duration-level 0.12-0.15 - but Arm E is what
-actually varies duration dependence, and without it criterion 2 could not be scored for
-C5 or C6 at all.
+durations. They do not: the induced duration-level lag-1 is never positive over the
+whole rho grid (`promotion_report.md`, "Two findings the grid was not designed to
+produce"), because successive level crossings of a stationary Gaussian process are very
+nearly a renewal process. Arm C is kept exactly as briefed since that is a real and
+reportable finding, but Arm E is what actually varies duration dependence, and without it
+criterion 2 could not be scored for C5 or C6 at all.
 
 **tau is chosen BEFORE the events, and the record is truncated at it.** Gaps are drawn,
 cumulated, and every event with `T_i < tau` is kept; the leftover `tau - T_N` is a
 partial gap. This is what time censoring means, and two earlier constructions failed on
 it, both caught by measurement:
 
-- `tau = sum(x)` over exactly `n` gaps makes eq (7)'s `ln(tau/(tau - T_N))` term `+inf`,
+- `tau = sum(x)` over exactly `n` gaps makes the `i = N-1` summand of Kvaloy & Lindqvist's
+  eq (7), `ln((tau - T_{N-1})/(tau - T_N))`, `+inf`,
   so the briefed "n durations right-censored at tau" would have failed every replicate.
 - Drawing `n + 1` gaps and setting `tau = sum` of all of them fixes that but breaks eq
   (10): the residual is then a COMPLETE gap rather than a partial one, so `mu = tau/N`
@@ -39,7 +39,8 @@ it, both caught by measurement:
 
 Truncating at a pre-chosen `tau` makes the residual partial by construction and `tau > T_N`
 strict with probability one. It also means the event count is RANDOM around its target -
-which is how Kvaloy & Lindqvist index their own Figure 1 ("expected number of events"), so
+which is how Kvaloy & Lindqvist index their own Figure 1 (Technometrics 62(1) 2020, p. 107,
+caption: "expected number of events"), so
 it makes the comparison against their numbers more direct rather than less. `n` is a target
 throughout; `mean_n_events` in the tables is what was realised.
 
@@ -126,7 +127,8 @@ def _quantise(x: np.ndarray, mean_reads: float = QUANTUM_MEAN_READS) -> np.ndarr
 
     `ceil`, not `round`: a duration is a whole number of read intervals and the smallest
     observable one is a single interval, so the grid has no zero cell. That matters -
-    a zero duration makes eq (7) singular, and the validator raises on it.
+    a zero first duration puts `T_1 = 0` into eq (7)'s `ln(T_2/T_1)` and makes it singular,
+    and the validator raises on any zero duration.
     """
     quantum = 1.0 / float(mean_reads)
     return np.ceil(x / quantum) * quantum
@@ -364,10 +366,9 @@ def arm_c(
     the occupancy are unchanged. At `rho = 0` this is Arm B with a different random path,
     which is what makes the two comparable as a self-consistency check.
 
-    Read-level `rho` is NOT duration-level dependence, and the gap between them is large:
-    the real data measures read-level lag-1 at -0.016 / -0.005 (i.e. zero) while its
-    duration-level lag-1 reaches 0.12-0.15. So the runner reports the INDUCED duration-level
-    lag-1 for every cell, and the power curve is read against that, not against `rho`.
+    Read-level `rho` is NOT duration-level dependence. So the runner reports the INDUCED
+    duration-level lag-1 for every cell, and the power curve is read against that, not
+    against `rho`.
     """
     if not -1.0 < rho < 1.0:
         raise ValueError(f"rho must be in (-1, 1); got {rho}")
@@ -391,17 +392,15 @@ def arm_e(
     marginal distribution - so at `rho = 0` this arm is Arm A - while `rho` moves the rank
     dependence and nothing else. For a Gaussian copula the induced Spearman correlation is
     `(6/pi)*arcsin(rho/2)`, which is within 4% of `rho` itself over the grid used here, so
-    the swept parameter is directly comparable to the 0.12-0.15 duration-level lag-1
-    measured on the real data.
+    the swept parameter is directly comparable to a duration-level lag-1.
 
     **Why this arm exists.** It was not in the plan; Arm C was to be the power arm for
     C5 and C6. Measurement killed that: read-level AR(1) induces NO positive duration-level
-    dependence at any rho, reaching only -0.086 at rho = 0.99, because the level crossings
-    of a stationary Gaussian process regenerate and successive excursion lengths are very
-    nearly a renewal process. Arm C is kept exactly as specified because that null result
-    is worth reporting - and it explains why the real data shows read-level lag-1 of
-    ~0 alongside duration-level 0.12-0.15 - but without a generator that actually varies
-    duration dependence, criterion 2 would be unevaluable for half the assessed checks.
+    dependence at any rho on the grid, because the level crossings of a stationary
+    Gaussian process regenerate and successive excursion lengths are very nearly a
+    renewal process. Arm C is kept exactly as specified because that null result is worth
+    reporting, but without a generator that actually varies duration dependence,
+    criterion 2 would be unevaluable for half the assessed checks.
     """
 
     def build(expected: int) -> tuple[np.ndarray, float]:

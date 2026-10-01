@@ -5,10 +5,9 @@ never suppresses it, because control flow that depends on what the data happened
 unpredictable and a reader is better served by a band they are told not to trust than by no
 band at all.
 
-This re-derives `km_poster_6d2s`'s carve rather than including it, which departs from
-`jobs/composite/check_ledger_q1.py`'s rule against re-deriving one. The departure is paid
-for by `tests/test_windows_carve.py`, which reads both jobs' `gap_mult` and asserts the two
-configurations agree on their window tables.
+This re-derives `km_poster_6d2s`'s carve rather than including it, so the two carves are
+held equal by `tests/test_windows_carve.py`, which reads both jobs' `gap_mult` and asserts
+the two configurations agree on their window tables.
 
 The run-set and the display-set are STEP KWARGS, so they enter the run identity and land on
 the Mermaid label. `analyzers/check_outcome.py` explains why they are two independent tuples
@@ -41,7 +40,7 @@ from quebra.schemas.track912 import track912Schema
 JOB_ID = "km_with_checks_6d2s"
 JOB_FAMILY = "independence"
 # Five ledgers at 999 permutations is long, and `discovery.swept` is opt-out. Same reason
-# `check_ledger_q1.py:32` opts out; selectable with `--family independence` or by path.
+# the `check_ledger` jobs opt out; selectable with `--family independence` or by path.
 JOB_SWEEP = False
 
 PREFIX = "km_with_checks_6d2s"
@@ -53,9 +52,10 @@ THRESHOLD: list[tuple[str, float, bool]] = [(THRESHOLD_LABEL, 3.0e-6, True)]
 # holds them equal, and if they diverge the grids describe a different carve from the band.
 GAP_MULT = 10.0
 
-# Verdict parameters, equal to `check_ledger_q1.py` so the two ledgers are comparable, except
-# SEED, which is deliberately different: an identical permutation seed across two jobs would
-# make their Monte Carlo error identical rather than independent.
+# Verdict parameters, equal to `ledger_recipe.LEDGER_KNOBS` so this job's verdicts and the
+# `check_ledger` jobs' are comparable, except SEED, which is deliberately different: an
+# identical permutation seed across two jobs would make their Monte Carlo error identical
+# rather than independent.
 ALPHA = 0.05
 MIN_EVENTS_PASS = 35
 TIE_CUTOFF_DISTINCT = 5

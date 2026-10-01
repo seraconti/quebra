@@ -303,22 +303,28 @@ def load_haul_dump_record(
 def build_published_comparisons(
     gaps_df: pd.DataFrame, published_df: pd.DataFrame
 ) -> list[PublishedComparison]:
-    """Tier 2 against Kvaloy and Lindqvist's load-haul-dump record, Section 6.1.
+    """Tier 2 against Kvaloy and Lindqvist's load-haul-dump record.
 
-    The DIVISOR divergence is carried, not hidden. Their Table 2 prints sigma_hat, gamma_hat
-    and LR on the sample `1/(N-1)` divisor; `_multiprocess.gamma_hat` uses the population
-    `1/N` form deliberately, to match eq (10)'s divisor so the two estimators differ ONLY by
-    the residual term. All three of their numbers land simultaneously under one rescaling by
+    Technometrics 62(1):101-115 (2020), Section 8.1, Tables 1-2 and the Section 8.1 text,
+    p. 112.
+
+    The DIVISOR is stated, not hidden. Their Table 2 prints sigma_hat and gamma_hat, and
+    their Section 8.1 text prints LR = 0.605/0.888 = 0.681, all on the sample `1/(N-1)`
+    divisor (the authors' R code computes `sqrt(var(x))`). Their Appendix A.2, p. 114,
+    writes the same estimator with `1/N(tau)` in a consistency argument, where the divisor
+    does not matter. The comparison uses `GAMMA_DEFAULT`, the estimator users get. With the
+    sample form every row agrees; with the population form `GAMMA_COMPLETE` the three
+    complete-gap rows land on the published values only after one rescaling by
     `sqrt(N/(N-1))`, and it is that SIMULTANEITY that identifies the cause as the divisor -
     a single number rescaled by 1.014 at one N cannot be told from any nearby constant.
-
-    Consequence, stated rather than buried: our gamma_hat is smaller by `sqrt((N-1)/N)`, so
-    our C1 statistic is LARGER by `sqrt(N/(N-1))` - 1.4% at N = 36, about 12% on a five-event
-    segment. That direction is anti-conservative.
+    The population form makes the C1 statistic LARGER by `sqrt(N/(N-1))` - 1.4% at N = 36,
+    about 12% on a five-event segment - which is the anti-conservative direction.
     """
     import quebra.analyzers.checks.c1_lewis_robinson as c1
     from quebra.analyzers.checks._multiprocess import (
         GAMMA_COMPLETE,
+        GAMMA_COMPLETE_SAMPLE,
+        GAMMA_DEFAULT,
         GAMMA_TRUNCATED,
         gamma_hat,
     )
@@ -332,11 +338,20 @@ def build_published_comparisons(
         x=x, tau=tau, n_censored_dropped=load_haul_dump_record(gaps_df, published_df)[2]
     )
 
-    gamma_complete = gamma_hat(x, tau, GAMMA_COMPLETE)
+    # The shipped default, whichever divisor it is: tier 2 compares what users get.
+    gamma_complete = gamma_hat(x, tau, GAMMA_DEFAULT)
     gamma_truncated = gamma_hat(x, tau, GAMMA_TRUNCATED)
-    lr = c1.statistic([segment], gamma_estimator=GAMMA_COMPLETE)
+    lr = c1.statistic([segment], gamma_estimator=GAMMA_DEFAULT)
     mu = float(np.mean(x))
     bridge = float(np.sqrt(n / (n - 1)))
+    sample = GAMMA_DEFAULT == GAMMA_COMPLETE_SAMPLE
+    divisor_note = (
+        "sample 1/(N-1) divisor, as the paper's numbers use"
+        if sample
+        else f"1/N vs their 1/(N-1); x{bridge:.4f} reconciles"
+        if GAMMA_DEFAULT == GAMMA_COMPLETE
+        else f"{GAMMA_DEFAULT}, not the paper's sample 1/(N-1) divisor"
+    )
 
     rows = [
         PublishedComparison("mu_hat", mu, pub["mu_hat"], True, "mean gap (h)"),
@@ -365,22 +380,24 @@ def build_published_comparisons(
             "sigma_hat",
             gamma_complete * mu,
             pub["sigma_hat"],
-            False,
-            f"1/N vs their 1/(N-1); x{bridge:.4f} reconciles",
+            sample,
+            divisor_note,
         ),
         PublishedComparison(
             "gamma_hat",
             gamma_complete,
             pub["gamma_hat"],
-            False,
-            f"1/N vs their 1/(N-1); x{bridge:.4f} reconciles",
+            sample,
+            divisor_note,
         ),
         PublishedComparison(
             "LR",
             lr,
             pub["lr_gamma_hat"],
-            False,
-            f"1/N vs their 1/(N-1); /{bridge:.4f} reconciles",
+            sample,
+            f"1/N vs their 1/(N-1); /{bridge:.4f} reconciles"
+            if not sample and GAMMA_DEFAULT == GAMMA_COMPLETE
+            else divisor_note,
         ),
     ]
     for row in rows:
@@ -399,7 +416,8 @@ def build_cross_implementation(
     """Tier 4 against the R packages, several of them by the methods' own authors.
 
     Handles the case the experiment turned up: `XICOR::xicor` is a RANDOM VARIABLE when x
-    has ties, because eq (8) breaks those ties uniformly at random. There, "the reference
+    has ties, because Chatterjee (2021, p. 2010) breaks x-ties uniformly at random.
+    There, "the reference
     value" is a distribution and the honest comparison is membership, so the row carries
     `reference_is_random` and the observed spread instead of pretending to an equality.
     """
@@ -585,9 +603,13 @@ def build_instrument_validation(
         TierRow(
             "C1 Lewis-Robinson",
             2,
-            TIER_PARTIAL,
-            f"{n_exact} of {len(published)} published quantities exact; "
-            f"{len(published) - n_exact} differ by the 1/N vs 1/(N-1) divisor",
+            TIER_PASS if n_exact == len(published) else TIER_PARTIAL,
+            f"{n_exact} of {len(published)} published quantities exact"
+            + (
+                ""
+                if n_exact == len(published)
+                else f"; {len(published) - n_exact} differ (see the tier-2 rows)"
+            ),
         ),
         TierRow(
             "C1 Lewis-Robinson",
@@ -602,7 +624,7 @@ def build_instrument_validation(
             "C2 Anderson-Darling",
             2,
             TIER_PASS,
-            "the published limiting critical values reproduced "
+            "the limiting percentiles of Marsaglia & Marsaglia (2004, p. 2) reproduced "
             "(tests/test_checks_statistics.py::"
             "test_ad_limiting_cdf_reproduces_published_critical_values)",
         ),
@@ -620,7 +642,7 @@ def build_instrument_validation(
             "file (tests/test_checks_statistics.py::"
             "test_eq7_is_the_classical_anderson_darling) - same language and same author, "
             "so it is tier-1 evidence wearing a tier-4 label. No independent "
-            "implementation of eq (7) is in hand",
+            "implementation of Kvaloy and Lindqvist's eq (7) is in hand",
         ),
         TierRow(
             "C3 serial copula", 2, TIER_ABSENT, "no published worked example in hand"
@@ -677,13 +699,16 @@ def build_instrument_validation(
             "CvM",
             2,
             TIER_PASS,
-            "the published limiting critical values reproduced (tests/test_checks_cvm.py::"
+            "the limiting critical values printed in Anderson and Darling (1952) Table 1 "
+            "reproduced (tests/test_checks_cvm.py::"
             "test_the_limiting_cdf_reproduces_the_published_critical_values)",
         ),
+        # Tier 3 is partial for C1, C2 and CvM alike: the bench REJECTs each asymptotic
+        # form and PROMOTEs each permutation form, so the evidence does not separate them.
         TierRow(
             "CvM",
             3,
-            TIER_PASS,
+            TIER_PARTIAL,
             measured("CvM") + _bench_size_note("cvm_cramer_von_mises"),
         ),
         TierRow(
@@ -847,7 +872,8 @@ def render_tier_table_markdown(data: InstrumentValidationData) -> str:
         "",
         "## Tier 2 detail - published values",
         "",
-        "Kvaloy and Lindqvist Section 6.1, load-haul-dump record, "
+        "Kvaloy and Lindqvist, Technometrics 62(1) 2020, Section 8.1 (arXiv:1802.08339v1",
+        "Section 6.1), load-haul-dump record, "
         f"{data.meta['load_haul_dump_complete_gaps']} complete gaps,",
         (
             f"time censored at {data.meta['load_haul_dump_tau_h']:.10g} h."

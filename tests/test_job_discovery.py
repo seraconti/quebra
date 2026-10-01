@@ -142,18 +142,19 @@ def test_sweep_defaults_to_true_and_can_be_declined(tmp_path):
 def test_a_bare_sweep_excludes_the_composites_as_the_docs_promise():
     """The regression this guards is measured, not hypothetical.
 
-    Replacing the `jobs/active/*.py` glob with "every discovered job" silently widens
-    `run --all` from 9 jobs to 13, pulling in the four jobs that `AGENTS.md` and
-    `docs/WRITING_A_JOB.md` both promise are not swept: the three composites plus
-    `jobs/active/km_with_checks_6d2s.py`. One is the independence survey, which someone
-    typing `run --all` would start without asking for it.
+    Replacing the declaration with "every discovered job" silently widens `run --all`
+    from the 9 swept jobs to all 18, pulling in the nine that decline the sweep: the
+    composites, `jobs/active/km_with_checks_6d2s.py` and the six `check_ledger` jobs.
+    `AGENTS.md` and `docs/WRITING_A_JOB.md` promise the composites are not swept. One is the
+    independence survey, which someone typing `run --all` would start without asking for
+    it, and each `check_ledger` job runs the R bridge over every record of a qubit.
     """
     all_jobs = discover(REPO_JOBS)
     swept_ids = {j.job_id for j in swept(REPO_JOBS)}
     for composite in (
-        "check_ledger_q1",
         "compare_t2star_0704_vs_1004",
         "independence_survey",
+        *(f"check_ledger_6d2s_q{q}" for q in range(1, 7)),
     ):
         assert composite in all_jobs, f"{composite} should still be discoverable"
         assert composite not in swept_ids, (

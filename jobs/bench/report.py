@@ -8,17 +8,16 @@ verdict rather than left implicit.
 Decision rule, stated once here and applied uniformly:
 
     PROMOTE  size indistinguishable from nominal across every null cell inside the real
-             data's censoring envelope, AND power > 0.5 at n = 100 against the alternative
-             the real data actually presents
-    HOLD     size calibrated but power weak at that alternative
+             data's censoring envelope, AND mean power of at least 0.5 at n = 100 over
+             the grid of the alternative the check is directed at
+    HOLD     size calibrated but mean power at n = 100 below 0.5
     REJECT   size miscalibrated somewhere inside the envelope
 
-Two things in that rule were corrected after seeing the first draft's output, and both
-corrections are in `MIN_SUPPORT_FRACTION`, `FAMILYWISE_ALPHA` and `OPERATING_POINT`:
-size is judged by a multiplicity-corrected z-test rather than a flat tolerance (a flat
-tolerance rejected all seven rows, because the max of 44-90 deviations is ~3 SE by chance),
-and power is judged at the dependence the data actually shows rather than at the strongest
-point on the grid (which flattered C5 and C6 by a factor of seven).
+Size is judged by a multiplicity-corrected z-test (`FAMILYWISE_ALPHA`) rather than a flat
+tolerance: a flat tolerance rejected all seven rows, because the max of 56-90 deviations is
+~3 SE by chance. Power is judged by its mean over the alternative's grid rather than at the
+grid's strongest point, which reports a capability few records call on. No grid point is
+singled out as "the real data's": the bench's dependence knob is not calibrated to a record.
 """
 
 from __future__ import annotations
@@ -42,12 +41,9 @@ from quebra.analyzers.checks.result import CLOCK_IN_SPEC
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
-# Where the real data sits, measured before the bench was built. Every verdict is read
-# against these, not against the widest cell on the grid.
+# Where the real data sits, measured before the bench was built.
 REAL_DATA_NOTES = {
     "event_counts": "20-355 usable windows depending on threshold",
-    "duration_lag1": "0.12-0.15 at 0704 3 us; 0.014-0.063 at 1004 3 us",
-    "read_lag1": "-0.016 / -0.005, i.e. zero",
     "censoring": "0.000-0.026 wherever n >= 20",
     "quantisation": "3 us spans k=1..72 with 43 distinct values; 4 us has 79% at k=1",
 }
@@ -72,24 +68,12 @@ DIRECTED_AT = {
 # assumed unchanged. (Arm D's POWER cells live in the power table and cannot contaminate.)
 NULL_ARMS = (ARM_A, ARM_B, ARM_C, ARM_D, ARM_E)
 
-# The alternative the REAL DATA actually presents, where it pins one. Arm E at rho = 0.20
-# realises a duration-level lag-1 of 0.153 (rho = 0.15 realises 0.108), which brackets the
-# 0.12-0.15 measured on the real record - so this is the point at which C5 and C6 have to
-# work if they are to be useful here. Scoring power at the strongest grid point instead
-# (rho = 0.5, induced lag-1 0.42) would report a capability the data never calls on.
-#
-# C1, C2 and CvM get no entry: nothing in the real data pins a trend strength, so their
-# power is read off the whole b sweep rather than one point.
-OPERATING_POINT = {
-    "c5_rank_autocorr": ("rho", 0.2, "duration lag-1 0.153, vs 0.12-0.15 measured"),
-    "c6_exchangeability": ("rho", 0.2, "duration lag-1 0.153, vs 0.12-0.15 measured"),
-}
 
 # A rejection rate is only reported as a SIZE if it rests on at least this fraction of its
 # cell's replicates. Below it the surviving replicates were selected by a data-dependent
 # event - a segment whose durations were all one quantum, or a censored cell that happened
 # to collapse to a single segment - so the rate is conditional on that event and is not the
-# quantity it appears to be. Two rows in this run sit at n_used = 1 and 5 out of 2000; left
+# quantity it appears to be. C2 and CvM asymptotic rows can sit at n_used = 1 or 5 out of 2000; left
 # unfiltered, a rate from a single replicate is either 0.0 or 1.0 and would have dominated
 # the worst-deviation table and driven a spurious REJECT.
 #
@@ -247,48 +231,38 @@ def power_at(power: pd.DataFrame, check: str, n: int = 100) -> pd.DataFrame:
     )
 
 
-def operating_point_power(
-    power: pd.DataFrame, check: str, n: int, row_label: str | None = None
-) -> float:
-    """Power at the alternative the real data presents, or NaN if none is pinned.
+def dependence_grid_table(power: pd.DataFrame) -> tuple[pd.DataFrame, str]:
+    """C5 and C6 power by (row, rho) and n, mean over the two Weibull shapes, with the
+    range of duration lag-1 each rho induces across its cells.
 
-    Filtered by `row_label` when given. Filtering on `check` alone pools the two C5
-    variants and reported one number (0.279) for both, while `operating_point_table` -
-    which groups by row - printed 0.292 and 0.265 for the same quantity thirty lines later.
+    Also returns, as text, the grid points at which any row's power exceeds 0.5 at some
+    n below 100: the dependence strength these checks need before a small-n silence says
+    anything.
     """
-    if check not in OPERATING_POINT:
-        return float("nan")
-    parameter, value, _why = OPERATING_POINT[check]
-    arm = DIRECTED_AT[check][0]
-    subset = power[
-        (power["check"] == check)
-        & (power["arm"] == arm)
-        & (power["n_target"] == n)
-        & (power[parameter] == value)
-    ]
-    if row_label is not None:
-        subset = subset[subset["row"] == row_label]
-    # MEAN over the remaining factors (shape), matching `operating_point_table`. Taking
-    # the max would report the most favourable shape as if it were the expected power.
-    return float(subset["rejection_rate"].mean()) if len(subset) else float("nan")
-
-
-def operating_point_table(power: pd.DataFrame) -> pd.DataFrame:
-    """Power by n at the operating point, for the checks that have one."""
     rows = []
-    for check, (parameter, value, _why) in OPERATING_POINT.items():
-        arm = DIRECTED_AT[check][0]
-        subset = power[
-            (power["check"] == check)
-            & (power["arm"] == arm)
-            & (power[parameter] == value)
-        ]
-        for row_label, group in subset.groupby("row"):
-            entry = {"row": row_label}
+    strong = set()
+    for check in ("c5_rank_autocorr", "c6_exchangeability"):
+        arm, parameter, _description = DIRECTED_AT[check]
+        subset = power[(power["check"] == check) & (power["arm"] == arm)]
+        for (row_label, value), group in subset.groupby(["row", parameter]):
+            lag1 = group["mean_induced_lag1"]
+            entry = {
+                "row": row_label,
+                parameter: value,
+                "induced_lag1": f"{lag1.min():.3f} to {lag1.max():.3f}",
+            }
             for n, sub in group.groupby("n_target"):
-                entry[n] = round(float(sub["rejection_rate"].mean()), 3)
+                rate = float(sub["rejection_rate"].mean())
+                entry[n] = rate
+                if n < 100 and rate > 0.5:
+                    strong.add(value)
             rows.append(entry)
-    return pd.DataFrame(rows)
+    text = (
+        "rho = " + ", ".join(f"{v:g}" for v in sorted(strong))
+        if strong
+        else "no grid point"
+    )
+    return pd.DataFrame(rows).round(3), text
 
 
 def realised_censoring(size: pd.DataFrame) -> dict[float, float]:
@@ -296,7 +270,7 @@ def realised_censoring(size: pd.DataFrame) -> dict[float, float]:
 
     They are not the same and the gap is large at the top of the grid: `m` is capped so
     each segment expects at least a few events, and that cap binds at every n, so the
-    "0.25" arm realises 0.167-0.169 throughout, so every table prints the realised value beside
+    "0.25" arm realises 0.15-0.19 per cell (about 0.167 pooled), so every table prints the realised value beside
     the target label.
     """
     return {
@@ -416,8 +390,8 @@ def verdicts(size: pd.DataFrame, power: pd.DataFrame) -> pd.DataFrame:
     """Promote / hold / reject per row, on the rule printed in the report.
 
     Size is judged INSIDE the real data's censoring envelope, with the per-row Bonferroni
-    threshold from `size_verdict_table`. Power is the best rejection rate at n = 100
-    against the arm the check is directed at.
+    threshold from `size_verdict_table`. Power is the mean rejection rate at n = 100 over
+    the grid of the arm the check is directed at; PROMOTE needs at least 0.5.
     """
     verdict_table = size_verdict_table(size).set_index("row")
     rows = []
@@ -433,7 +407,6 @@ def verdicts(size: pd.DataFrame, power: pd.DataFrame) -> pd.DataFrame:
                     "power_n100_min": "-",
                     "power_n100_mean": "-",
                     "power_n100_max": "-",
-                    "power_at_operating_point": "-",
                     "driver": "no adequately supported null cell in the envelope",
                 }
             )
@@ -445,11 +418,10 @@ def verdicts(size: pd.DataFrame, power: pd.DataFrame) -> pd.DataFrame:
             & (power["arm"] == arm)
             & (power["n_target"] == 100)
         ]
-        # min / mean / max over the directed grid. The gate uses the MEAN: taking the max
-        # reports the single most favourable of eight (shape, b) cells as if it were the
-        # expected power - for c1 [permutation] at n = 100 those eight run 0.170 to 0.999,
-        # and a hand-typed driver string would print 0.999. That is the same practice the
-        # operating-point correction removed for C5/C6, left in place for C1/C2.
+        # min / mean / max over the directed grid. The gate uses the MEAN, for every check:
+        # taking the max reports the single most favourable cell as if it were the expected
+        # power - for c1 [permutation] at n = 100 the eight (shape, b) cells run 0.170 to
+        # 0.999, and a hand-typed driver string would print 0.999.
         power_min = (
             float(directed["rejection_rate"].min()) if len(directed) else float("nan")
         )
@@ -459,10 +431,7 @@ def verdicts(size: pd.DataFrame, power: pd.DataFrame) -> pd.DataFrame:
         power_max = (
             float(directed["rejection_rate"].max()) if len(directed) else float("nan")
         )
-        best_power = power_mean
-        at_operating = operating_point_power(power, check, 100, row_label)
-        # Where the real data pins an alternative, THAT is what the check has to detect.
-        scored_power = best_power if pd.isna(at_operating) else at_operating
+        scored_power = power_mean
         if not bool(entry["calibrated"]):
             verdict = "REJECT"
             driver = (
@@ -473,12 +442,7 @@ def verdicts(size: pd.DataFrame, power: pd.DataFrame) -> pd.DataFrame:
             verdict = "HOLD"
             driver = (
                 f"size calibrated (worst z={entry['worst_z']} of {entry['z_crit']}) but "
-                f"power at n=100 is only {_fmt(scored_power, 3)}"
-                + (
-                    ""
-                    if pd.isna(at_operating)
-                    else " at the real data's operating point"
-                )
+                f"mean power at n=100 is only {_fmt(scored_power, 3)}"
             )
         else:
             verdict = "PROMOTE"
@@ -497,7 +461,6 @@ def verdicts(size: pd.DataFrame, power: pd.DataFrame) -> pd.DataFrame:
                 "power_n100_min": _fmt(power_min, 3),
                 "power_n100_mean": _fmt(power_mean, 3),
                 "power_n100_max": _fmt(power_max, 3),
-                "power_at_operating_point": _fmt(at_operating, 3),
                 "driver": driver,
             }
         )
@@ -517,9 +480,31 @@ def build(runtime_note: str = "") -> str:
             & (~size["quantised"].astype(bool))
             & (size["censoring_target"] == 0.0)
         ]
-    )["rejection_rate"]
+    ).sort_values("shape")
+    # One figure per Weibull shape: the two cells are not interchangeable, and their mean
+    # is in no cell of the table.
+    # Arm C's induced duration-level lag-1, from the tables: rho = 0 lives in the size
+    # table and the rest of the rho grid in the power table.
+    _arm_c = pd.concat([size, power], ignore_index=True)
+    _arm_c = _arm_c[(_arm_c["arm"] == ARM_C) & _arm_c["mean_induced_lag1"].notna()]
+    _by_rho = _arm_c.groupby(_arm_c["rho"].fillna(0.0))["mean_induced_lag1"].mean()
+    arm_c_lag1 = (
+        f"{_by_rho.iloc[0]:+.3f} at rho = {_by_rho.index[0]:g} and "
+        f"{_by_rho.iloc[-1]:+.3f} at rho = {_by_rho.index[-1]:g}, with every cell between "
+        f"{_arm_c['mean_induced_lag1'].min():+.3f} and "
+        f"{_arm_c['mean_induced_lag1'].max():+.3f}"
+        if len(_arm_c)
+        else "(no Arm C cell)"
+    )
     shipped_c2_n20 = (
-        f"{float(_c2_asym_n20.mean()):.4f}" if len(_c2_asym_n20) else "(no cell)"
+        " and ".join(
+            f"{rate:.4f} at Weibull shape {shape:g}"
+            for shape, rate in zip(
+                _c2_asym_n20["shape"], _c2_asym_n20["rejection_rate"]
+            )
+        )
+        if len(_c2_asym_n20)
+        else "(no cell)"
     )
 
     parts: list[str] = []
@@ -554,10 +539,11 @@ def build(runtime_note: str = "") -> str:
         "distribution at n = 20 and 50 within a stated tolerance. Both concern the "
         "`gamma = 1` path.\n\n"
         "The SHIPPED asymptotic path divides by an estimated `gamma_hat`, and is "
-        f"measurably different: {shipped_c2_n20} on the primary null cell at n = 20 "
-        "against a nominal 0.05. That gap is "
-        "not a defect - it is the finite-N cost of estimating gamma, it is what the size "
-        "table below measures, and a separate test pins it so it cannot drift unnoticed. "
+        f"measurably different: C2 rejects at {shipped_c2_n20} on the primary null "
+        "configuration at n = 20 (Arm A, continuous, uncensored) against a nominal 0.05. "
+        "That gap is not a defect - it is the finite-N cost of estimating gamma, and it is "
+        "what the size table below measures. The suite holds the shipped size only to a "
+        "coarse band, too wide to detect the gap itself. "
         "Read the size table, not the transcription test, for what the shipped path "
         "does.\n"
     )
@@ -579,9 +565,9 @@ def build(runtime_note: str = "") -> str:
         "```\n"
         "PROMOTE  size statistically indistinguishable from nominal across every null\n"
         "         cell with n >= 35 INSIDE the real data's censoring envelope, and\n"
-        "         mean power > 0.5 at\n"
-        "         n = 100 against the alternative the check is directed at\n"
-        "HOLD     size calibrated but power weak\n"
+        "         mean power of at least 0.5 at n = 100 over the grid of the\n"
+        "         alternative the check is directed at\n"
+        "HOLD     size calibrated but mean power at n = 100 below 0.5\n"
         "REJECT   size miscalibrated somewhere inside the envelope\n"
         "```\n\n"
         "**Size is judged by a multiplicity-corrected z-test, not by a flat tolerance.** "
@@ -611,22 +597,23 @@ def build(runtime_note: str = "") -> str:
     add(_markdown_table(size_verdict_table(size, inside_envelope=False)))
 
     add(
-        "\n\n## The operating point - the number to read before trusting a non-rejection\n"
+        "\n\n## Power across the dependence grid - read before trusting a non-rejection\n"
     )
+    grid_table, strong = dependence_grid_table(power)
     add(
-        "The verdicts above score C5 and C6 at `rho = 0.20`, which Arm E realises as a "
-        "duration-level lag-1 of 0.153 - the dependence this record actually shows is "
-        f"{REAL_DATA_NOTES['duration_lag1']}. Power there, by event count:\n\n"
+        "C5 and C6 are scored on Arm E, whose `rho` sets the serial dependence between "
+        "durations. Power by event count at every grid point, as the mean over the two "
+        "Weibull shapes, with the range of duration-level lag-1 each `rho` induces across "
+        "its cells:\n\n"
     )
-    add(_markdown_table(operating_point_table(power)))
+    add(_markdown_table(grid_table))
     add(
-        "\n\n**This is the most consequential table in the report.** At the dependence "
-        "this data exhibits, C5 and C6 have roughly 6-13% power below n = 75 and 25-29% at "
-        "n = 100; only at n = 355 do they reach 78-85%. A non-rejection from these checks "
-        "at a threshold with 50 windows is therefore close to uninformative - it is the "
-        "expected outcome whether the durations are dependent or not - and must not be "
-        "read as evidence of independence. They are correctly calibrated, so a REJECTION "
-        "is meaningful; it is the silence that carries no information.\n"
+        f"\n\nBelow n = 100, power exceeds 0.5 only at {strong}. A non-rejection from "
+        "these checks at small n is therefore close to uninformative unless the "
+        "dependence is strong - it is the expected outcome whether the durations are "
+        "dependent or not - and must not be read as evidence of independence. They are "
+        "correctly calibrated, so a REJECTION is meaningful; it is the silence that "
+        "carries no information.\n"
     )
 
     add("\n\n## Criterion 1 - size at the event counts this project has\n")
@@ -652,9 +639,11 @@ def build(runtime_note: str = "") -> str:
     add("\n## Criterion 3 - what the censoring machinery buys\n")
     add(
         "Restated as a PREDICTION rather than a gate, per the plan. Kvaloy & Lindqvist "
-        "Section 5.1 and Figure 1 report that these asymptotic calibrations are mildly "
-        "NON-conservative at small samples - AD ~0.11 and LR ~0.08 at 10 expected events, "
-        "converging to 0.05 by 40-60. The size table above is the comparison. Note this "
+        "(Technometrics 62(1) 2020, Section 6.1, Figure 1, p. 107) report that these "
+        "asymptotic calibrations are mildly NON-conservative at small samples. Read off "
+        "Figure 1 at 10 expected events: AD about 0.11 at shape 1.5 and 0.09 at shape "
+        "0.75, LR about 0.08 at both, converging to 0.05 by 40-60. The size table above "
+        "is the comparison. Note this "
         "criterion barely discriminates on the real data, where censoring is "
         f"{REAL_DATA_NOTES['censoring']}; the 0.25 arm is deliberately outside that range.\n\n"
     )
@@ -688,15 +677,11 @@ def build(runtime_note: str = "") -> str:
     add(
         "\n**1. Read-level dependence does not reach the durations.** Arm C was planned as "
         "the power arm for C5 and C6. It cannot be: correlated READS do not produce "
-        "correlated DURATIONS. Measured induced duration-level lag-1 is -0.005 at rho = 0 "
-        "and still only -0.086 at rho = 0.99 - never positive - because successive level "
+        f"correlated DURATIONS. Measured induced duration-level lag-1 averages {arm_c_lag1} "
+        "- never positive - because successive level "
         "crossings of a stationary Gaussian process are very nearly a renewal process. The "
         "power table below is flat at the nominal level across the whole rho grid, which is "
         "the evidence for that claim.\n\n"
-        "This is not a bench artefact: it explains the real data, where the read-level "
-        f"lag-1 is {REAL_DATA_NOTES['read_lag1']} while the duration-level lag-1 reaches "
-        f"{REAL_DATA_NOTES['duration_lag1']}. Whatever produces duration dependence in this "
-        "instrument, it is not read-to-read correlation.\n\n"
         "**Arm E was added because of this** - Gaussian-copula AR(1) on the durations "
         "themselves, which has exactly Arm A's marginal so `rho` moves dependence and "
         "nothing else. Without it, criterion 2 would be unscoreable for C5 and C6. It was "
@@ -742,9 +727,10 @@ def build(runtime_note: str = "") -> str:
         ]
         add(_markdown_table(thin[columns].round(4)))
         add(
-            "\n\nThe `c2_anderson_darling [asymptotic]` entries at `n_used` of 1 and 5 are "
-            "not a degeneracy at all - C2's asymptotic calibration is only defined for a "
-            "single segment, and at censoring 0.25 a replicate has many, so the row exists "
+            "\n\nThe `c2_anderson_darling` and `cvm_cramer_von_mises` `[asymptotic]` entries "
+            "at `n_used` of 1 and 5 are not a degeneracy at all - both asymptotic "
+            "calibrations are only defined for a single segment, and at censoring 0.25 a "
+            "replicate has many, so the row exists "
             "only on the rare replicate where every segment but one was dropped for having "
             "too few events. It is an artefact of the row schema, not a measurement.\n"
         )
@@ -761,12 +747,11 @@ def build(runtime_note: str = "") -> str:
 
     add("\n## Reproducibility limitation\n")
     add(
-        "`checks/` and `bench/` are both gitignored, per the instruction to track nothing "
-        "new. The consequence is concrete: `provenance.py` reads the working tree with "
-        "`git status --porcelain --untracked-files=no`, so it will report the tree CLEAN "
-        "while every line of check and bench code changes underneath it, and no run "
-        "identity covers any of it. **No number in this report is reproducible from the "
-        "repository alone.** Reproducing it requires this untracked working copy.\n"
+        "The bench and the checks are tracked, and every replicate is seeded from "
+        "`(MASTER_SEED, cell index, replicate)`, so the tables reproduce from the commit "
+        "that produced them. The tables do not say which commit that is: they carry no "
+        "commit, code hash, weighting or divisor, so nothing detects that they describe "
+        "code that has since changed.\n"
     )
 
     add("\n## Runtime\n")

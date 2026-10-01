@@ -82,11 +82,11 @@ def test_the_published_comparison_agrees_with_the_tier_2_test_module():
         PUB_DICT["gamma_tilde"], abs=0.001
     )
     assert rows["Laplace"].ours == pytest.approx(PUB_DICT["laplace"], abs=0.001)
-    # And the documented divergence is still exactly the divisor.
-    n = len(GAPS)
-    assert rows["gamma_hat"].ours * np.sqrt(n / (n - 1)) == pytest.approx(
-        PUB_DICT["gamma_hat"], abs=0.001
-    )
+    # The complete-gap rows use the shipped default; it is the sample divisor, so they are
+    # direct pins against Table 2 and the Section 8.1 text rather than a rescaled bridge.
+    assert rows["gamma_hat"].ours == pytest.approx(PUB_DICT["gamma_hat"], abs=0.0005)
+    assert rows["LR"].ours == pytest.approx(PUB_DICT["lr_gamma_hat"], abs=0.0005)
+    assert rows["gamma_hat"].agrees and rows["LR"].agrees
 
 
 def test_the_reference_csv_holds_the_published_record_itself():
@@ -107,6 +107,70 @@ def test_a_quantity_cannot_be_marked_as_agreeing_when_it_does_not():
     corrupted.loc[corrupted["quantity"] == "mu_hat", "value"] = 99.0
     with pytest.raises(ValueError, match="marked as agreeing"):
         build_published_comparisons(GAPS, corrupted)
+
+
+def test_the_c1_tier_2_verdict_follows_the_published_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Oracle: the tier rule, `pass` only when every published quantity agrees.
+
+    The published record agrees on every row and must read `pass`; the same build with one
+    row flipped must read `partial`. A verdict typed in, or computed from anything but the
+    rows, fails one of the two.
+    """
+    import dataclasses
+
+    import quebra.analyzers.instrument_validation as iv
+
+    assert _build().tier_verdict("C1 Lewis-Robinson", 2).verdict == TIER_PASS
+    rows = build_published_comparisons(GAPS, PUBLISHED)
+    rows[0] = dataclasses.replace(rows[0], agrees=False)
+    monkeypatch.setattr(iv, "build_published_comparisons", lambda _g, _p: rows)
+    flipped = build_instrument_validation(
+        GAPS, PUBLISHED, R_INPUTS, R_VALUES, _tie_frame()
+    )
+    assert flipped.tier_verdict("C1 Lewis-Robinson", 2).verdict == TIER_PARTIAL
+
+
+def test_a_population_default_is_reconciled_to_table_2_by_the_divisor_bridge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Oracle: Table 2's printed values, reached from the 1/N estimates by sqrt(N/(N-1)).
+
+    With `GAMMA_DEFAULT` switched to the population form, sigma_hat, gamma_hat and LR must
+    disagree, each note must name the bridge, and the bridge must carry our value onto the
+    printed one. The figure's caption must then say that rows differ.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    import quebra.analyzers.checks._multiprocess as mp
+    from quebra.plots.instrument_validation_plot import PublishedValuesPlot
+
+    monkeypatch.setattr(mp, "GAMMA_DEFAULT", mp.GAMMA_COMPLETE)
+    rows = {r.quantity: r for r in build_published_comparisons(GAPS, PUBLISHED)}
+    n = len(GAPS)
+    bridge = (n / (n - 1)) ** 0.5
+    for quantity, carried in [
+        ("sigma_hat", rows["sigma_hat"].ours * bridge),
+        ("gamma_hat", rows["gamma_hat"].ours * bridge),
+        ("LR", rows["LR"].ours / bridge),
+    ]:
+        row = rows[quantity]
+        assert not row.agrees, quantity
+        assert "1/N vs their 1/(N-1)" in row.note and "reconciles" in row.note, row.note
+        assert carried == pytest.approx(row.published, rel=1e-3), quantity
+    data = build_instrument_validation(
+        GAPS, PUBLISHED, R_INPUTS, R_VALUES, _tie_frame()
+    )
+    fig = PublishedValuesPlot(name="unit").build_matplotlib(data)
+    try:
+        caption = " ".join(text.get_text() for text in fig.texts)
+    finally:
+        plt.close(fig)
+    assert "3 differ, each row's note says why." in caption, caption
 
 
 # ------------------------------------------------------------------------- honesty

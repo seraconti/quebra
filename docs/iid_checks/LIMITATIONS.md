@@ -5,21 +5,25 @@ reader who took any single ledger row at face value.
 
 ## 1. A non-rejection is usually not evidence
 
-This is the binding one. At the dependence this instrument actually shows (duration lag-1
-0.12-0.15), C5 and C6 have:
+This is the binding one. Power depends on how strong the dependence is, and the bench
+sweeps it: Arm E, `rho` 0.05-0.5, inducing a duration-level lag-1 from about 0 to 0.48.
+Averaged over that grid (`jobs/bench/results/power_table.csv`, arm=E_copula_ar1_durations, mean over `rho` and shape), C5 and C6 have:
 
 | n | 20 | 35 | 50 | 75 | 100 | 355 |
 |---|---|---|---|---|---|---|
-| C5 studentized | 0.070 | 0.101 | 0.135 | 0.192 | 0.292 | 0.849 |
-| C6 | 0.060 | 0.092 | 0.117 | 0.168 | 0.249 | 0.782 |
+| C5 studentized | 0.103 | 0.173 | 0.232 | 0.311 | 0.364 | 0.623 |
+| C6 | 0.086 | 0.152 | 0.207 | 0.284 | 0.340 | 0.599 |
 
-Below n = 75 a non-rejection is the expected outcome whether the durations are dependent or
-not. A REJECTION is meaningful, because the checks are correctly calibrated. It is the
+Below n = 100 neither exceeds 0.5 except at the strongest grid point, `rho` = 0.5
+(`promotion_report.md`, "Power across the dependence grid"). So below n = 100 a
+non-rejection is the expected outcome whether the durations are dependent or not, unless
+the dependence is strong. A REJECTION is meaningful, because the checks are correctly calibrated. It is the
 silence that carries no information.
 
 `analyzers/check_ledger.py` enforces this: a `pass` requires the p-value AND a sufficient
-event count AND that the bench found the check calibrated at that count. On the 0704
-record, 31 of 68 non-rejections would have printed `pass` under a p-value-only rule.
+event count AND that the bench found the check calibrated at that count. On the 070423 record of qubit 1, 49 of its 63 non-rejections read
+`underpowered` or `not interpretable (ties)`, and would have printed `pass` under a p-value-only
+rule (`jobs/active/check_ledger_6d2s_q1.py`, its `q1_070423_check_ledger_data`).
 
 ## 2. Multiplicity across the ladder is not corrected
 
@@ -32,9 +36,10 @@ is much weaker evidence than a monotone trend down the ladder.
 
 ## 3. The two clocks can disagree, and neither is wrong
 
-On the 0704 record at 4 µs, the calendar clock passes every check and the in-spec clock
-cannot compute C1 or C2 at all. That is not a contradiction: they ask different questions
-(see the README), and the in-spec clock's `tau == T_N` collapse is structural for a record
+On the 070423 record of qubit 1 at 4 µs, the calendar clock passes every check except C3,
+which has no bench cell and cannot read `pass`, while the in-spec clock rejects C5, C6 and
+CvM and cannot compute C1 or C2 at all (`jobs/active/check_ledger_6d2s_q1.py`). That is not a contradiction: they ask different questions
+(see `iid_checks_basics.md`, "Two clocks"), and the in-spec clock's `tau == T_N` collapse is structural for a record
 that ends out of spec.
 
 ## 4. C3 is unassessed
@@ -58,8 +63,11 @@ The promotion report scores five checks. No conclusion anywhere rests on C3.
 
 The grid asked for censoring 0.25. The generator caps the segment count so each segment
 expects at least a few events, and that cap binds at every n, so the realised value is
-0.1675-0.1685 throughout. The out-of-envelope findings (notably C1 asymptotic at 0.699) are
-real, but they happened at c ≈ 0.17. `jobs/bench/report.py` now prints the realised value.
+0.147-0.174 on continuous records and 0.171-0.195 on quantised ones, at every n
+(`jobs/bench/results/size_table.csv`, censoring_realised at censoring_target 0.25). The
+out-of-envelope findings (notably C1 asymptotic at 0.8625 on Arm A, shape 1.5, n = 355) are
+real, but they happened at c between 0.15 and 0.19. `jobs/bench/report.py` prints the
+realised value.
 
 ## 6. The tie cutoff is weakly determined
 

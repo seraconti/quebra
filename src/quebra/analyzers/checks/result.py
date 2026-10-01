@@ -9,7 +9,7 @@ calibration and the counts, not just a p-value.
 Two structural facts drive the design:
 
 - **A record is a LIST of segments, not one process.** Kvaloy & Lindqvist's eqs (4)/(7)
-  admit exactly one incomplete gap, the terminal one. A record with interior read gaps
+  (Technometrics 62(1):101-115, 2020) admit exactly one incomplete gap, the terminal one. A record with interior read gaps
   has an incomplete gap at every gap, so it is m independent time-censored processes and
   needs the multi-process extension (eqs 13-16). A gap-free record is the m = 1 case of
   the same code, so there is no separate single-process path to keep in sync.
@@ -64,9 +64,9 @@ TAU_MARGIN = 1e-12
 
 
 def last_event_time(x: np.ndarray) -> float:
-    """`T_N`, computed the way eq (7) computes it.
+    """`T_N`, computed the way `c2._eq7` computes it.
 
-    Deliberately `cumsum(x)[-1]` and not `sum(x)`: eq (7) forms `T = cumsum(x)` and divides
+    Deliberately `cumsum(x)[-1]` and not `sum(x)`: `c2._eq7` forms `T = cumsum(x)` and divides
     by `tau - T[-1]`, so this is the quantity every guard must be written against. See
     `TAU_MARGIN`.
     """
@@ -128,10 +128,11 @@ def validate_segment(
 
     Raising rather than returning a sentinel is the repo convention and it matters
     here: every failure below yields a finite, plausible, WRONG statistic if waved
-    through. A zero gap makes eq (7)'s `ln(T1)` term `-inf`; a `tau` below `T_N` makes
+    through. A zero first gap makes eq (7)'s `ln(T_2/T_1)` term `+inf`, and a
+    permutation can put any gap first; a `tau` below `T_N` makes
     `ln(tau - T_i)` complex; a negative gap flows onto a survival curve as a lifetime.
 
-    `require_strict_tau` is C2's extra demand. Eq (7) contains `ln(tau / (tau - T_N))`,
+    `require_strict_tau` is C2's extra demand. Eq (7) contains `ln((tau - T_{N-1})/(tau - T_N))` (with `T_0 = 0`),
     which is `+inf` at `tau == T_N` - verified numerically, not assumed. That case is
     failure (type II) censoring, not the time censoring the equation is derived for, so
     C2 declines it while C1 (eq 4, no such term) accepts it.
@@ -154,7 +155,8 @@ def validate_segment(
         raise ValueError(
             f"segment gaps must be strictly positive; {n_bad} of {len(x)} are <= 0. "
             "A zero-duration window is producible by the real carve (a single-read "
-            "scan_end window has duration_s exactly 0.0) and makes eq (7) singular, "
+            "scan_end window has duration_s exactly 0.0) and makes eq (7) singular "
+            "once it is the first gap, which a permutation can make it, "
             "so it has to be excluded deliberately upstream rather than here."
         )
     if not np.isfinite(segment.tau):
@@ -176,7 +178,7 @@ def validate_segment(
         raise ValueError(
             f"tau ({segment.tau:.6g}) does not clear T_N ({total:.6g}) by the required "
             f"relative margin {TAU_MARGIN:.1e}, so the trailing gap is empty or within "
-            "float noise of it. Eq (7) contains ln(tau/(tau - T_N)), which is +inf at "
+            "float noise of it. Eq (7) contains ln((tau - T_{N-1})/(tau - T_N)), which is +inf at "
             "equality: this is failure censoring, not the time censoring the statistic "
             "is derived for. Use the calendar clock, or extend tau to the real end of "
             "observation."

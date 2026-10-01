@@ -124,8 +124,7 @@ def run(
             "lags": list(layout.lags),
             "n_pairs_per_lag": list(layout.n_pairs),
             # The raw lag-1 autocorrelation, kept because the bench reports the INDUCED
-            # duration-level dependence of every Arm C cell against the 0.12-0.15
-            # measured on the real data, and this is that number.
+            # duration-level dependence of every cell, and this is that number.
             "r_lag1": float(observed_r[0]),
         },
     )

@@ -47,9 +47,7 @@ import numpy as np
 from scipy import stats
 
 # Cap on the number of lags. Beyond a handful of lags the pair count collapses and each
-# extra coordinate costs power in the max/portmanteau without plausibly carrying signal;
-# the real duration series measured lag-1 dependence (0.12-0.15 at 3 us) and nothing
-# detectable beyond it.
+# extra coordinate costs power in the max/portmanteau without plausibly carrying signal.
 MAX_LAG_CAP = 5
 
 # A lag needs at least this many within-segment pairs to be included at all.

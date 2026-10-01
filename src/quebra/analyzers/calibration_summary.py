@@ -8,7 +8,7 @@ around it.
 Four questions, four artifacts, one per figure:
 
     SizeVsN            does a check hold its nominal level at the event counts we have?
-    PowerVsDependence  can it see the dependence this instrument actually shows?
+    PowerVsDependence  how does its power grow with the dependence it is shown?
     ValidationCurve    is the transcription right, and what does estimating gamma cost?
     ReadDependence     does read-level correlation reach the durations at all?
 
@@ -28,11 +28,6 @@ import pandas as pd
 import quebra.analyzers.checks.c2_anderson_darling as c2
 from quebra.analyzers.checks.result import CALIB_ASYMPTOTIC, CALIB_PERMUTATION, Segment
 from quebra.core._artifact_guard import StaleArtifactGuard
-
-# The dependence the real record shows, duration-level lag-1 rank autocorrelation, measured
-# on both datasets before any of this was built. Drawn as a band because it is a range
-# across thresholds, not a point.
-REAL_DATA_LAG1_BAND = (0.12, 0.15)
 
 # Nominal significance every size curve is read against.
 NOMINAL_ALPHA = 0.05
@@ -68,7 +63,7 @@ class SizeVsN(StaleArtifactGuard):
     cell_description: str = ""
     # `rate_by_row` is a MEAN over the cells that remain after the primary-cell filter -
     # in practice the two Weibull shapes, which are not interchangeable: at n = 20 C2
-    # asymptotic is 0.0650 at shape 0.75 and 0.0865 at shape 1.5, a spread wider than the
+    # asymptotic is 0.0575 at shape 0.75 and 0.0790 at shape 1.5, a spread wider than the
     # effect the large-n end of the curve shows. So the spread travels with the mean and
     # the figure draws it; a single line labelled "the primary null cell" would have been
     # the kind of silent averaging this project keeps finding.
@@ -83,13 +78,11 @@ class PowerVsDependence(StaleArtifactGuard):
     """Power against the dependence actually induced, not against the latent knob.
 
     `induced_lag1` is the x-axis on purpose: `rho` is a Gaussian-copula parameter no reader
-    can interpret, while the induced duration-level lag-1 is directly comparable to the
-    0.12-0.15 this instrument shows. `real_band` is that comparison.
+    can interpret, while the induced duration-level lag-1 is the dependence a check sees.
     """
 
     induced_lag1_by_n: dict[int, list[float]] = field(default_factory=dict)
     power_by_row_and_n: dict[str, dict[int, list[float]]] = field(default_factory=dict)
-    real_band: tuple[float, float] = REAL_DATA_LAG1_BAND
     alpha: float = NOMINAL_ALPHA
     # One representative row per check, chosen HERE rather than at draw time. The artifact
     # keeps every row (completeness); this says which the figure shows and why.
@@ -101,7 +94,8 @@ class PowerVsDependence(StaleArtifactGuard):
 class ValidationCurve(StaleArtifactGuard):
     """P-P data for eq (7): theoretical vs empirical CDF, both gamma paths.
 
-    Two curves per n. `gamma = 1` isolates the transcription; `gamma_hat` is what ships.
+    Eq (7) is Kvaloy and Lindqvist's Anderson-Darling statistic, Technometrics 62(1) 2020,
+    p. 104. Two curves per n. `gamma = 1` isolates the transcription; `gamma_hat` is what ships.
     The vertical gap between them at small n IS the finite-N cost of estimating gamma, and
     it is the reason the transcription test must not be read as covering production.
     """
@@ -130,7 +124,6 @@ class ReadDependence(StaleArtifactGuard):
     # mean - but it is not a confidence interval on the statistic, and naming it so here
     # keeps the figure's error bars from being read as one.
     induced_lag1_se: list[float] = field(default_factory=list)
-    real_band: tuple[float, float] = REAL_DATA_LAG1_BAND
     arm: str = ""
 
 
@@ -310,7 +303,7 @@ def validation_curve(
     seed: int = 20260811,
     n_points: int = 200,
 ) -> ValidationCurve:
-    """Simulate the P-P curve for eq (7) under both gamma paths.
+    """Simulate the P-P curve for C2's eq (7) under both gamma paths.
 
     Deterministic in `seed`, which is a step kwarg, so the figure is reproducible and the
     seed appears on the provenance label. This is the one calibration artifact that is not
@@ -348,7 +341,6 @@ __all__ = [
     "CALIB_ASYMPTOTIC",
     "CALIB_PERMUTATION",
     "NOMINAL_ALPHA",
-    "REAL_DATA_LAG1_BAND",
     "PowerVsDependence",
     "ReadDependence",
     "SizeVsN",
@@ -376,8 +368,8 @@ __all__ = [
 # They can therefore disagree, by design and in both directions. Two live examples:
 # C5-unstudentized is flagged by the ledger at n = 20 (z = -2.97 against 2.955) but reads
 # calibrated in the report, which only scores n >= 35; C2-asymptotic reads REJECT overall
-# in the report but is accepted by the ledger at n = 75, 100 and 355, which is the more
-# useful statement for a record with 355 windows.
+# in the report but is accepted by the ledger on the in-spec clock at n = 50, 75, 100 and
+# 355, which is the more useful statement for a record with 355 windows.
 
 # Censoring the real data exhibits (0.000-0.026 wherever n >= 20). Cells beyond it are a
 # corner the data never reaches and must not condemn a check that works where it lives.
@@ -402,7 +394,7 @@ def null_se(alpha: float, n_used: float) -> float:
 def bonferroni_z_crit(n_cells: int, familywise: float = FAMILYWISE_ALPHA) -> float:
     """Two-sided z threshold for the worst of `n_cells` comparisons.
 
-    Without this the rule is a coin flip: the largest of 44-90 deviations is ~2.5-3 MC SE
+    Without this the rule is a coin flip: the largest of 56-90 deviations is ~2.5-3 MC SE
     by chance alone, so a flat tolerance flags a correct check as often as a broken one.
     """
     from scipy import stats as _stats

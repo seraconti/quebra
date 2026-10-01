@@ -309,6 +309,106 @@ def configure_ramsey_job(
 # own docstring asks production jobs to do, and what keeps this a default rather than a rule.
 T2STAR_THRESHOLDS: list[tuple[str, float, bool]] = list(T2STAR_DEFAULT_LADDER)
 
+# The T2* carve parameters, the defaults of both `wire_t2star_carve` and
+# `configure_t2star_job`, so a T2* panel and a check ledger cannot default to different
+# windows.
+T2STAR_GAP_MULT = 10.0
+T2STAR_K = 1.0
+T2STAR_USE_UNCERTAINTY = True
+
+
+def _t2star_run(norm: object) -> T2StarResult:
+    return t2star.run(t2star.make_inputs_from_norm(norm))  # type: ignore[arg-type]
+
+
+def _windows_run(
+    result: T2StarResult,
+    gap_mult: float,
+    k: float,
+    use_uncertainty: bool,
+    thresholds: list[tuple[str, float, bool]],
+) -> WindowsResult:
+    return windows.run(
+        windows.make_inputs_from_frame(
+            result.frame,
+            time_col="t_rel_s",
+            value_col="t2star_s",
+            sigma_col="t2star_error_s" if use_uncertainty else None,
+            thresholds=thresholds,
+            dataset_id=str(result.meta.get("dataset_id", "")),
+            gap_mult=gap_mult,
+            k=k,
+            use_uncertainty=use_uncertainty,
+        )
+    )
+
+
+def _t2star_panel_data(
+    result: T2StarResult,
+    window_result: WindowsResult,
+    shape_min_reads: int,
+    use_uncertainty: bool,
+    xi_seed: int,
+    thresholds: list[tuple[str, float, bool]],
+) -> WithinCalibrationPanelData:
+    return t2star.make_panel_data(
+        result,
+        windows=window_result.windows,
+        reads=window_result.reads,
+        gap_spans_s=window_result.diagnostics["gap_spans_s"],
+        thresholds=thresholds,
+        shape_min_reads=shape_min_reads,
+        use_uncertainty=use_uncertainty,
+        xi_seed=xi_seed,
+    )
+
+
+def wire_t2star_carve(
+    job: "Job",
+    *,
+    dataset: "Dataset",
+    thresholds: list[tuple[str, float, bool]] | None = None,
+    gap_mult: float = T2STAR_GAP_MULT,
+    k: float = T2STAR_K,
+    use_uncertainty: bool = T2STAR_USE_UNCERTAINTY,
+    node_suffix: str = "",
+) -> tuple[object, object]:
+    """Wire load, filter, T2* fit and window carve onto `job`; return (fit, windows) nodes.
+
+    The one definition of the T2* carve. `configure_t2star_job` draws a panel on top of it
+    and `ledger_recipe.configure_check_ledger_job` scores its windows, so the ledger and the
+    panel cannot carve differently. `node_suffix` is appended to every step name (the load
+    node is numbered by the job instead), so one job can carve several records with readable
+    node ids.
+
+    No interpolate node, deliberately. Windows are carved from the filtered reads: the gap
+    policy is meaningless on a uniform grid, and an interpolated point is not an observation,
+    so a window must never be built from one. `tests/test_windows_not_interpolated.py` pins
+    that as a property of the DAG.
+
+    Every carve parameter is passed as a step KWARG, so it reaches the provenance label even
+    where it equals the default.
+    """
+    ladder = T2STAR_THRESHOLDS if thresholds is None else thresholds
+    main_node = job.load(dataset)
+    filtered = job.step(
+        _filter_step(RAMSEY_CONFIG), main_node, name=f"t2star_filter{node_suffix}"
+    )
+    final = job.step(
+        _final_stage, filtered, name=f"t2star_final_filter_stage{node_suffix}"
+    )
+    result = job.step(_t2star_run, final, name=f"t2star{node_suffix}")
+    window_node = job.step(
+        _windows_run,
+        result,
+        name=f"windows{node_suffix}",
+        gap_mult=gap_mult,
+        k=k,
+        use_uncertainty=use_uncertainty,
+        thresholds=ladder,
+    )
+    return result, window_node
+
 
 def configure_t2star_job(
     job: "Job",
@@ -316,89 +416,35 @@ def configure_t2star_job(
     dataset: "Dataset",
     prefix: str,
     thresholds: list[tuple[str, float, bool]] | None = None,
-    gap_mult: float = 10.0,
-    k: float = 1.0,
-    use_uncertainty: bool = True,
+    gap_mult: float = T2STAR_GAP_MULT,
+    k: float = T2STAR_K,
+    use_uncertainty: bool = T2STAR_USE_UNCERTAINTY,
     shape_min_reads: int = 5,
     xi_seed: int = XI_SEED,
 ) -> None:
-    """Wire the whole T2* within-calibration graph onto `job`.
+    """Wire the whole T2* within-calibration graph onto `job`: the carve, then the panel.
 
     Collapses the family: two job files that were
     byte-identical once the date and the run duration were normalised. What is left in each
     job file is its parameter row, which is the part a reader should actually diff.
 
-    Deliberately does NOT call `configure_ramsey_job` and adds NO interpolate node. Windows
-    are carved from the filtered reads: the gap policy is meaningless on a uniform grid, and
-    an interpolated point is not an observation, so a window must never be built from one.
-    `tests/test_windows_not_interpolated.py` pins that as a property of the DAG.
+    Deliberately does NOT call `configure_ramsey_job`: the carve comes from
+    `wire_t2star_carve`, which adds no interpolate node.
 
-    `gap_mult`, `k`, `use_uncertainty`, `shape_min_reads` and `xi_seed` are passed as step
-    KWARGS rather than captured, so they reach the provenance label - the `allan` pattern,
-    not the `filter` pattern. `runner` builds that label from `node.kwargs`, so an argument
-    left to its default would be invisible to provenance; they are therefore passed
-    explicitly below even where the value equals the default.
+    `shape_min_reads` and `xi_seed` are passed as step KWARGS rather than captured, so they
+    reach the provenance label - the `allan` pattern, not the `filter` pattern. `runner`
+    builds that label from `node.kwargs`, so an argument left to its default would be
+    invisible to provenance; they are therefore passed explicitly below even where the value
+    equals the default.
     """
     ladder = T2STAR_THRESHOLDS if thresholds is None else thresholds
-
-    def _t2star_run(norm: object) -> T2StarResult:
-        return t2star.run(t2star.make_inputs_from_norm(norm))  # type: ignore[arg-type]
-
-    def _windows_run(
-        result: T2StarResult,
-        gap_mult: float,
-        k: float,
-        use_uncertainty: bool,
-        thresholds: list[tuple[str, float, bool]],
-    ) -> WindowsResult:
-        return windows.run(
-            windows.make_inputs_from_frame(
-                result.frame,
-                time_col="t_rel_s",
-                value_col="t2star_s",
-                sigma_col="t2star_error_s" if use_uncertainty else None,
-                thresholds=thresholds,
-                dataset_id=str(result.meta.get("dataset_id", "")),
-                gap_mult=gap_mult,
-                k=k,
-                use_uncertainty=use_uncertainty,
-            )
-        )
-
-    def _t2star_panel_data(
-        result: T2StarResult,
-        window_result: WindowsResult,
-        shape_min_reads: int,
-        use_uncertainty: bool,
-        xi_seed: int,
-        thresholds: list[tuple[str, float, bool]],
-    ) -> WithinCalibrationPanelData:
-        return t2star.make_panel_data(
-            result,
-            windows=window_result.windows,
-            reads=window_result.reads,
-            gap_spans_s=window_result.diagnostics["gap_spans_s"],
-            thresholds=thresholds,
-            shape_min_reads=shape_min_reads,
-            use_uncertainty=use_uncertainty,
-            xi_seed=xi_seed,
-        )
-
-    main_node = job.load(dataset)
-    filtered = job.step(_filter_step(RAMSEY_CONFIG), main_node, name="t2star_filter")
-    final = job.step(_final_stage, filtered, name="t2star_final_filter_stage")
-    result = job.step(_t2star_run, final, name="t2star")
-    window_node = job.step(
-        _windows_run,
-        result,
-        name="windows",
+    result, window_node = wire_t2star_carve(
+        job,
+        dataset=dataset,
+        thresholds=ladder,
         gap_mult=gap_mult,
         k=k,
         use_uncertainty=use_uncertainty,
-        # A kwarg, not the closure capture it was: the ladder defines every rung of the
-        # panel, and this function's own docstring says an argument left out of node.kwargs
-        # is invisible to the provenance label. It was the one parameter breaking that rule.
-        thresholds=ladder,
     )
     panel = job.step(
         _t2star_panel_data,

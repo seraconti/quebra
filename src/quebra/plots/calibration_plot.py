@@ -24,7 +24,6 @@ from quebra.analyzers.calibration_summary import (
 )
 from quebra.plots.base import BasePlot
 from quebra.plots.theme import (
-    HIGHLIGHT_SHADE,
     REFERENCE_LINE,
     BAND_STYLE,
     calibration_color,
@@ -151,8 +150,6 @@ class CalibrationPowerPlot(BasePlot):
             n_values = sorted(result.induced_lag1_by_n)
 
             for ax, row in zip(axes, rows):
-                lo, hi = result.real_band
-                ax.axvspan(lo, hi, **HIGHLIGHT_SHADE)
                 ax.axhline(result.alpha, **REFERENCE_LINE)
                 for index, n in enumerate(n_values):
                     ax.plot(
@@ -168,14 +165,6 @@ class CalibrationPowerPlot(BasePlot):
                 ax.set_ylim(0.0, 1.0)
             axes[0].set_ylabel("Power")
             axes[-1].legend(loc="upper left", frameon=False)
-            axes[0].text(
-                0.04,
-                0.96,
-                "shaded: dependence\nmeasured on this record",
-                transform=axes[0].transAxes,
-                ha="left",
-                va="top",
-            )
             # FIGURE_STANDARD: a panel drawing a subset says which, in the panel.
             if result.selection_reason:
                 fig.text(0.5, 0.005, f"shown: {result.selection_reason}", ha="center")
@@ -190,7 +179,11 @@ class CalibrationPowerPlot(BasePlot):
 
 
 class CalibrationValidationPlot(BasePlot):
-    """Eq (7) against its limiting null, with and without an estimated gamma."""
+    """Eq (7) against its limiting null, with and without an estimated gamma.
+
+    Eq (7) is Kvaloy and Lindqvist's Anderson-Darling statistic, Technometrics 62(1) 2020,
+    p. 104.
+    """
 
     def build_matplotlib(
         self, result: ValidationCurve, style: str = "default"
@@ -238,7 +231,10 @@ class CalibrationValidationPlot(BasePlot):
                 ha="right",
                 va="bottom",
             )
-            fig.suptitle("Anderson-Darling p-values against the limiting null - eq (7)")
+            fig.suptitle(
+                "Anderson-Darling p-values against the limiting null - "
+                "Kvaloy and Lindqvist eq (7)"
+            )
             fig.tight_layout()
             return fig
 
@@ -262,8 +258,6 @@ class CalibrationReadDependencePlot(BasePlot):
             induced = np.asarray(result.induced_lag1, dtype=float)
             se = np.asarray(result.induced_lag1_se, dtype=float)
 
-            lo, hi = result.real_band
-            ax.axhspan(lo, hi, **HIGHLIGHT_SHADE)
             ax.axhline(0.0, **REFERENCE_LINE)
             ax.plot(rho, rho, **REFERENCE_LINE)
             ax.errorbar(
@@ -293,14 +287,6 @@ class CalibrationReadDependencePlot(BasePlot):
             ax.set_ylabel("Induced duration lag-1 autocorrelation")
             ax.set_title(
                 "Duration dependence induced by read correlation - Arm C, carved"
-            )
-            ax.text(
-                0.98,
-                0.97,
-                "shaded: dependence measured on this record",
-                transform=ax.transAxes,
-                ha="right",
-                va="top",
             )
             ax.legend(loc="upper left", frameon=False)
             # Headroom so the y = x reference and its note clear the top of the axes.

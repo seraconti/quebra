@@ -238,12 +238,18 @@ panels/      within_calibration.py, across_calibration.py   generic render compo
              analyzers/within_calibration_compute.py and typed in
              analyzers/within_calibration_data.py.
 plots/       base.py, targets.py, theme.py, *_plot.py   targets: static, academic, poster
-jobs/active/ ramsey_*.py, ramsey_2x2_*.py, t2star_*.py, mtbf_*.py, check_calibration.py
-jobs/composite/ compare_*.py   job.include + .ref across datasets; declares JOB_SWEEP = False
-src/quebra/recipes.py          RAMSEY_CONFIG + configure_ramsey_job orchestrator.
+jobs/active/ ramsey_*.py, ramsey_2x2_*.py, t2star_*.py, mtbf_*.py, check_calibration.py,
+             check_ledger_6d2s_q*.py (checks only: per-record ledgers + per-qubit survey)
+jobs/composite/ compare_*.py, independence_survey.py   job.include + .ref across datasets;
+             declare JOB_SWEEP = False
+src/quebra/recipes.py          RAMSEY_CONFIG + configure_ramsey_job orchestrator, and
+                               wire_t2star_carve, the one T2* carve.
                                Reusable library code: keeping it out of jobs/ is what
                                lets the CLI avoid putting the caller's directory on
                                sys.path, which is forbidden.
+src/quebra/ledger_recipe.py    configure_check_ledger_job and the survey wiring. Apart
+                               from recipes.py so the checks stay out of the T2* jobs'
+                               identity closure.
 src/quebra/cli.py              the CLI, installed as the `quebra` console script.
                                Anchors output/ and the --all glob on the WORKING
                                DIRECTORY, never on __file__, so an installed copy
@@ -255,7 +261,8 @@ tests/                         tracked
 ```
 
 `jobs/reference/` holds TRACKED external validation data consumed by both the suite and a
-figure: the published load-haul-dump record (Kvaloy and Lindqvist Section 6.1) and the R
+figure: the published load-haul-dump record (Kvaloy and Lindqvist, Technometrics 2020,
+Section 8.1) and the R
 reference values written by `jobs/rscripts/reference_values.R`. It sits beside the jobs that
 declare it as a Dataset. `reference_values.R` is never run by the test suite; the fixtures are
 committed so pytest works without R.
@@ -354,7 +361,8 @@ Tests requiring R **skip** when `Rscript` is absent. They never pass with mocked
 This repo has drifted here before. Hold the line.
 
 - `docs/` holds reference docs: `TIME_SEMANTICS`, `PANEL_CONTRACT`, `FIGURE_STANDARD`, `JOBS`,
-  `WRITING_A_JOB`, `WRITING_A_SCHEMA`, and `iid_checks/` (one page per check plus limitations).
+  `WRITING_A_JOB`, `WRITING_A_SCHEMA`, `GOLD_STANDARD` (every published number the checks
+  reproduce, with its locator), and `iid_checks/` (one page per check plus limitations).
   Architecture rationale lives there, not in this file. Refresh docs; do not narrate evolving
   architecture here.
 - Every `.md` file is tracked. `.gitignore` carries no blanket `*.md` or `.*` rule, so `.md`

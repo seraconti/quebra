@@ -60,8 +60,9 @@ for (pkg in c("XICOR", "energy", "randtests", "copula")) {
 }
 
 # ------------------------------------------------------------- Chatterjee's xi, TIE-FREE
-# The reduction `1 - 3*sum|dr|/(n^2-1)` is only valid here. This case pins that our eq (8)
-# still agrees with the reference implementation where the two forms coincide.
+# The reduction `1 - 3*sum|dr|/(n^2-1)` is only valid here. This case pins that our
+# tie-corrected xi (Chatterjee 2021) still agrees with the reference implementation where
+# the two forms coincide.
 set.seed(101)
 n <- 60
 x <- rnorm(n)
@@ -73,16 +74,16 @@ add_value("xi_tie_free", "spearman", cor(x, y, method = "spearman"))
 add_value("xi_tie_free", "dcor", energy::dcor(x, y))
 
 # ------------------------------------------------------------------ Chatterjee's xi, TIED
-# THE CASE THAT MATTERS. Our estimator uses the tie-corrected eq (8), not the tie-free
+# THE CASE THAT MATTERS. Our estimator uses the tie-corrected form, not the tie-free
 # reduction, and no shipped window exercises it - all 309 are tie-free. This is the only
 # external evidence that the tie-corrected path is right. `ties = TRUE` is XICOR's own
-# eq (8) path.
+# tie-corrected path.
 set.seed(202)
 n <- 60
 x <- round(rnorm(n), 1)              # ties on x
 y <- round(x + rnorm(n, sd = 0.5))   # heavy ties on y
 add_input("xi_tied", x, y)
-# `xicor` is RANDOM when x has ties: eq (8) breaks them uniformly at random, so repeated
+# `xicor` is RANDOM when x has ties: Chatterjee breaks them uniformly at random, so repeated
 # calls on identical data give different answers - measured, 7 distinct values in 8 calls,
 # spanning 0.425 to 0.563. A single draw is therefore NOT a reference value, and pinning it
 # would pin R's RNG state rather than the estimator. What IS well defined is the

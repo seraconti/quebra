@@ -1,6 +1,7 @@
 """Shape statistics: xi, Spearman, distance correlation, tie fraction.
 
-Written BEFORE the eq (8) correction to `chatterjee_xi`, deliberately. Nothing else would
+Written BEFORE the tie-corrected form (Chatterjee 2021) went into `chatterjee_xi`,
+deliberately. Nothing else would
 have caught that change at the time. `StaleArtifactGuard` compares field NAMES, so every
 existing pickle in `output/` keeps loading through a change of this kind, and nothing else
 asserts these values. `Job.job_code_hash` now covers `quebra.analyzers.shape_stats` - it is in
@@ -10,12 +11,14 @@ number being caught.
 
 The xi tests come in two groups, and the distinction is the point:
 
-- **Tie-free**: eq (8) reduces algebraically to `1 - 3*sum|dr|/(n^2-1)`, so both the old
+- **Tie-free**: the tie-corrected form reduces algebraically to `1 - 3*sum|dr|/(n^2-1)`, so both the old
   and the new estimator must agree, and both must match hand-computed values. Measured on
   the real T2* ladder, EVERY window is tie-free on both axes (0 of 279 at 3 us), so these
   are the tests that pin current behaviour.
-- **Tied**: the two forms diverge, and only eq (8) is correct. These are the tests that
-  would fail against the tie-free reduction.
+- **Tied**: the two forms diverge, and only the tie-corrected form is correct. These are the
+  tests that would fail against the tie-free reduction.
+
+`eq8` in the test names below denotes the tie-corrected form.
 """
 
 from __future__ import annotations
@@ -49,7 +52,7 @@ def _xi_tie_free_reference(x: np.ndarray, y: np.ndarray) -> float:
     """`1 - 3*sum|r_{i+1}-r_i|/(n^2-1)`, Chatterjee's tie-free reduction.
 
     Independent of the implementation: written from the formula, not by calling the code.
-    Eq (8) must equal this whenever there are no ties in y.
+    The tie-corrected form must equal this whenever there are no ties in y.
     """
     from scipy.stats import rankdata
 
@@ -72,7 +75,7 @@ def test_a_perfect_function_hits_the_exact_finite_n_maximum(n):
     is well below 1 in practice and any reading of xi has to allow for it.
 
     TIE-FREE ONLY. `y = 2x + 1` has all-distinct values by construction. With ties in y the
-    ceiling is HIGHER, because the eq (8) denominator shrinks - measured, n = 12 with two
+    ceiling is HIGHER, because the tie-corrected denominator shrinks - measured, n = 12 with two
     distinct y values reaches 0.833 against a tie-free ceiling of 0.769.
     """
     x = np.arange(1.0, n + 1.0)
@@ -111,7 +114,7 @@ def test_xi_is_nan_on_degenerate_input():
 
 
 def _xi_eq8_reference(x: np.ndarray, y: np.ndarray) -> float:
-    """Reference document eq (8), written from the formula rather than from the code.
+    """Chatterjee (2021), the tie-corrected form, written from the formula rather than the code.
 
         xi = 1 - n * sum_i |r_{i+1} - r_i| / (2 * sum_i l_i (n - l_i))
 
@@ -160,7 +163,7 @@ def test_the_implementation_matches_eq8_on_TIED_data(seed):
 
 
 def test_the_two_forms_diverge_once_y_is_tied():
-    """The failure the eq (8) fix exists to remove.
+    """The failure the tie-corrected form exists to remove.
 
     A heavily tied y is what a quantised metric produces - a fidelity ladder where most
     windows are one read long. The T2* ladder has no ties at all, which is why this had to
@@ -236,7 +239,8 @@ def test_a_tie_free_window_uses_the_closed_form():
 
 
 def test_a_tied_window_switches_to_permutation():
-    """Reference 10.3 caveat 1: where ties dominate the closed form must not be used."""
+    """Design rule, `.claude/qre_checks_reference.tex` Section 10.3 caveat 1: where ties
+    dominate, the closed form must not be used."""
     rng = np.random.default_rng(12)
     x = rng.normal(size=30)
     y = rng.integers(0, 3, size=30).astype(float)
@@ -266,7 +270,7 @@ def test_a_degenerate_window_reports_no_method_rather_than_a_number():
 
 
 def test_the_constant_y_guard_fires():
-    """New with eq (8): a constant y makes the denominator exactly zero."""
+    """New with the tie-corrected form: a constant y makes the denominator exactly zero."""
     assert np.isnan(chatterjee_xi(np.arange(10.0), np.ones(10)))
 
 
@@ -350,8 +354,9 @@ def test_the_asymptotic_null_variance_is_two_fifths():
 def test_the_closed_form_holds_its_nominal_level_under_independence():
     """The operational form of the same statement: does the p-value mean what it says?
 
-    Reference 10.3 caveat 2 flags n in 35-355 as the disputed range, which is exactly the
-    range this project runs in, so this is measured rather than assumed. Type-I comes out
+    `.claude/qre_checks_reference.tex` Section 10.3 caveat 2 calls n of 35 to 355, the
+    range this project runs in, disputed for the normal approximation (no source located
+    for the dispute), so this is measured rather than assumed. Type-I comes out
     at or slightly below nominal here - the safe direction - which is also what the
     ledger's OPEN entry on the missing n-floor relies on.
     """

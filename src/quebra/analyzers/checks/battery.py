@@ -36,7 +36,7 @@ import quebra.analyzers.checks.c2_anderson_darling as c2
 import quebra.analyzers.checks.c5_rank_autocorr as c5
 import quebra.analyzers.checks.c6_exchangeability as c6
 import quebra.analyzers.checks.cvm_cramer_von_mises as cvm
-from quebra.analyzers.checks._multiprocess import GAMMA_COMPLETE
+from quebra.analyzers.checks._multiprocess import GAMMA_DEFAULT
 from quebra.analyzers.checks._permutation import (
     resolve_perm,
     DEFAULT_N_PERM,
@@ -69,13 +69,13 @@ ROW_KEYS = (
     ("c5_rank_autocorr", CALIB_PERMUTATION, c5.VARIANT_STUDENTIZED),
     ("c5_rank_autocorr", CALIB_PERMUTATION, c5.VARIANT_RAW),
     ("c6_exchangeability", CALIB_PERMUTATION, ""),
-    # CvM is the fourth functional of the same Brownian bridge as
+    # CvM is another functional of the same Brownian bridge as
     # C1 and C2, and it is here for a reason the other two cannot cover: eq (7) carries a
     # `1/(s(1-s))` weight, so C2 is singular when the last event lands on the truncation
     # time, and on the IN-SPEC clock of a carved record that is the common case - measured,
     # 311 of 340 survey cells have no C1/C2 answer for exactly that reason. CvM's integrand
-    # has no such weight and is finite there. It is also the source paper's own preference
-    # for m > 1, which is the gapped case.
+    # has no such weight and is finite there. It is also the source paper's own choice
+    # for m > 1, which is the gapped case (Kvaloy & Lindqvist 2020, Section 6, p. 106).
     ("cvm_cramer_von_mises", CALIB_PERMUTATION, ""),
 )
 
@@ -96,7 +96,7 @@ def run_battery(
     perm: PermutationSet | None = None,
     n_perm: int = DEFAULT_N_PERM,
     rng: np.random.Generator | None = None,
-    gamma_estimator: str = GAMMA_COMPLETE,
+    gamma_estimator: str = GAMMA_DEFAULT,
     max_lag: int = MAX_LAG_CAP,
     include_c2_asymptotic: bool = True,
     include_tau_checks: bool = True,
@@ -104,8 +104,9 @@ def run_battery(
     """Up to nine results in `ROW_KEYS` order.
 
     `include_c2_asymptotic` exists because C2's asymptotic calibration is defined only for
-    a single segment (Kvaloy & Lindqvist Section 4.2 reject the normal approximation for
-    the summed statistic). The battery drops that row for m > 1 rather than raising, since
+    a single segment (Kvaloy & Lindqvist 2020, Section 4.2, p. 106: the normal
+    approximation to the summed statistic works "less well" for Anderson-Darling). The
+    battery drops that row for m > 1 rather than raising, since
     a gapped record legitimately has m > 1 and the other eight rows are still wanted.
 
     `include_tau_checks=False` drops five rows - the three asymptotic ones and C1's and C2's

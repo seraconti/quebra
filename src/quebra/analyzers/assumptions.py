@@ -137,7 +137,8 @@ A1_RENEWAL_DURATIONS = Assumption(
         "curve and every summary read off it, without any symptom at the call site."
     ),
     reference=(
-        "Kvaloy & Lindqvist, arXiv:1802.08339, for the trend-against-renewal tests this "
+        "Kvaloy & Lindqvist, Technometrics 62(1):101-115 (2020), for the "
+        "trend-against-renewal tests this "
         "package implements. Ascher & Feingold for the renewal-process framing itself; no "
         "locator located."
     ),

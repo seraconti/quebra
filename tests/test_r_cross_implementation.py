@@ -5,8 +5,8 @@ its level. Neither catches a routine that is SELF-CONSISTENTLY WRONG - one that 
 some well-behaved statistic which is not the statistic its source defines. A second
 implementation, written by other people from the same paper, is what catches that.
 
-For three of these the R package is by the authors of the method: `XICOR` is Chatterjee's,
-`energy` is Szekely and Rizzo's. That is as close to a definitional reference as exists.
+For two of these the R package is by authors of the method: `XICOR` is by Holmes and
+Chatterjee, `energy` by Rizzo and Szekely. That is as close to a definitional reference as exists.
 
 **Most of this file never runs R.** `rscripts/reference_values.R` writes two committed CSV fixtures
 and this file reads them. `pytest` therefore works on a machine with no R, which was the
@@ -17,7 +17,7 @@ from Python would be fragile, and a mismatch in the data generator would surface
 statistical disagreement - the most misleading possible failure. Python reads the exact
 numbers R saw.
 
-**The headline case is `xi_tied`.** `chatterjee_xi` uses the tie-corrected eq (8), not the
+**The headline case is `xi_tied`.** `chatterjee_xi` uses the tie-corrected form (Chatterjee 2021), not the
 tie-free reduction, and no shipped window exercises it: all 309 window-rows on the T2* ladder
 are tie-free. This file is the ONLY external evidence that the tie-corrected path is right,
 and `XICOR::xicor(ties = TRUE)` is the reference
@@ -76,7 +76,7 @@ def test_the_fixture_records_which_r_produced_it():
 
 
 def test_xi_matches_XICOR_on_tie_free_data():
-    """Where the tie-free reduction and eq (8) coincide, so a regression is unambiguous."""
+    """Where the tie-free reduction and the tie-corrected form coincide, so a regression is unambiguous."""
     x, y = r_inputs("xi_tie_free")
     assert chatterjee_xi(x, y) == pytest.approx(
         r_value("xi_tie_free", "xicor"), abs=TOL
@@ -84,10 +84,10 @@ def test_xi_matches_XICOR_on_tie_free_data():
 
 
 def test_xi_lies_inside_the_XICOR_tie_break_distribution_on_TIED_data():
-    """The headline check, and the only external evidence for eq (8).
+    """The headline check, and the only external evidence for the tie-corrected form.
 
     EQUALITY IS NOT THE RIGHT TEST HERE, and finding that out was the point of running it.
-    Eq (8) breaks ties in x uniformly AT RANDOM, so `XICOR::xicor` is a random variable on
+    Chatterjee (2021) breaks ties in x uniformly AT RANDOM, so `XICOR::xicor` is a random variable on
     this input: measured, 7 distinct values in 8 calls on identical data, spanning 0.425 to
     0.563. A single R draw is not a reference constant, and asserting our value equals it
     would pin R's RNG state. (The first version of this test did exactly that and failed at
@@ -129,8 +129,8 @@ def test_the_tied_case_really_does_make_XICOR_random():
 def test_XICOR_is_deterministic_when_only_the_response_is_tied():
     """The other half: with continuous x there is nothing to break, so equality DOES hold.
 
-    This is what localises the disagreement above to X-tie-breaking rather than to eq (8)
-    itself - the y-only case ties heavily and still matches to 1e-10.
+    This is what localises the disagreement above to X-tie-breaking rather than to the tie-corrected
+    form itself - the y-only case ties heavily and still matches to 1e-10.
     """
     assert r_value("xi_tied_y_only", "xicor_ties_on_x") == 0
     assert r_value("xi_tied_y_only", "xicor_distinct_draws") == 1
@@ -168,7 +168,7 @@ def test_the_tie_free_case_is_genuinely_tie_free_and_the_tied_case_genuinely_tie
         np.diff(rankdata(y_tied, method="max")[order])
     ).sum() / (n**2 - 1)
     assert abs(reduction - chatterjee_xi(x_tied, y_tied)) > 0.01, (
-        "the tie-free reduction and eq (8) agree on this case, so it cannot detect the "
+        "the tie-free reduction and the tie-corrected form agree on this case, so it cannot detect the "
         "tie-corrected form"
     )
 

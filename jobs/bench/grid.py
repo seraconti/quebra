@@ -5,8 +5,9 @@ replicated many times and yields one ROW per (check, calibration, variant) - so 
 are keyed by cell x row, and a check's size at n = 20 is a single number with a stated
 Monte Carlo error rather than an impression.
 
-Factor levels are set from what the real data actually shows, measured before the bench was
-written, so that no cell is a hypothetical:
+The event-count, censoring and shape levels are set from what the real data shows,
+measured before the bench was written; the dependence grid is a sweep, not a calibration to
+a record:
 
 - `N_GRID` ends at 355 because that is the largest usable event count in the record, and
   starts at 20 because below that `lag_layout` runs out of pairs. 35 is included because it
@@ -14,16 +15,17 @@ written, so that no cell is a hypothetical:
 - `CENSORING_GRID` is `{0, 0.03, 0.25}`. The real data sits at 0.000-0.026 wherever
   n >= 20, so 0 and 0.03 bracket it; 0.25 is deliberately outside it, and exists only to
   show what C1 and C2's censoring machinery buys when there is enough censoring to matter.
-- `RHO_GRID` extends downward, not upward: the real data's duration-level lag-1 is
-  0.12-0.15, so resolution near 0.15 is what decides whether a check can see it. The grid
-  hits that at rho = 0.15 (Arm E induces 0.135-0.142 there, measured).
+- `RHO_GRID` is dense at small `rho`, so the weak dependence a check is least likely to see
+  is resolved finely. The duration-level lag-1 each `rho` induces is recorded per
+  cell (`mean_induced_lag1`), and the power curve is read against that.
 - `B_GRID` brackets 1 on both sides, so C1's power is measured against a decreasing
   intensity and an increasing one rather than only the direction that happens to be easier.
-- `SHAPE_GRID` is `{0.75, 1.5}` - under- and over-dispersed relative to exponential -
-  because Kvaloy & Lindqvist's Figure 1 shows the asymptotic calibrations degrade
-  differently on the two sides.
+- `SHAPE_GRID` is `{0.75, 1.5}` - over- and under-dispersed relative to exponential
+  respectively (coefficient of variation about 1.35 and 0.68) - because Kvaloy & Lindqvist
+  (Technometrics 62(1) 2020, Section 6.1, Figure 1, p. 107) use exactly these two shapes and
+  show the asymptotic calibrations degrade differently on the two sides.
 
-Censoring is an Arm A/D/E factor only. Arms B and C carve a uniformly spaced read series
+Censoring is an Arm A/D factor only. Arms B and C carve a uniformly spaced read series
 with no injected gaps, which can produce exactly one incomplete window (the terminal one),
 so their censoring is ~1/n and emergent. Sweeping a censoring level there would silently
 mean something different from what it means in Arm A, so it is not swept.
@@ -100,7 +102,8 @@ class Cell:
 def _carved_clocks(arm: str, kind: str, n: int, **kwargs) -> list[Cell]:
     """One cell per clock for a carved arm.
 
-    The calendar clock gets the full battery; the in-spec clock gets the rank checks only.
+    The calendar clock gets the full battery; the in-spec clock gets the rank checks and CvM
+    by permutation, the rows that stay defined when `tau == T_N`.
     That asymmetry is not a preference - on the in-spec clock of a carved record, time
     stops accumulating when the record ends out of spec, so `tau == T_N` on ~73% of
     replicates and C2 is genuinely undefined there. Reporting C1/C2 from the surviving

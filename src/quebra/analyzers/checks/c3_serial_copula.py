@@ -1,9 +1,12 @@
 """C3 - copula-based serial independence test, over a file bridge to R.
 
 Wraps `copula::serialIndepTest` (Genest & Remillard's empirical-copula test based on the
-Mobius decomposition of the serial independence hypothesis). It is here because it tests a
+Mobius decomposition of the serial independence hypothesis). The copula 1.1.7 help page
+cites Genest and Remillard, "Tests of independence and randomness based on the empirical
+copula process", Test 13:335-369 (2004). UNVERIFIED: the paper was not opened, so the
+Mobius-decomposition description carries no page locator. It is here because it tests a
 strictly stronger null than C5/C6 - full serial independence at all lags jointly, not just
-zero rank autocorrelation - and no maintained Python implementation exists.
+zero rank autocorrelation - and no maintained Python implementation was located.
 
 **Bridge, not bindings.** CSV out, `Rscript`, CSV back. No `rpy2`: rpy2 pins an ABI against
 a specific R build and turns "R is missing" into an import-time failure of the whole

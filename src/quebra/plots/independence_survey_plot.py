@@ -200,8 +200,8 @@ class IndependenceSurveyOverviewPlot(BasePlot):
     left-right glance rather than a memory exercise across as many files.
 
     TRANSPOSED relative to the per-instrument figures: thresholds on y (10 of them) and
-    datasets on x (34). Keeping datasets on y would make every panel 34
-    rows tall and the image unusable; the ladder is the shorter axis and belongs on the
+    datasets on x (28 on the device-wide survey). Keeping datasets on y would make every
+    panel that many rows tall and the image unusable; the ladder is the shorter axis and belongs on the
     short side. p-values are dropped here for the same reason - at this density they would
     be unreadable, and the per-instrument figure is where a number is read.
     """
@@ -242,7 +242,7 @@ class IndependenceSurveyOverviewPlot(BasePlot):
                             **theme.LABEL_TEXT,
                         )
                     # Dataset names only on the bottom row: one copy of a
-                    # thirty-four-label axis per row is noise, not information.
+                    # long dataset axis per row is noise, not information.
                     if row == len(keys) - 1:
                         ax.set_xticks(np.arange(n_datasets) + 0.5)
                         ax.set_xticklabels(

@@ -13,9 +13,9 @@ INDEPENDENT of the implementation:
 Both force `gamma = 1`, so both pin the TRANSCRIPTION and neither pins the shipped path,
 which divides by an estimated `gamma_hat`. The distinction matters: reading the gate as
 proof of the whole implementation hides that the shipped asymptotic path is measurably
-oversized at small n (0.0634 against 0.05 at n = 20).
-`test_shipped_c2_asymptotic_is_oversized_at_small_n` pins that separately, so the known
-gap is a recorded fact rather than an unmeasured one.
+oversized at n = 20. `test_shipped_c2_asymptotic_size_matches_its_measurement` holds the
+shipped size to a coarse band around its measured value, and
+`test_the_divisor_scales_each_statistic_by_its_own_power` pins which divisor ships.
 
 The third group at the bottom of the file covers `statistic_batch` and
 `segments_from_windows`. The second is where a defect merging renewal segments across
@@ -31,10 +31,15 @@ import quebra.analyzers.checks.c1_lewis_robinson as c1
 import quebra.analyzers.checks.c2_anderson_darling as c2
 import quebra.analyzers.checks.c5_rank_autocorr as c5
 import quebra.analyzers.checks.c6_exchangeability as c6
+import quebra.analyzers.checks.cvm_cramer_von_mises as cvm
 from quebra.analyzers.checks._multiprocess import (
     GAMMA_COMPLETE,
+    GAMMA_COMPLETE_SAMPLE,
+    GAMMA_DEFAULT,
+    GAMMA_ESTIMATORS,
     GAMMA_TRUNCATED,
     gamma_hat,
+    gamma_hat_batch,
 )
 from quebra.analyzers import windows
 from quebra.analyzers.checks._multiprocess import segments_from_windows
@@ -84,14 +89,23 @@ def test_eq7_is_the_classical_anderson_darling(n):
 
 @pytest.mark.statistical
 def test_ad_limiting_cdf_reproduces_published_critical_values():
-    """Marsaglia & Marsaglia's adinf, against the standard AD table."""
+    """Oracle: Marsaglia & Marsaglia (2004), JSS 9(2), p. 2, 20-place limiting percentiles.
+
+    They give 1.9329578327, 2.4923671600 and 3.8781250216 for the 90, 95 and 99 percent
+    points; their digits agree with the exact limit, the series of Anderson and Darling
+    (1954) eq (8), p. 768, as `scripts/verify_gold_standard.py` computes it. The paper
+    quotes `adinf` to |error| < 2e-6 (z < 2) and < 8e-7 (z >= 2), but against the exact
+    limit its error at these three points is -1.1e-5, +8.1e-6 and -2.6e-6 (and 1.95e-5
+    near z = 1), so the tolerance is 2e-5. The
+    previous band of 5e-4 also accepted 3.857 (upper tail 0.0102), the 1% point in Stephens
+    (1974, JASA 69, Table 1A, p. 732), which Marsaglia & Marsaglia correct to 3.878125.
+    """
     for statistic, alpha in [
-        (1.933, 0.10),
-        (2.492, 0.05),
-        (3.070, 0.025),
-        (3.857, 0.01),
+        (1.9329578327, 0.10),
+        (2.4923671600, 0.05),
+        (3.8781250216, 0.01),
     ]:
-        assert 1.0 - c2.ad_limiting_cdf(statistic) == pytest.approx(alpha, abs=5e-4)
+        assert 1.0 - c2.ad_limiting_cdf(statistic) == pytest.approx(alpha, abs=2e-5)
 
 
 @pytest.mark.statistical
@@ -106,7 +120,7 @@ def test_eq7_at_gamma_one_matches_the_limiting_ad_null(n):
     `test_eq7_is_the_classical_anderson_darling` it pins the transcription.
 
     It does NOT pin the shipped path, which divides by an estimated `gamma_hat` - see
-    `test_shipped_c2_asymptotic_is_oversized_at_small_n` for that, and the bench's size
+    `test_shipped_c2_asymptotic_size_matches_its_measurement` for that, and the bench's size
     table for what it costs.
     """
     rng = np.random.default_rng(90210 + n)
@@ -127,18 +141,21 @@ def test_eq7_at_gamma_one_matches_the_limiting_ad_null(n):
 
 
 @pytest.mark.statistical
-@pytest.mark.parametrize("n, expected", [(20, 0.0634), (50, 0.0514)])
-def test_shipped_c2_asymptotic_is_oversized_at_small_n(n, expected):
-    """The gap between the transcription pin and what `c2.run` actually does.
+@pytest.mark.parametrize("n, expected", [(20, 0.0557), (50, 0.0502)])
+def test_shipped_c2_asymptotic_size_matches_its_measurement(n, expected):
+    """Oracle: simulation truth, measured under `GAMMA_DEFAULT` at 40,000 replicates.
 
     Dividing by an ESTIMATED `gamma_hat` fattens the upper tail: at n = 20 the shipped
-    asymptotic path rejects at 0.0634 against a nominal 0.05, converging to 0.0514 by
-    n = 50. Both figures are MEASURED on this generator at 40,000 replicates (MC SE
-    0.0012), not borrowed from a nearby run - a borrowed value would pass anyway, because
-    the tolerance is 4 SE wide. This
-    is not a defect - `ad_limiting_cdf` is the limiting null and the finite-N cost of
-    estimating gamma is exactly what the bench measures - but it is pinned here so it
-    cannot drift unnoticed, and so nobody reads the gamma = 1 test as covering production.
+    asymptotic path rejects at 0.0557 against a nominal 0.05, and by n = 50 it is at
+    nominal, 0.0502. Both figures come from this generator with seed `20260930 + n`,
+    independent of the stream below (MC SE 0.0011).
+
+    This is a COARSE bound, and it cannot show the oversize itself: at 4000 replicates the
+    4 SE band around 0.0557 also contains the nominal 0.05, the `gamma = 1` size and the
+    population-divisor size. It fails only if the shipped size moves by more than about
+    0.014. `test_the_divisor_scales_each_statistic_by_its_own_power` pins which divisor
+    ships. The oversize at n = 20 is a measured fact of the bench and of the figures above,
+    not something this test detects.
     """
     rng = np.random.default_rng(5150 + n)
     reps = 4000
@@ -153,7 +170,26 @@ def test_shipped_c2_asymptotic_is_oversized_at_small_n(n, expected):
     assert abs(rate - expected) < 4 * se, (
         f"shipped C2 asymptotic size at n={n} is {rate:.4f}, expected ~{expected}"
     )
-    assert rate > 0.05, "the shipped path is oversized at these n; that is the point"
+
+
+@pytest.mark.statistical
+@pytest.mark.parametrize(
+    "module, power", [(c1, 0.5), (c2, 1.0), (cvm, 1.0)], ids=["c1", "c2", "cvm"]
+)
+def test_the_divisor_scales_each_statistic_by_its_own_power(module, power):
+    """Oracle: analytic. The sample and population `gamma_hat` differ by sqrt(N/(N-1)).
+
+    C1 divides by `gamma_hat`, C2 and CvM by `gamma_hat**2`, so the shipped statistic is
+    the 1/N one times `((N-1)/N) ** power`, with power 1/2 for C1 and 1 for the other two.
+    A run that silently fell back to the 1/N form gives a ratio of exactly 1 and fails.
+    """
+    segment = exponential_segment(20, np.random.default_rng(21))
+    n = segment.n_events
+    shipped = module.run([segment], calibration=CALIB_ASYMPTOTIC).statistic
+    population = module.run(
+        [segment], calibration=CALIB_ASYMPTOTIC, gamma_estimator=GAMMA_COMPLETE
+    ).statistic
+    assert shipped / population == pytest.approx(((n - 1) / n) ** power, rel=1e-12)
 
 
 @pytest.mark.unit
@@ -176,17 +212,22 @@ def test_c2_refuses_an_asymptotic_calibration_for_multiple_segments():
 
 @pytest.mark.statistical
 def test_eq16_reduces_to_eq4_for_a_single_segment():
+    """Oracle: Technometrics eq (4), p. 103, by hand; both versions' eq (16), both divisors."""
     rng = np.random.default_rng(7)
     segment = exponential_segment(40, rng)
     x, tau = segment.x, segment.tau
-    gamma = gamma_hat(x, tau, GAMMA_COMPLETE)
-    eq4 = (
-        (1.0 / gamma)
-        * np.sqrt(12.0)
-        / (tau * np.sqrt(len(x)))
-        * (np.cumsum(x).sum() - len(x) * tau / 2.0)
-    )
-    assert c1.statistic([segment]) == pytest.approx(eq4, rel=1e-12)
+    for estimator in (GAMMA_COMPLETE, GAMMA_COMPLETE_SAMPLE):
+        gamma = gamma_hat(x, tau, estimator)
+        eq4 = (
+            (1.0 / gamma)
+            * np.sqrt(12.0)
+            / (tau * np.sqrt(len(x)))
+            * (np.cumsum(x).sum() - len(x) * tau / 2.0)
+        )
+        for weights in c1.C1_WEIGHTS:
+            assert c1.statistic(
+                [segment], gamma_estimator=estimator, weights=weights
+            ) == pytest.approx(eq4, rel=1e-12)
 
 
 @pytest.mark.statistical
@@ -211,7 +252,7 @@ def test_c1_detects_the_trend_it_is_built_for():
 
 @pytest.mark.statistical
 def test_gamma_hat_eq10_goes_negative_where_the_complete_form_cannot():
-    """Pins the reason `GAMMA_COMPLETE` is the default - see `_multiprocess.gamma_hat`.
+    """Pins why the default is a complete-gap form - see `_multiprocess.gamma_hat`.
 
     Both estimators get the SAME input, which the previous version of this test did not:
     it fed `GAMMA_COMPLETE` a perturbed vector and `GAMMA_TRUNCATED` a constant one, so it
@@ -220,7 +261,7 @@ def test_gamma_hat_eq10_goes_negative_where_the_complete_form_cannot():
     x = np.array([0.9, 1.0, 1.1, 1.0, 1.0])
     tau = 5.5
     # The complete-gap form is a genuine variance and cannot go negative.
-    assert gamma_hat(x, tau, GAMMA_COMPLETE) > 0.0
+    assert gamma_hat(x, tau, GAMMA_DEFAULT) > 0.0
     # Eq (10) on the identical vector is a difference of two large terms and does.
     with pytest.raises(ValueError, match="variance is negative"):
         gamma_hat(x, tau, GAMMA_TRUNCATED)
@@ -237,6 +278,16 @@ def test_gamma_hat_distinguishes_a_negative_variance_from_a_constant_vector():
         gamma_hat(np.ones(5), 5.0, GAMMA_COMPLETE)
     with pytest.raises(ValueError, match="variance is negative"):
         gamma_hat(np.array([0.9, 1.0, 1.1, 1.0, 1.0]), 5.5, GAMMA_TRUNCATED)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("estimator", GAMMA_ESTIMATORS)
+def test_the_batch_estimator_refuses_one_gap_as_its_scalar_twin_does(estimator):
+    """At N = 1 the sample divisor is 1/0: the batch path must raise, not return NaN."""
+    with pytest.raises(ValueError, match="at least 2 gaps"):
+        gamma_hat(np.array([1.0]), 2.0, estimator)
+    with pytest.raises(ValueError, match="at least 2 gaps"):
+        gamma_hat_batch(np.ones((3, 1)), 2.0, estimator)
 
 
 # --------------------------------------------------------------------------- shared
@@ -309,6 +360,39 @@ def test_battery_returns_every_row_and_shares_one_permutation_set():
         r for r in results if row_key(r) == ("c1_lewis_robinson", CALIB_PERMUTATION, "")
     )
     assert standalone.p_value == pytest.approx(battery_c1.p_value)
+
+
+@pytest.mark.unit
+def test_the_battery_runs_the_shipped_gamma_estimator():
+    """Oracle: each check's own `run` under `GAMMA_DEFAULT`, which differs from 1/N here.
+
+    The battery has its own `gamma_estimator` default and is the path every ledger and
+    bench p-value takes, so a regression of that default alone must fail here. The
+    permutation comparison above cannot see it: at m = 1 gamma is permutation invariant.
+    """
+    rng = np.random.default_rng(13)
+    segment = exponential_segment(20, rng)
+    perm = block_permutations([segment.n_events], 99, rng)
+    rows = {row_key(r): r for r in run_battery([segment], perm=perm)}
+    for module in (c1, c2, cvm):
+        shipped, population = (
+            module.run(
+                [segment], calibration=CALIB_ASYMPTOTIC, gamma_estimator=estimator
+            ).p_value
+            for estimator in (GAMMA_DEFAULT, GAMMA_COMPLETE)
+        )
+        assert shipped != pytest.approx(population, rel=1e-6)
+        row = rows[(module.CHECK_NAME, CALIB_ASYMPTOTIC, "")]
+        assert row.p_value == pytest.approx(shipped, rel=1e-12)
+    # And an estimator the caller names must reach every check, not only the default.
+    asked = run_battery([segment], perm=perm, gamma_estimator=GAMMA_COMPLETE)
+    rows_asked = {row_key(r): r for r in asked}
+    for module in (c1, c2, cvm):
+        expected = module.run(
+            [segment], calibration=CALIB_ASYMPTOTIC, gamma_estimator=GAMMA_COMPLETE
+        ).p_value
+        row = rows_asked[(module.CHECK_NAME, CALIB_ASYMPTOTIC, "")]
+        assert row.p_value == pytest.approx(expected, rel=1e-12)
 
 
 @pytest.mark.unit

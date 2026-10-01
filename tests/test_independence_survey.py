@@ -1,16 +1,18 @@
-"""The survey must describe the SAME windows the panels describe.
+"""The check-ledger jobs score the windows the panels draw, and the survey re-scores nothing.
 
-`jobs/composite/independence_survey.py` cannot `include` thirty-four per-dataset jobs
-because thirty-two of them do not exist, so it re-wires the carve. Its docstring says the
-parameters "must stay equal to those jobs' or the survey and the panels describe different
-windows". This file is what makes that true rather than a comment - a carve parameter drifting
-in one file and not the other is silent, produces plausible figures, and is exactly the class
-of defect this repo's provenance rules exist to catch.
+Two halves. The graph half imports the `check_ledger` jobs and the device-wide survey and
+reads their DAGs: every ledger scores the T2* carve the T2* panel is drawn from, a ledger job
+runs checks and nothing else, and the survey stacks every ledger of the family without
+carving or scoring. A carve parameter drifting between a ledger job and a T2* job is silent
+and produces plausible figures, so these read the graphs rather than the comments. The
+analyzer half pins `build_independence_survey`'s reshape on fake ledgers.
+
+Importing a job builds its graph and reads no data, so the graph half needs no data root.
 """
 
 from __future__ import annotations
 
-import ast
+import importlib.util
 from pathlib import Path
 
 import numpy as np
@@ -30,206 +32,292 @@ from quebra.analyzers.independence_survey import (
     build_independence_survey,
     survey_summary,
 )
-from quebra.plots.independence_survey_plot import SURVEY_PLOTS
+from quebra.core.dataset import Dataset
+from quebra.core.discovery import by_family
+from quebra.core.job import Job
+from quebra.core.reference import ArtifactRef
+from quebra.ledger_recipe import (
+    LEDGER_DATA_SUFFIX,
+    LEDGER_KNOBS,
+    collect_ledgers,
+    included_ledger_set,
+    ledger_step,
+    record_label,
+    survey_ledgers,
+)
+from quebra.panels.check_ledger import CheckLedgerPanel
+from quebra.plots.independence_survey_plot import (
+    SURVEY_PLOTS,
+    IndependenceSurveyOverviewPlot,
+)
+from quebra.recipes import _windows_run
 
 pytestmark = pytest.mark.unit
 
 
 REPO = Path(__file__).resolve().parents[1]
+JOBS = REPO / "jobs"
 
 
-def _module_constants(relative: str) -> dict[str, object]:
-    """Read a job's module-level literal assignments WITHOUT importing it.
+def _load_module(path: Path) -> object:
+    spec = importlib.util.spec_from_file_location(f"_survey_jobmod_{path.stem}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
-    Importing a job builds its DAG and, for the survey, declares thirty-four datasets - so
-    a test that imported them would be slow and would fail on a machine with no data root.
-    The AST route reads only what is written in the file.
+
+def _load_job(path: Path) -> Job:
+    return _load_module(path).job
+
+
+def _ledger_jobs() -> dict[str, Job]:
+    family = by_family(JOBS, "check_ledger")
+    assert len(family) == 6, [j.job_id for j in family]
+    return {j.job_id: _load_job(j.path) for j in family}
+
+
+def _nodes(job: Job, fn: object) -> list[object]:
+    return [node for node in job.dag.values() if node.fn is fn]
+
+
+def _chain(job: Job, node_id: str) -> tuple[Dataset, list[tuple]]:
+    """The dataset and the step-by-step signature of the chain that ends at `node_id`.
+
+    Each step is its function's code, the values its closure captured (the filter step
+    captures its config there, not as a kwarg) and its kwargs. Node NAMES are left out: a
+    ledger job suffixes them per record, and the name decides nothing about the windows.
     """
-    tree = ast.parse((REPO / relative).read_text())
-    out: dict[str, object] = {}
-    for node in tree.body:
-        # AnnAssign as well as Assign: `DATASET_FILES: tuple[str, ...] = (...)` is an
-        # annotated assignment, and reading only `Assign` silently skipped it - the test
-        # that was meant to guard the dataset list passed by not finding it.
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            name, value = node.target.id, node.value
-        elif (
-            isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-        ):
-            name, value = node.targets[0].id, node.value
-        else:
-            continue
-        if value is None:
-            continue
-        try:
-            out[name] = ast.literal_eval(value)
-        except (ValueError, SyntaxError, TypeError):
-            pass
-    return out
+    steps: list[tuple] = []
+    node = job.dag[node_id]
+    while node.inputs:
+        (parent,) = node.inputs
+        cells = tuple(c.cell_contents for c in (node.fn.__closure__ or ()))
+        steps.append((node.fn.__code__, cells, sorted(node.kwargs.items())))
+        node = job.dag[parent.node_id]
+    return node.kwargs["dataset"], steps[::-1]
 
 
-SURVEY = _module_constants("jobs/composite/independence_survey.py")
-LEDGER_JOB = _module_constants("jobs/composite/check_ledger_q1.py")
+def _how_loaded(dataset: Dataset) -> tuple:
+    """What decides how a record is read: its schema, its loader and the loader's kwargs."""
+    return (dataset.schema, Path(dataset.path).suffix, dataset.loader_kwargs)
 
 
-# ------------------------------------------------------------------ the carve matches
+def _run_name_of(job: Job, ledger_node: object) -> str:
+    """The `run_name` of the record a ledger node scores, read off its load node."""
+    windows_ref, _bench = ledger_node.inputs
+    dataset, _ = _chain(job, windows_ref.node_id)
+    return str(dataset.extra["run_name"])
 
 
-def _effective_t2star_carve() -> dict[str, object]:
-    """The carve the T2* job ACTUALLY uses: a job override if present, else the recipe default.
+# ------------------------------------------------- the ledger scores the panel's carve
 
-    Both T2* jobs go through `recipes.configure_t2star_job`, so these
-    three moved from inline step kwargs into the recipe's signature. Reading only the job file
-    would now find nothing and this control would pass vacuously; reading only the recipe
-    would miss a job that overrides it. The effective value is the one that decides the
-    windows, so the effective value is what must match.
+
+def test_every_ledger_carve_is_the_t2star_jobs_carve_step_for_step():
+    """Oracle: the T2* job's own graph. All 28 record carves must equal its chain.
+
+    The T2* job is where the panel's windows come from, so its chain, read off its DAG, is
+    the definition. A ledger job reading its record differently, or carving with any other
+    function, captured filter config or kwarg, describes different windows from the panel.
     """
-    import inspect
+    reference = _load_job(JOBS / "active/t2star_q1_070423.py")
+    (ref_windows,) = _nodes(reference, _windows_run)
+    ref_dataset, ref_steps = _chain(reference, ref_windows.node_id)
+    assert len(ref_steps) == 4, "filter, final stage, T2* fit, carve"
 
-    from quebra.recipes import configure_t2star_job
-
-    effective = {
-        name.upper(): param.default
-        for name, param in inspect.signature(configure_t2star_job).parameters.items()
-        if name in ("gap_mult", "k", "use_uncertainty")
-    }
-    # A job passing its own value wins over the default. An override we cannot READ must
-    # FAIL, not fall back to the default: pre-seeding the defaults and then swallowing an
-    # unreadable override made this control weaker than the form it replaced. Measured -
-    # `gap_mult=MY_GAP` in the job left the scan reporting the default 10.0 and the test
-    # passing while the job carved with 99.0, where the pre-collapse form raised on the
-    # missing key. That is precisely the "survey and panel describe different windows"
-    # defect this module exists to catch.
-    tree = ast.parse((REPO / "jobs/active/t2star_q1_070423.py").read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            for kw in node.keywords:
-                if kw.arg in ("gap_mult", "k", "use_uncertainty"):
-                    try:
-                        effective[kw.arg.upper()] = ast.literal_eval(kw.value)
-                    except (ValueError, SyntaxError):
-                        pytest.fail(
-                            f"the T2* job overrides {kw.arg} with a non-literal, so this "
-                            f"control cannot tell what it carves with. Make it a literal, or "
-                            f"teach this scan to evaluate it - do not let it read as the "
-                            f"recipe default."
-                        )
-    return effective
-
-
-@pytest.mark.parametrize("name", ["GAP_MULT", "K", "USE_UNCERTAINTY"])
-def test_the_survey_carves_windows_the_same_way_the_t2star_job_does(name):
-    """These three define the carve. A difference here means different windows."""
-    found = _effective_t2star_carve()
-    assert name in found, f"{name} is neither a recipe default nor a job override"
-    assert SURVEY[name] == found[name], (
-        f"survey {name}={SURVEY[name]} but the T2* job effectively uses {found[name]}; the "
-        "survey would describe different windows from the panel"
-    )
-
-
-def _evaluated_constant(relative: str, name: str) -> object:
-    """Evaluate a module-level constant that `literal_eval` cannot handle.
-
-    `THRESHOLDS` is a list COMPREHENSION in both composites, and `ast.literal_eval` raises
-    on a ListComp - so `_module_constants` silently omitted it and any test reading it from
-    there got a KeyError or, worse, compared against a value retyped in the test. That is
-    what a test building its own copy of the ladder does: it asserts the T2* job matches ITS
-    copy, so mutating the SURVEY's ladder changes nothing and the test still passes.
-    Measured: `k / 1e6` -> `k * 1e-6` and `range(1, 11)` -> `range(1, 9)` both left 20/20
-    green. A control that cannot fail when the thing it guards is broken is not a control.
-
-    `eval` on repo source, not on input: the file is read from this repository and its AST
-    is unparsed back, so nothing outside the tree is executed.
-    """
-    tree = ast.parse((REPO / relative).read_text())
-    for node in tree.body:
-        target = (
-            node.target
-            if isinstance(node, ast.AnnAssign)
-            else node.targets[0]
-            if isinstance(node, ast.Assign) and len(node.targets) == 1
-            else None
-        )
-        if (
-            isinstance(target, ast.Name)
-            and target.id == name
-            and node.value is not None
-        ):
-            # `range` is needed by the comprehension; the namespace stays otherwise empty.
-            return eval(  # noqa: S307
-                ast.unparse(node.value), {"__builtins__": {"range": range}}, {}
+    compared = 0
+    for job_id, job in _ledger_jobs().items():
+        for node in _nodes(job, _windows_run):
+            dataset, steps = _chain(job, node.node_id)
+            assert _how_loaded(dataset) == _how_loaded(ref_dataset), (
+                f"{job_id} {node.node_id} reads its record differently"
             )
-    raise AssertionError(f"{name} not found in {relative}")
+            assert steps == ref_steps, f"{job_id} {node.node_id} carves differently"
+            compared += 1
+    assert compared == 28, f"compared {compared} carves, the family holds 28 records"
 
 
-def test_the_survey_scores_the_same_threshold_ladder():
-    """Compare the survey's OWN ladder to the panel's, both read from their source.
+def test_every_ledger_is_scored_on_the_shared_knobs_and_its_carves_ladder():
+    """Oracle: `LEDGER_KNOBS` and the windows node each ledger reads.
 
-    The T2* job writes explicit tuples and the survey builds a comprehension, so the two
-    never match textually. What must match is the ladder they produce - a survey scoring a
-    different set of thresholds would put its columns out of correspondence with the
-    panel's without anything looking wrong.
+    The ladder a ledger labels its rows with must be the ladder its windows were carved at,
+    or every column is mislabelled.
     """
-    survey_ladder = [
-        tuple(row)
-        for row in _evaluated_constant(
-            "jobs/composite/independence_survey.py", "THRESHOLDS"
-        )
-    ]
-    # The ladder lives in `recipes.T2STAR_THRESHOLDS`, shared by the
-    # family. Read it from there, which is where the T2* job now gets it.
-    from quebra.recipes import T2STAR_THRESHOLDS
-
-    panel_ladder = [tuple(row) for row in T2STAR_THRESHOLDS]
-    assert len(survey_ladder) == 10
-    # Exact equality, including the float. `k * 1e-6` fails this at k = 5 and k = 10,
-    # which is how the discrepancy was found; `k / 1e6` reproduces the literals exactly.
-    assert survey_ladder == panel_ladder, (
-        f"survey ladder {survey_ladder[:2]}... != T2* job ladder {panel_ladder[:2]}..."
-    )
+    scored = 0
+    for job_id, job in _ledger_jobs().items():
+        for node in _nodes(job, ledger_step):
+            windows_node, _bench = node.inputs
+            carve = job.dag[windows_node.node_id]
+            assert carve.fn is _windows_run
+            assert node.kwargs["thresholds"] == carve.kwargs["thresholds"], job_id
+            knobs = {k: v for k, v in node.kwargs.items() if k != "thresholds"}
+            assert knobs == LEDGER_KNOBS, f"{job_id} {node.node_id}: {knobs}"
+            scored += 1
+    assert scored == 28
 
 
-@pytest.mark.parametrize(
-    "name",
-    ["ALPHA", "MIN_EVENTS_PASS", "TIE_CUTOFF_DISTINCT", "LAG_MAX", "N_PERMUTATIONS"],
-)
-def test_the_survey_turns_p_values_into_verdicts_the_same_way_the_q1_ledger_does(name):
-    """Otherwise a cell could be `pass` in one figure and `underpowered` in the other.
+def test_the_km_job_scores_on_the_ledger_knobs_with_a_seed_of_its_own():
+    """`km_with_checks_6d2s` scores records the ledger jobs also score.
 
-    SEED is deliberately NOT in this list - see `test_the_two_ledgers_use_different_seeds`.
+    Its verdict knobs must equal `LEDGER_KNOBS`, or one record could read `pass` in one
+    figure and `underpowered` in the other. Its seed must differ: a shared permutation seed
+    makes the two jobs' Monte Carlo error identical, so a p-value near alpha would land the
+    same way in both and read as corroboration when it is one draw counted twice.
     """
-    assert SURVEY[name] == LEDGER_JOB[name], (
-        f"survey {name}={SURVEY[name]} but check_ledger_q1 uses {LEDGER_JOB[name]}"
-    )
-
-
-def test_the_two_ledgers_use_different_seeds():
-    """The one parameter that must NOT match, and the reason it must not.
-
-    Sharing a permutation seed across two jobs makes their Monte Carlo error identical
-    rather than independent, so a rung sitting near alpha lands the same way in both and
-    reads as corroboration when it is one draw counted twice. The five verdict parameters
-    above must match; this one must differ.
-    """
-    assert SURVEY["SEED"] != LEDGER_JOB["SEED"]
+    km = _load_module(JOBS / "active/km_with_checks_6d2s.py")
+    for name in (
+        "alpha",
+        "min_events_pass",
+        "tie_cutoff_distinct",
+        "lag_max",
+        "n_permutations",
+    ):
+        assert getattr(km, name.upper()) == LEDGER_KNOBS[name], name
+    assert km.SEED != LEDGER_KNOBS["seed"]
 
 
 def test_c3_is_on_and_its_simulation_count_is_declared():
-    """C3 was OFF and this test pinned that; inverted, not deleted, when it was turned on.
+    """C3 is the one instrument with no bench cell. The count is declared, not inherited.
 
-    C3 is the one instrument in the survey with no bench cell, so it cannot be scored the
-    way the other nine are. The count matters as much as the flag: the C3 p-value floor is
-    `1/(N+1)`, so a survey run at N = 200 is reading a different object from the
-    single-dataset ledger at N = 1000, and the number has to be declared rather than
-    inherited from a module default.
+    The C3 p-value floor is `1/(N+1)`, so a ledger at N = 200 reads a different object from
+    one at N = 1000, and the number has to be declared rather than taken from a default.
     """
-    assert SURVEY["INCLUDE_C3"] is True
-    assert SURVEY["C3_N_NULL_SIM"] >= 200, (
+    assert LEDGER_KNOBS["include_c3"] is True
+    assert LEDGER_KNOBS["c3_n_null_sim"] >= 200, (
         "below N = 200 the p-value floor rises above 0.005 and starts to crowd alpha"
     )
+
+
+# --------------------------------------------------------- a ledger job runs checks only
+
+
+def test_a_ledger_job_draws_and_writes_only_ledgers_and_their_survey():
+    """No T2* panel and no windows artifact: those belong to the T2* jobs."""
+    allowed = {CheckLedgerPanel, IndependenceSurveyOverviewPlot, *SURVEY_PLOTS}
+    for job_id, job in _ledger_jobs().items():
+        for sink in job.sinks:
+            if hasattr(sink, "plot_class"):
+                assert sink.plot_class in allowed, f"{job_id} draws {sink.plot_class}"
+            else:
+                assert sink.name.endswith(
+                    (LEDGER_DATA_SUFFIX, "_check_ledgers", "_independence_survey_grids")
+                ), f"{job_id} materializes {sink.name}"
+
+
+def test_each_ledger_job_bundles_and_surveys_every_ledger_under_its_own_records_label():
+    """Oracle: the record each ledger's chain loads, read off its load node.
+
+    Row i of the survey must be the record ledger i scored. Labels are compared against the
+    `run_name` of the dataset behind each ledger, not against node names.
+    """
+    for job_id, job in _ledger_jobs().items():
+        ledgers = _nodes(job, ledger_step)
+        (bundle,) = _nodes(job, collect_ledgers)
+        assert [r.node_id for r in bundle.inputs] == [n.node_id for n in ledgers], (
+            job_id
+        )
+        expected = tuple(record_label(_run_name_of(job, n)) for n in ledgers)
+        assert bundle.kwargs["labels"] == expected, job_id
+        (survey,) = _nodes(job, survey_ledgers)
+        assert [r.node_id for r in survey.inputs] == [bundle.node_id], job_id
+        assert survey.kwargs["dataset_labels"] == expected, job_id
+
+
+def test_no_record_is_scored_twice():
+    """One record, one ledger in the family.
+
+    A `_before` / `_after` file is a row split of a full record, so scoring it beside the
+    record scores the same reads twice; and a record in two jobs would be two Monte Carlo
+    draws of one question, which a reader would take for corroboration.
+    """
+    paths = [
+        str(node.kwargs["dataset"].path)
+        for job in _ledger_jobs().values()
+        for node in job.dag.values()
+        if node.fn_name == "load"
+    ]
+    assert len(paths) == 28
+    assert len(set(paths)) == len(paths)
+    assert not [p for p in paths if p.endswith(("_before.pickle", "_after.pickle"))]
+
+
+# ------------------------------------------------- the device survey re-scores nothing
+
+
+def test_the_device_survey_stacks_every_ledger_of_the_family_and_computes_nothing_else():
+    """Oracle: the family as `discover` finds it, and the bundle node of each job.
+
+    One node, fed only by refs into included ledger jobs: no load, no carve, no ledger of
+    its own. So every cell it draws is a verdict the record's own ledger printed. ONE ref
+    per included job, because a composite run without reuse runs an included job once for
+    every distinct ref.
+    """
+    survey_job = _load_job(JOBS / "composite/independence_survey.py")
+    family = [j.job_id for j in by_family(JOBS, "check_ledger")]
+    assert sorted(inc.job.name for inc in survey_job.includes) == sorted(family)
+
+    assert list(survey_job.dag) == ["independence_survey"]
+    (survey,) = survey_job.dag.values()
+    assert survey.fn is survey_ledgers
+    assert all(isinstance(ref, ArtifactRef) for ref in survey.inputs)
+
+    expected_refs, expected_labels = [], []
+    for inc in survey_job.includes:
+        (bundle,) = _nodes(inc.job, collect_ledgers)
+        (sink,) = [
+            s
+            for s in inc.job.sinks
+            if getattr(s, "node", None) is not None and s.node.node_id == bundle.node_id
+        ]
+        expected_refs.append((inc.job.name, sink.name))
+        expected_labels.extend(bundle.kwargs["labels"])
+    assert [(r.included.job.name, r.node_name) for r in survey.inputs] == expected_refs
+    assert len(survey.inputs) == len(survey_job.includes) == 6
+    labels = survey.kwargs["dataset_labels"]
+    assert labels == tuple(expected_labels)
+    assert len(set(labels)) == len(labels) == 28
+    assert survey.kwargs["alpha"] == LEDGER_KNOBS["alpha"]
+
+
+def test_including_a_job_with_no_ledger_raises_rather_than_adding_no_rows():
+    """A survey row silently missing reads as a record that was never there."""
+    composite = Job("survey_probe")
+    with pytest.raises(ValueError, match="not a ledger job"):
+        included_ledger_set(composite.include("t2star_q1_070423"))
+
+
+# ------------------------------------------------------- the labels name their records
+
+
+def test_a_label_attached_to_another_records_ledger_raises():
+    a = _fake_ledger("q1_040423", {"1 µs": VERDICT_PASS})
+    b = _fake_ledger("q1_050423", {"1 µs": VERDICT_FAIL})
+    assert collect_ledgers(a, b, labels=("q1 040423", "q1 050423")).labels == (
+        "q1 040423",
+        "q1 050423",
+    )
+    with pytest.raises(ValueError, match="attached to the ledger of"):
+        collect_ledgers(a, b, labels=("q1 050423", "q1 040423"))
+
+
+def test_declared_rows_out_of_step_with_the_bundles_raise():
+    a = _fake_ledger("q1_040423", {"1 µs": VERDICT_PASS})
+    b = _fake_ledger("q2_210423", {"1 µs": VERDICT_FAIL})
+    sets = (
+        collect_ledgers(a, labels=("q1 040423",)),
+        collect_ledgers(b, labels=("q2 210423",)),
+    )
+    data = survey_ledgers(*sets, dataset_labels=("q1 040423", "q2 210423"), alpha=0.05)
+    assert data.datasets == ["q1 040423", "q2 210423"]
+    with pytest.raises(ValueError, match="differ from the ledgers' own"):
+        survey_ledgers(*sets, dataset_labels=("q2 210423", "q1 040423"), alpha=0.05)
+
+
+def test_a_repeated_label_raises_rather_than_drawing_one_record_twice():
+    """Oracle: pivot semantics. The grid keeps the first row per label and drops the rest."""
+    a = _fake_ledger("A", {"1 µs": VERDICT_PASS})
+    b = _fake_ledger("B", {"1 µs": VERDICT_FAIL})
+    with pytest.raises(ValueError, match="repeat"):
+        build_independence_survey(a, b, dataset_labels=("A", "A"))
 
 
 def test_c3_is_not_in_the_row_schema_so_it_cannot_be_bench_scored():
@@ -239,12 +327,6 @@ def test_c3_is_not_in_the_row_schema_so_it_cannot_be_bench_scored():
     no cell for it, so its verdicts carry no power evidence.
     """
     assert not any(key[0] == "c3_serial_copula" for key in ROW_KEYS)
-
-
-def test_every_declared_dataset_is_unique_and_named_once():
-    files = SURVEY["DATASET_FILES"]
-    assert len(files) == len(set(files))
-    assert all(f.endswith(".pickle") for f in files)
 
 
 # -------------------------------------------------------------- one figure per check

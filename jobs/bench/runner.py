@@ -13,8 +13,7 @@ what is needed to read it honestly:
   values out of 20 is a cell where the permutation null is nearly atomic, and its size
   should be read as such rather than compared with a continuous cell's.
 - `mean_induced_lag1`. The swept parameter is a latent correlation; this is the
-  duration-level dependence it actually produced, which is the quantity the real data's
-  0.12-0.15 is comparable to.
+  duration-level dependence it actually produced, which is the quantity a check sees.
 
 Parallelism is over CELLS, via joblib. Cells differ ~16x in cost between n = 20 and
 n = 355, so the work is handed out cell by cell and the scheduler balances it; each worker

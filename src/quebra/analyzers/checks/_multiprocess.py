@@ -39,11 +39,32 @@ from quebra.analyzers.checks.result import (
     last_event_time,
 )
 
-# Estimator labels for gamma-hat, recorded on every result: the two differ by whether
-# the incomplete trailing gap contributes, and at small N that moves the statistic.
+# Estimator labels for gamma-hat, recorded on every result: they differ by whether the
+# incomplete trailing gap contributes and, for the complete-gap form, by the divisor. At
+# small N either choice moves the statistic.
+#
+# Source: Kvaloy and Lindqvist, Technometrics 62(1):101-115 (2020), Section 3.6, p. 104,
+# define gamma_hat = sigma_hat/mu_hat from the "sample mean" and "sample standard
+# deviation" of the complete gaps. Every number they print (Table 2 48.61 and 0.888, the
+# Section 8.1 LR 0.681, the Section 8.2 Table 4 p-values) uses the sample 1/(N-1) divisor,
+# which is what their R code computes (`sqrt(var(xvec))` in findCV). Their Appendix A.2,
+# p. 114, writes the same estimator with 1/N(tau) inside a consistency argument, where the
+# divisor is asymptotically irrelevant. Both forms therefore have a source. Each result's
+# `notes` names the label that produced it; no ledger or bench row carries it.
 GAMMA_COMPLETE = "complete_gaps"
+GAMMA_COMPLETE_SAMPLE = "complete_gaps_sample"
 GAMMA_TRUNCATED = "eq10_truncated"
-GAMMA_ESTIMATORS = (GAMMA_COMPLETE, GAMMA_TRUNCATED)
+GAMMA_ESTIMATORS = (GAMMA_COMPLETE, GAMMA_COMPLETE_SAMPLE, GAMMA_TRUNCATED)
+
+# The estimator every check uses when the caller names none. One constant, so changing the
+# default is one line and every signature follows it. The sample form is the default
+# because every published number uses it, and because the population form inflates the
+# asymptotic statistics: at m = 1, C1 by sqrt(N/(N-1)), C2 and CvM, which carry
+# 1/gamma_hat^2, by N/(N-1); at m > 1 each segment carries its own factor. That is anti-conservative and largest exactly where segments are short. At
+# m = 1 permutation p-values do not depend on this choice in exact arithmetic, since
+# gamma_hat is invariant to reordering the gaps; in floats a tie between the observed and
+# a permuted statistic can resolve either way under the two divisors.
+GAMMA_DEFAULT = GAMMA_COMPLETE_SAMPLE
 
 # Relative tolerance separating float cancellation from a genuinely negative eq (10)
 # variance. Cancellation in E[x^2] - E[x]^2 lands ~1e-16 of scale; the real failure
@@ -51,12 +72,17 @@ GAMMA_ESTIMATORS = (GAMMA_COMPLETE, GAMMA_TRUNCATED)
 _VAR_NEGATIVE_TOL = 1e-9
 
 
-def gamma_hat(x: np.ndarray, tau: float, estimator: str = GAMMA_COMPLETE) -> float:
+def gamma_hat(x: np.ndarray, tau: float, estimator: str = GAMMA_DEFAULT) -> float:
     """Estimated coefficient of variation of the gap distribution.
 
-    `GAMMA_COMPLETE` is the DEFAULT and is the `gamma_hat` appearing in eqs (4) and (7):
-    the coefficient of variation of the complete gaps alone. Population (1/N) form, to
-    match eq (10)'s divisor so the two estimators differ only by the residual term.
+    `GAMMA_COMPLETE_SAMPLE`, the default, is the `gamma_hat` of Section 3.6 that eqs (4)
+    to (7) scale by: the coefficient of variation of the complete gaps alone, with the
+    sample 1/(N-1) divisor behind every number Kvaloy and Lindqvist print; see the note on
+    the labels above. `GAMMA_COMPLETE` is the same estimator with the population 1/N
+    divisor, matching eq (10)'s, so that it and `GAMMA_TRUNCATED` differ only by the
+    residual term. The two complete-gap forms differ by the factor `sqrt(N/(N-1))`: at
+    m = 1, C1, which scales by 1/gamma_hat, moves by its inverse, and C2 and CvM, which
+    scale by 1/gamma_hat^2, by the inverse square. At m > 1 each segment has its own N.
 
     `GAMMA_TRUNCATED` is eq (10)'s `gamma_tilde` - `mu = tau/N`,
     `sigma^2 = (1/N)[sum(x^2) + (tau - T_N)^2] - mu^2` - the alternative that folds the
@@ -81,6 +107,9 @@ def gamma_hat(x: np.ndarray, tau: float, estimator: str = GAMMA_COMPLETE) -> flo
         # (1/(N-1)) one, so the two estimators differ ONLY by the residual term.
         mean = float(np.mean(x))
         var = float(np.mean(x**2) - mean**2)
+    elif estimator == GAMMA_COMPLETE_SAMPLE:
+        mean = float(np.mean(x))
+        var = float(np.mean(x**2) - mean**2) * n / (n - 1)
     elif estimator == GAMMA_TRUNCATED:
         residual = float(tau) - last_event_time(x)
         mean = float(tau) / n
@@ -100,7 +129,7 @@ def gamma_hat(x: np.ndarray, tau: float, estimator: str = GAMMA_COMPLETE) -> flo
         raise ValueError(
             f"the eq (10) variance is negative ({var:.6g} against mu^2 = {mean**2:.6g}). "
             "It is a difference of two large terms and is not usable at this segment "
-            f"size (N = {n}); use {GAMMA_COMPLETE!r}, which cannot go negative."
+            f"size (N = {n}); use {GAMMA_DEFAULT!r}, which cannot go negative."
         )
     var = max(var, 0.0)
     if var == 0.0:
@@ -113,7 +142,7 @@ def gamma_hat(x: np.ndarray, tau: float, estimator: str = GAMMA_COMPLETE) -> flo
 
 
 def gamma_hat_batch(
-    x_matrix: np.ndarray, tau: float, estimator: str = GAMMA_COMPLETE
+    x_matrix: np.ndarray, tau: float, estimator: str = GAMMA_DEFAULT
 ) -> np.ndarray:
     """Row-wise `gamma_hat` over a `(B, N)` matrix of permuted gaps.
 
@@ -124,9 +153,14 @@ def gamma_hat_batch(
     """
     x_matrix = np.asarray(x_matrix, dtype=float)
     n = x_matrix.shape[1]
+    if n < 2:
+        raise ValueError(f"gamma_hat needs at least 2 gaps; got {n}")
     if estimator == GAMMA_COMPLETE:
         mean = x_matrix.mean(axis=1)
         var = (x_matrix**2).mean(axis=1) - mean**2
+    elif estimator == GAMMA_COMPLETE_SAMPLE:
+        mean = x_matrix.mean(axis=1)
+        var = ((x_matrix**2).mean(axis=1) - mean**2) * n / (n - 1)
     elif estimator == GAMMA_TRUNCATED:
         residual = float(tau) - np.cumsum(x_matrix, axis=1)[:, -1]
         mean = float(tau) / n
@@ -142,7 +176,7 @@ def gamma_hat_batch(
         raise ValueError(
             "a permuted row produced a negative eq (10) variance. It is a difference of "
             f"two large terms and is not usable at this segment size (N = {n}); use "
-            f"{GAMMA_COMPLETE!r}, which cannot go negative."
+            f"{GAMMA_DEFAULT!r}, which cannot go negative."
         )
     var = np.maximum(var, 0.0)
     if np.any(mean <= 0.0) or np.any(var == 0.0):

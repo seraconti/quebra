@@ -232,6 +232,13 @@ def build_independence_survey(
             f"{len(dataset_labels)} labels for {len(ledgers)} ledgers; the survey will "
             "not guess which is which"
         )
+    # The grids pivot on the label, so a repeated label would draw its first record twice
+    # and drop the other.
+    repeated = sorted({x for x in dataset_labels if dataset_labels.count(x) > 1})
+    if repeated:
+        raise ValueError(
+            f"dataset labels {repeated} repeat; each row must be one record"
+        )
 
     frames = []
     for i, ledger in enumerate(ledgers):
@@ -263,11 +270,10 @@ def build_independence_survey(
     # Rows that apply to EVERY check at a threshold. `check_ledger._blank_row` writes
     # `check_id="(all)"` when a rung produced no windows, or when segmentation declined it
     # - one row standing for every instrument. Matching on `check_id` alone therefore
-    # drops them, and the cell renders as "no row" rather than as `not computed`.
-    # Without this the 1 us and 10 us columns are
-    # 34/34 absent in EVERY per-instrument figure - 132 of 340 cells per grid silently
-    # blank. A blank cell reads as "nothing to say here"; `not computed` says the rung was
-    # reached and declined, which is the truth and is a different statement.
+    # drops them, and the cell renders as "no row" rather than as `not computed`: a rung
+    # declined on every record would be blank in every per-instrument figure. A blank cell
+    # reads as "nothing to say here"; `not computed` says the rung was reached and declined,
+    # which is the truth and is a different statement.
     blanket = everything[everything["check_id"] == "(all)"]
 
     grids: list[InstrumentGrid] = []

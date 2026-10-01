@@ -5,8 +5,16 @@ errors nothing else catches. The bench measures how a routine BEHAVES - a mis-tr
 equation that behaves plausibly passes every size and power test we have. Only a published
 worked example pins the arithmetic itself.
 
-The record is the load-haul-dump machine of their Section 6.1, time censored at 2000 hours,
-with the resulting statistics printed in their Table 2.
+Source: Kvaloy and Lindqvist, Technometrics 62(1):101-115 (2020). The small bowel record
+is in preprint arXiv:1802.08339v1 only (its Section 6.2). Three records, all in
+`tests/fixtures/load_haul_dump.py`:
+
+- the single load-haul-dump machine, time censored at 2000 hours: Technometrics Section
+  8.1, Tables 1-2 and the Section 8.1 text, p. 112 (arXiv v1 Section 6.1, p. 14);
+- the hydraulic systems of six machines, m = 6: Technometrics Section 8.2, Table 4, p. 113.
+  This is the external check on the m > 1 path;
+- the small bowel motility record, m = 19: arXiv v1 Section 6.2, pp. 15-17, with the data
+  from Aalen and Husebye (1991) Table I.
 
 **What is a direct pin and what is a composition.** `gamma_hat`, `gamma_tilde` and `LR`
 are returned by shipped functions. `mu_hat`, `sigma_tilde` and the Laplace statistic are
@@ -19,42 +27,42 @@ Those two are still genuine checks - they assert that shipped outputs COMPOSE to
 independently published number - but they are weaker than a direct pin and this docstring
 says so rather than letting a reader assume otherwise.
 
-**The divisor divergence, stated as what is actually sourced.** The paper's Table 2 prints
-sigma_hat = 48.61 and gamma_hat = 0.888; this code returns 47.93 and 0.876.
+**The divisor, stated as what is actually sourced.** Section 3.6 (p. 104) defines
+gamma_hat from the "sample mean" and "sample standard deviation" of the complete gaps.
+Appendix A.2 (p. 114; arXiv v1 Appendix 1, p. 18) writes that estimator with 1/N(tau), in
+a consistency argument where the divisor is asymptotically irrelevant. Every number the
+paper prints uses 1/(N-1): Table 2's 48.61 and 0.888, the text's 0.681, and Table 4's
+LR p = 0.019 (which 1/N moves to 0.016). The authors' R code computes `sqrt(var(x))`.
 
-What is OBSERVED: all three of Table 2's complete-gap numbers (48.61, 0.888, 0.681) land
-simultaneously on the sample (1/(N-1)) divisor. Three independent agreements at once is
-what identifies the cause as the divisor rather than the formula - not the Bessel
-arithmetic in `test_the_divergence_is_the_divisor`, which is a rescaling of one number by
-a factor that at a single N cannot be told apart from any nearby constant.
-
-What is OURS: the population (1/N) form, chosen deliberately and for a stated reason -
-`_multiprocess.gamma_hat` uses it "to match eq (10)'s divisor so the two estimators differ
-ONLY by the residual term". The reference document's Section 2.3 describes the paper's
-estimator 1 as the "sample mean and standard deviation" of the complete gaps, which reads
-as 1/(N-1), and makes no claim about Appendix 1's divisor. An earlier draft of this file
-asserted that Appendix 1 defines 1/N; that claim is not supported by any source in hand
-and has been withdrawn.
-
-CONSEQUENCE, recorded rather than buried: our gamma_hat is smaller than the paper's by
-sqrt((N-1)/N), so our C1 statistic is LARGER by sqrt(N/(N-1)) - 1.4% at N = 36, and about
-12% on a five-event segment. That direction is anti-conservative. It is a divisor choice,
-not an error, but it is a difference from the source and the instrument report says so.
+`GAMMA_COMPLETE` is the population form, `GAMMA_COMPLETE_SAMPLE` the sample form. The pins
+below name which one they use. Consequence of the population form: gamma_hat is smaller
+by sqrt((N-1)/N), so the C1 statistic is LARGER by sqrt(N/(N-1)) - 1.4% at N = 36, about
+12% on a five-event segment. That direction is anti-conservative.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
+from scipy import stats
 
 import quebra.analyzers.checks.c1_lewis_robinson as c1
 from quebra.analyzers.checks._multiprocess import (
     GAMMA_COMPLETE,
+    GAMMA_COMPLETE_SAMPLE,
     GAMMA_TRUNCATED,
     gamma_hat,
 )
 from quebra.analyzers.checks.result import Segment, validate_segment
-from tests.fixtures.load_haul_dump import PUBLISHED, TAU_H, gaps_h
+from tests.fixtures.load_haul_dump import (
+    HYDRAULIC_PUBLISHED,
+    PUBLISHED,
+    SMALL_BOWEL_PUBLISHED,
+    SMALL_BOWEL_TABLE_I,
+    TAU_H,
+    gaps_h,
+    hydraulic_segments_data,
+)
 
 pytestmark = pytest.mark.statistical
 
@@ -83,8 +91,22 @@ def test_gamma_tilde_eq10_matches_the_paper():
 
 
 def test_gamma_hat_complete_gaps_is_the_population_form():
-    """Our value, which is the paper's Appendix 1 definition rather than its Table 2."""
+    """Oracle: Appendix A.2 (p. 114) 1/N(tau) form, from Table 2's 48.61 rescaled by sqrt(35/36)."""
     assert gamma_hat(X, TAU_H, GAMMA_COMPLETE) == pytest.approx(0.876, abs=0.001)
+
+
+def test_gamma_hat_sample_form_reproduces_table_2():
+    """Oracle: Table 2 row 1 (p. 112), gamma_hat = 0.888, sample divisor. Direct pin."""
+    assert gamma_hat(X, TAU_H, GAMMA_COMPLETE_SAMPLE) == pytest.approx(
+        PUBLISHED["gamma_hat"], abs=0.0005
+    )
+
+
+def test_lewis_robinson_sample_form_reproduces_the_section_8_1_value():
+    """Oracle: Section 8.1 text (p. 112), LR = 0.605/0.888 = 0.681. Direct pin."""
+    assert c1.statistic(
+        [SEGMENT], gamma_estimator=GAMMA_COMPLETE_SAMPLE
+    ) == pytest.approx(PUBLISHED["lr_gamma_hat"], abs=0.0005)
 
 
 def test_lewis_robinson_matches_the_paper_up_to_the_divisor():
@@ -112,10 +134,10 @@ def test_the_laplace_statistic_matches_the_paper():
     """Composition: `LR * gamma_hat`.
 
     Not circular. LR and gamma_hat are computed independently by shipped code; asserting
-    their product equals a number printed in the paper tests that the eq (16) numerator
-    scaling is right, because the Laplace statistic is exactly that numerator before the
-    gamma division. A transcription error in the `sqrt(12)/(tau*sqrt(N))` factor would
-    show up here and nowhere else in this file.
+    their product equals a number printed in the paper tests that the eq (4) numerator
+    scaling (eq (16) at m = 1) is right, because the Laplace statistic is exactly that
+    numerator before the gamma division (Section 3.1, p. 103). A transcription error in the
+    `sqrt(12)/(tau*sqrt(N))` factor would show up here and nowhere else in this file.
     """
     lr = c1.statistic([SEGMENT], gamma_estimator=GAMMA_COMPLETE)
     laplace = lr * gamma_hat(X, TAU_H, GAMMA_COMPLETE)
@@ -154,21 +176,23 @@ def test_the_divergence_is_the_divisor_and_not_a_transcription_error():
 
 
 def _sigma_star_squared(x: np.ndarray) -> float:
-    """Kvaloy and Lindqvist eq (11), the successive-difference estimator.
+    """Kvaloy and Lindqvist eq (11), p. 104, the successive-difference estimator.
 
-    DELIBERATELY LOCAL TO THIS TEST. Both the paper and the reference document decline
-    this estimator: it is biased downward under positive dependence between neighbouring
-    gaps, which inflates the trend statistic - and neighbour dependence is exactly what C5
-    and C6 exist to detect, so shipping it would entangle the trend test with the
-    dependence tests. `_multiprocess.GAMMA_ESTIMATORS` therefore offers estimators 1 and 2
-    only. It is implemented here purely to reproduce the published number and confirm the
-    transcription of the surrounding machinery.
+    DELIBERATELY LOCAL TO THIS TEST. The paper evaluates it and declines to use it in its
+    own examples "due to apparent less satisfactory significance level properties"
+    (Section 3.6, p. 104). It tends to be smaller than sigma_hat under positive dependence
+    between neighbouring gaps, which inflates the trend statistic - and neighbour
+    dependence is exactly what C5 and C6 exist to detect, so shipping it would entangle the
+    trend test with the dependence tests. `_multiprocess.GAMMA_ESTIMATORS` therefore offers
+    the complete-gap estimator (in two divisors) and eq (10) only. It is implemented here
+    purely to reproduce the published number and confirm the transcription of the
+    surrounding machinery.
     """
     return float(np.sum(np.diff(x) ** 2) / (2.0 * (len(x) - 1)))
 
 
 def test_eq11_reproduces_the_papers_alternative_lr():
-    """The paper's LR computed with sigma* / mu_hat, its Table 2 value 0.774."""
+    """Oracle: Section 8.1 text (p. 112), 0.605/0.782 = 0.774; the value is not in Table 2."""
     mu = float(np.mean(X))
     gamma_star = np.sqrt(_sigma_star_squared(X)) / mu
     laplace = c1.statistic([SEGMENT], gamma_estimator=GAMMA_COMPLETE) * gamma_hat(
@@ -182,51 +206,141 @@ def test_eq11_is_not_reachable_through_the_shipped_api():
     from quebra.analyzers.checks._multiprocess import GAMMA_ESTIMATORS
 
     assert "eq11_successive_difference" not in GAMMA_ESTIMATORS
-    assert set(GAMMA_ESTIMATORS) == {GAMMA_COMPLETE, GAMMA_TRUNCATED}
+    assert set(GAMMA_ESTIMATORS) == {
+        GAMMA_COMPLETE,
+        GAMMA_COMPLETE_SAMPLE,
+        GAMMA_TRUNCATED,
+    }
     with pytest.raises(ValueError, match="unknown gamma estimator"):
         gamma_hat(X, TAU_H, "eq11_successive_difference")
 
 
-# ------------------------------------------- the m > 1 path has no external check yet
+# ------------------------------------------------- m > 1: the hydraulic record
 
 
-def test_small_bowel_motility_multiprocess():
-    """Kvaloy and Lindqvist Section 6.2, m = 19. SKIPPED - the raw data is not in hand.
+def _hydraulic_segments() -> list[Segment]:
+    return [Segment(x=x, tau=tau) for x, tau in hydraulic_segments_data()]
 
-    This is the only published exercise of eq (16) in its multi-process form, so it is the
-    only external evidence available anywhere for our m > 1 path. Everything else we have
-    at m > 1 - the bench's multi-segment arms, the battery's per-segment sum - is internal
-    consistency, which cannot catch a shared transcription error.
 
-    Source of the data: Aalen, O. O. and Husebye, E. (1991), "Statistical analysis of
-    repeated events forming renewal processes", Statistics in Medicine 10(8):1227-1240.
-    Nineteen subjects, 80 complete fasting migrating-motor-complex periods, each subject
-    censored at the end of its own recording.
+def _two_sided_p(z: float) -> float:
+    return float(2.0 * stats.norm.sf(abs(z)))
 
-    Targets, from Kvaloy and Lindqvist Section 6.2: mu_hat 98.76, sigma_hat 52.62,
-    gamma_hat 0.533 over the 80 complete periods; Laplace 1.95; LR^m 3.67; p = 0.00024.
 
-    TO ACTIVATE: add the per-subject period lengths and censoring times to
-    `tests/fixtures/load_haul_dump.py` as `SMALL_BOWEL_SEGMENTS`, build one `Segment` per
-    subject, and assert `c1.statistic(segments)` against `lr_multiprocess`. Expect the same
-    divisor question as the single-process case: check whether 0.533 is the 1/N or the
-    1/(N-1) form before recording a divergence.
+def test_hydraulic_transcription_reproduces_the_generalised_laplace_p():
+    """Oracle: Technometrics Table 4 (p. 113), GL p = 0.062, from the data alone.
+
+    GL = sum_j U_j / sqrt(sum_j U_j^2) with U_j = sum_i T_ij - N_j tau_j / 2 (KL2020
+    Section 5.2, eq (17), p. 106; the test is Lawless, Cigsar and Cook's, 2012). GL uses no
+    gamma and no weights, so this checks the FIXTURE independently of anything shipped.
+    It is a check, not a pin: one p printed to 3 decimals catches most dropped or
+    duplicated gaps but no single 1 h error in any of the 152. The gaps themselves were
+    read by eye against Kumar and Klefsjo (1992) p. 224 and the authors' R code, and
+    `scripts/verify_gold_standard.py` repeats that comparison.
     """
-    from tests.fixtures import load_haul_dump as fx
+    u = np.array(
+        [
+            np.cumsum(x).sum() - len(x) * tau / 2.0
+            for x, tau in hydraulic_segments_data()
+        ]
+    )
+    gl = float(u.sum() / np.sqrt(np.sum(u**2)))
+    assert _two_sided_p(gl) == pytest.approx(HYDRAULIC_PUBLISHED["gl_p"], abs=0.0005)
 
-    segments_data = getattr(fx, "SMALL_BOWEL_SEGMENTS", None)
-    if segments_data is None:
-        pytest.skip(
-            "raw Aalen-Husebye (1991) period lengths not obtainable; searched "
-            "The m > 1 path therefore has no external validation. Add "
-            "SMALL_BOWEL_SEGMENTS to tests/fixtures/load_haul_dump.py to activate."
-        )
-    published = fx.SMALL_BOWEL_PUBLISHED
-    segments = [
-        Segment(x=np.asarray(x, dtype=float), tau=float(t)) for x, t in segments_data
-    ]
-    assert len(segments) == published["n_subjects"]
-    assert sum(s.n_events for s in segments) == published["n_complete_periods"]
-    assert c1.statistic(segments) == pytest.approx(
-        published["lr_multiprocess"], abs=0.01
+
+def test_c1_multiprocess_reproduces_technometrics_table_4():
+    """Oracle: Technometrics Table 4 (p. 113), LR p = 0.019, eq (15) weights. Direct pin.
+
+    The external check on the m > 1 path, through the shipped defaults of `c1.run` first
+    and then with both choices named. Only the journal weights with the sample divisor
+    land on the printed value. The two negative controls have their own oracles: 0.0073
+    (preprint weights, sample divisor) is what the authors' R code gives
+    (`LRtest_multi`, weights "CVntau", sigma "s": 0.00729); 0.0164 (journal weights, 1/N)
+    has no published or R value, since that code has no population-divisor option, and
+    is the independent numpy recomputation in `scripts/verify_gold_standard.py`.
+    """
+    segments = _hydraulic_segments()
+    shipped = c1.run(segments)
+    assert shipped.p_value == pytest.approx(HYDRAULIC_PUBLISHED["lr_p"], abs=0.0005)
+    assert f"weights={c1.WEIGHTS_TECHNOMETRICS}" in shipped.notes.split()
+
+    journal = c1.statistic(
+        segments,
+        gamma_estimator=GAMMA_COMPLETE_SAMPLE,
+        weights=c1.WEIGHTS_TECHNOMETRICS,
+    )
+    assert _two_sided_p(journal) == pytest.approx(
+        HYDRAULIC_PUBLISHED["lr_p"], abs=0.0005
+    )
+
+    preprint = c1.statistic(
+        segments, gamma_estimator=GAMMA_COMPLETE_SAMPLE, weights=c1.WEIGHTS_ARXIV_V1
+    )
+    population = c1.statistic(
+        segments, gamma_estimator=GAMMA_COMPLETE, weights=c1.WEIGHTS_TECHNOMETRICS
+    )
+    assert _two_sided_p(preprint) == pytest.approx(0.0073, abs=0.0005)
+    assert _two_sided_p(population) == pytest.approx(0.0164, abs=0.0005)
+
+
+def test_both_weightings_reduce_to_eq4_for_one_segment():
+    """Oracle: Section 8.1 (p. 112), LR = 0.681. At m = 1 both weightings are eq (4)."""
+    for weights in c1.C1_WEIGHTS:
+        assert c1.statistic(
+            [SEGMENT], gamma_estimator=GAMMA_COMPLETE_SAMPLE, weights=weights
+        ) == pytest.approx(PUBLISHED["lr_gamma_hat"], abs=0.0005)
+
+
+# ---------------------------------------------- m > 1: the small bowel record
+
+
+def test_small_bowel_transcription_reproduces_the_papers_summaries():
+    """Oracle: arXiv v1 Section 6.2 (p. 16) and Table 4 (p. 17), from Table I data alone.
+
+    The paper pools one gamma over the 80 complete periods (sample divisor) and uses the
+    preprint eq (16) with that common gamma, so LR^m = Laplace^m / gamma_hat. Computed
+    here with numpy because the shipped C1 estimates gamma per segment; this pins the
+    fixture and the paper's arithmetic, not the shipped path.
+    """
+    periods = np.concatenate([np.asarray(x, float) for x, _ in SMALL_BOWEL_TABLE_I])
+    assert len(SMALL_BOWEL_TABLE_I) == SMALL_BOWEL_PUBLISHED["n_subjects"]
+    assert len(periods) == SMALL_BOWEL_PUBLISHED["n_complete_periods"]
+    mu, sd = float(periods.mean()), float(periods.std(ddof=1))
+    assert mu == pytest.approx(SMALL_BOWEL_PUBLISHED["mu_hat"], abs=0.005)
+    assert sd == pytest.approx(SMALL_BOWEL_PUBLISHED["sigma_hat"], abs=0.005)
+    assert sd / mu == pytest.approx(SMALL_BOWEL_PUBLISHED["gamma_hat"], abs=0.0005)
+
+    u, taus, ns = [], [], []
+    for x, censored in SMALL_BOWEL_TABLE_I:
+        t = np.cumsum(np.asarray(x, float))
+        tau = float(t[-1] + censored)
+        u.append(t.sum() - len(t) * tau / 2.0)
+        taus.append(tau)
+        ns.append(len(t))
+    u, taus, ns = np.array(u), np.array(taus), np.array(ns)
+    laplace = float(np.sqrt(12.0) * u.sum() / np.sqrt(np.sum(taus**2 * ns)))
+    assert laplace == pytest.approx(SMALL_BOWEL_PUBLISHED["laplace"], abs=0.005)
+    assert laplace / (sd / mu) == pytest.approx(
+        SMALL_BOWEL_PUBLISHED["lr_multiprocess"], abs=0.005
+    )
+    gl = float(u.sum() / np.sqrt(np.sum(u**2)))
+    assert _two_sided_p(gl) == pytest.approx(SMALL_BOWEL_PUBLISHED["gl_p"], abs=0.0005)
+
+
+def test_small_bowel_motility_shipped_path():
+    """arXiv v1 Section 6.2, m = 19, through shipped C1. SKIPPED - no pooled-gamma mode.
+
+    The data are in the fixture and the paper's arithmetic is reproduced by
+    `test_small_bowel_transcription_reproduces_the_papers_summaries`. The shipped C1 cannot
+    reproduce LR^m = 3.67 because the paper tests the stronger null of ONE common gap
+    distribution and pools gamma across subjects (p. 15), while C1 estimates gamma per
+    segment and refuses a segment with fewer than two complete gaps (subject 5 has one).
+    Per-segment gamma on the 18 usable subjects gives LR^m = 4.49 under the shipped
+    defaults (journal weights, sample divisor), as `scripts/verify_gold_standard.py`
+    computes. Activating this needs a pooled-gamma estimator, which is new functionality
+    and a design decision, not a fix.
+    """
+    pytest.skip(
+        "C1 has no pooled-gamma estimator; the arXiv v1 Section 6.2 LR^m = 3.67 pools gamma "
+        "over all 19 subjects. The m > 1 path is checked externally by "
+        "test_c1_multiprocess_reproduces_technometrics_table_4."
     )

@@ -39,9 +39,6 @@ OBSERVED_ANCESTORS = {
     "t2star",
     "filter",
     "final_filter_stage",
-    # `_final_stage` unwraps a FilterResult into its final Norm. Named `final_<label>` by
-    # independence_survey; resamples nothing.
-    "final",
     "fidelity_raw",
     "windows",
     "fidelity_windows",
@@ -61,10 +58,9 @@ def _load_job(path: Path) -> Job:
 def _job_files() -> list[Path]:
     """Every DECLARED job, composites included.
 
-    Scoped to `jobs/active` this guard never examined `jobs/composite/independence_survey.py`,
-    which carves in-graph across 34 datasets - the job doing the most carving in the
-    repository. `discover` is what makes widening safe: it reads `JOB_ID` statically without
-    importing, so the eight `jobs/bench/*.py` study modules and the three `__init__.py` files,
+    Composites included because a composite may carve in-graph, and a guard scoped to
+    `jobs/active` would never examine it. `discover` is what makes widening safe: it reads
+    `JOB_ID` statically without importing, so the eight `jobs/bench/*.py` study modules and the three `__init__.py` files,
     none of which define a module-level `job`, are skipped rather than crashing the loader.
     """
     return sorted(declared.path for declared in discover(JOBS_DIR).values())
@@ -94,7 +90,7 @@ def _carve_label(job: Job, node_id: str) -> str | None:
     """The per-dataset label carried by ONE carve node, or None if it carries none.
 
     A job carving several datasets needs one node per dataset, and the discriminator it picks
-    is its own business: `km_poster_6d2s` uses the file stem, `independence_survey` uses a
+    is its own business: `km_poster_6d2s` uses the file stem, the `check_ledger` jobs use a
     readable label (`q1_040423`) that appears nowhere in the Dataset. Requiring the suffix to
     BE a stem only fits the first convention, and this test has no business dictating node
     names that end up in a provenance graph. A per-dataset label appears on every step of that
@@ -204,14 +200,18 @@ def test_the_guard_actually_matches_something() -> None:
     on their own hardcoded names, and the suite would report full health over zero coverage.
     That is the failure the module docstring records `fidelity_windows` causing once already.
 
-    So: assert the matcher still finds carves, in more than one job, including the composite
-    that carves the most.
+    So: assert the matcher still finds carves, in more than one job, including the
+    `check_ledger` family, which carves the most: one carve per record, 28 records over six
+    jobs.
     """
     per_job = {path.stem: len(_windows_nodes(_load_job(path))) for path in _job_files()}
     carving = {name: n for name, n in per_job.items() if n}
     assert len(carving) >= 2, f"the carve matcher found nothing to check: {per_job}"
-    assert per_job.get("independence_survey", 0) >= 30, (
-        f"the survey carves 34 records; the matcher sees {per_job.get('independence_survey')}"
+    ledger = {
+        name: n for name, n in per_job.items() if name.startswith("check_ledger_")
+    }
+    assert len(ledger) == 6 and sum(ledger.values()) >= 28, (
+        f"the check_ledger family carves 28 records; the matcher sees {ledger}"
     )
 
 

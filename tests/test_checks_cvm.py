@@ -5,9 +5,11 @@ Two independent pins, which is what makes this more than a second transcription:
 - The STATISTIC at `gamma = 1` must equal the classical one-sample Cramer-von Mises `W^2`
   on `u_i = T_i/tau`, computed by `scipy.stats.cramervonmises`. That is an external
   implementation of the same mathematical object, arrived at by a different route.
-- The limiting CDF must reproduce the published critical values.
+- The limiting CDF must reproduce the critical values Anderson and Darling (1952) print in
+  their Table 1, p. 203.
 
-The reference document's printed eq (7) has a `/tau` where the derivation gives `/tau^2`;
+Kvaloy and Lindqvist (Technometrics 62(1):101-115, 2020) print eq (6) with a `/tau` where
+the derivation gives `/tau^2`, in both Technometrics (p. 103) and arXiv:1802.08339v1 (p. 5);
 `test_the_bracket_is_the_bridge_integral` is what settles that, by integrating the
 definition numerically instead of trusting either version.
 """
@@ -43,7 +45,7 @@ def test_at_gamma_one_it_is_the_classical_cramer_von_mises(n, seed):
 
 @pytest.mark.parametrize("n, seed", [(9, 1), (25, 4)])
 def test_the_bracket_is_the_bridge_integral(n, seed):
-    """Settles the reference's `/tau` versus `/tau^2` by integrating the definition.
+    """Settles the paper's printed `/tau` versus `/tau^2` by integrating the definition.
 
     `integral_0^1 (N(s tau) - sN)^2 ds` computed numerically on the step function, against
     the closed form the implementation uses. A `/tau` middle term does not reproduce this.
@@ -61,13 +63,22 @@ def test_the_bracket_is_the_bridge_integral(n, seed):
 
 
 def test_the_limiting_cdf_reproduces_the_published_critical_values():
+    """Oracle: Anderson and Darling (1952), Annals of Math. Stat. 23, Table 1, p. 203.
+
+    The four points asserted are that table's rows a1(z) = .90, .95, .99 and .999; it has no
+    .975 row. The 2.5%
+    point is therefore not asserted here as a published value. The series matches the
+    printed points to within 3.1e-6 in tail probability (the table's own 5-decimal
+    rounding of z), so the tolerance is set at 1e-5 rather than a looser band that would
+    also accept a wrong series.
+    """
     for statistic, alpha in [
         (0.34730, 0.10),
         (0.46136, 0.05),
-        (0.58061, 0.025),
         (0.74346, 0.01),
+        (1.16786, 0.001),
     ]:
-        assert 1.0 - cvm.cvm_limiting_cdf(statistic) == pytest.approx(alpha, abs=5e-4)
+        assert 1.0 - cvm.cvm_limiting_cdf(statistic) == pytest.approx(alpha, abs=1e-5)
 
 
 def test_the_limiting_cdf_is_monotone_and_bounded():
@@ -97,10 +108,16 @@ def test_statistic_batch_reproduces_the_statistic_under_the_identity(sizes):
 
 
 def test_it_survives_a_record_that_c2_declines():
-    """The concrete reason the source paper prefers CvM for m > 1.
+    """CvM is well posed on a record that C2 declines.
 
-    Eq (7) carries a `1/(s(1-s))` weight, so `ln(tau/(tau - T_N))` is `+inf` when the last
-    event lands on the truncation time. CvM's integrand has no such weight, so the same
+    This is not the source paper's reason for preferring CvM at m > 1. Kvaloy and Lindqvist
+    (Technometrics 2020, Section 4.2, p. 106) give level properties: the normal
+    approximation works "less well for the Anderson-Darling test due to the very skew
+    distribution".
+
+    The AD integrand carries a `1/(s(1-s))` weight, so the `i = N-1` term of eq (7),
+    `ln((tau - T_{N-1})/(tau - T_N))`, is `+inf` when the last event lands on the
+    truncation time. CvM's integrand has no such weight, so the same
     record is perfectly well posed for it. On the in-spec clock of a carved record that
     case is the common one, not a corner.
     """

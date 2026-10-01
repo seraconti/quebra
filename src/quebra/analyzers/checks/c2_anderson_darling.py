@@ -1,6 +1,7 @@
 """C2 - Kvaloy-Lindqvist Anderson-Darling test for renewal, time-censored.
 
-Kvaloy & Lindqvist, arXiv:1802.08339 eq (7), transcribed from the PDF:
+Kvaloy & Lindqvist, "A class of tests for trend in time censored recurrent event data",
+Technometrics 62(1):101-115 (2020), eq (7), p. 104. Transcribed from the journal PDF:
 
     AD = (1/gamma_hat^2) * (1/N) * {
             sum_{i=1}^{N-1} [ (N-i)^2 * ln((tau - T_i)/(tau - T_{i+1}))
@@ -12,13 +13,15 @@ What it is: with `u_i = T_i/tau`, eq (7) at `gamma_hat = 1` is exactly the class
 Anderson-Darling statistic `A^2 = N * integral (F_N(u) - u)^2 / (u(1-u)) du` testing the
 event times for uniformity on `[0, tau]`.
 `tests/test_checks_statistics.py::test_eq7_is_the_classical_anderson_darling` asserts that
-against the textbook `-N - (1/N) sum (2i-1)[ln u_i + ln(1 - u_{N+1-i})]` form. That test
+against the `-N - (1/N) sum (2i-1)[ln u_i + ln(1 - u_{N+1-i})]` form of Anderson and
+Darling (1954), JASA 49, eq (2), p. 765. That test
 enforces `rel=1e-9` and measures 1e-16 to 1e-13 across its sizes, so the two are the same
 statistic and the paper's form is shipped because it is the citation. The `1/gamma_hat^2` generalises it from Poisson to renewal.
 
 **Two things about the calibration are decided by the paper, not by preference.**
 
-1. *Asymptotic, m = 1.* The limit is the classical AD distribution, evaluated with
+1. *Asymptotic, m = 1.* The limit is the classical AD distribution (Section 3.4,
+   pp. 103-104), evaluated with
    Marsaglia & Marsaglia (2004) `adinf` - their LIMITING function, deliberately not their
    finite-N correction `errfix`. That correction is derived for the AD statistic of N iid
    uniforms; here the statistic is additionally divided by an ESTIMATED `gamma_hat^2`, so
@@ -26,13 +29,15 @@ statistic and the paper's form is shipped because it is the citation. The `1/gam
    latter would be a precision claim the derivation does not support. Measuring that
    finite-N gap is what the bench is for.
 
-2. *Multi-process, m > 1: permutation only.* The paper's own Section 4.2 says the
+2. *Multi-process, m > 1: permutation only.* The paper's own Section 4.2 (p. 106) says the
    normal approximation to a weighted sum works "less well for the Anderson-Darling test
-   due to the very skew distribution", and Section 5 drops AD for m > 1 in favour of
-   Cramer-von Mises. Rather than ship an approximation its source rejects, the summed
-   statistic is calibrated by within-segment permutation, which needs no asymptotic
-   distribution at all and is exact under iid gaps. Asking for `asymptotic` with m > 1
-   raises.
+   due to the very skew distribution", and its simulation study (Section 6, p. 106) leaves
+   AD out for m > 1 in favour of Cramer-von Mises. The paper's own
+   m = 6 example (Section 8.2, Table 4) does report AD, as a sum weighted by `tau_j` with a
+   null simulated from the limiting law. Rather than ship the normal approximation its
+   source finds works "less well", the summed statistic here is calibrated by within-segment permutation,
+   which needs no asymptotic distribution at all and is exact under iid gaps. Asking for
+   `asymptotic` with m > 1 raises.
 
 The multi-process statistic is the unweighted SUM of per-segment eq (7) values. There is no
 eq (16) analogue to borrow: eq (14)'s optimal weights are derived for the trend
@@ -46,7 +51,7 @@ from __future__ import annotations
 import numpy as np
 
 from quebra.analyzers.checks._multiprocess import (
-    GAMMA_COMPLETE,
+    GAMMA_DEFAULT,
     gamma_hat,
     gamma_hat_batch,
 )
@@ -76,9 +81,20 @@ def ad_limiting_cdf(z: float | np.ndarray) -> np.ndarray:
     """`P(A^2 <= z)` for the LIMITING Anderson-Darling distribution.
 
     Marsaglia & Marsaglia, "Evaluating the Anderson-Darling Distribution", Journal of
-    Statistical Software 9(2), 2004 - their `adinf`, quoted to |error| < 2e-6. Verified
-    against the published critical values: it returns 0.05001 at z = 2.492 and 0.10001 at
-    z = 1.933.
+    Statistical Software 9(2):1-5, 2004 - their `adinf` (p. 3). The paper quotes it to
+    |error| < 2e-6 for z < 2 and < 8e-7 above. Measured against the exact limit
+    (numerical inversion of its characteristic function,
+    `scripts/verify_gold_standard.py`), the largest error is 1.95e-5, at z = 0.97, below
+    z = 2, and 9.1e-6, at z = 2.59, above it: immaterial at alpha = 0.05, but the
+    figures to quote. The 13 coefficients have not been compared with the paper's code
+    archive, which is not in hand. Against the tabled critical values (Stephens 1974,
+    JASA 69:730-737, Table 1A part 1.0, p. 732) it returns upper tails 0.10001 at z =
+    1.933 and 0.05001 at z = 2.492. The same table's 3.070 and 3.857 are NOT the 2.5%
+    and 1% points of the limit: this function gives 0.0252 and 0.0102 there, and
+    Marsaglia & Marsaglia (p. 2) state that the published 3.857 "is actually 3.878125".
+    The exact limiting points, evaluated from the series in Anderson & Darling (1954),
+    JASA 49, eq (8), p. 768, are 3.0775 at 2.5% (no published source located) and 3.8781
+    at 1% (Marsaglia & Marsaglia, p. 2).
     """
     z = np.asarray(z, dtype=float)
     # Finiteness FIRST: `nan <= 0.0` is False, so a nan statistic would slip past the
@@ -159,12 +175,12 @@ def _eq7_batch(x_matrix: np.ndarray, tau: float, gamma: np.ndarray) -> np.ndarra
 
 
 def statistic(
-    segments: list[Segment], *, gamma_estimator: str = GAMMA_COMPLETE
+    segments: list[Segment], *, gamma_estimator: str = GAMMA_DEFAULT
 ) -> float:
     """Eq (7), summed unweighted over segments.
 
-    `require_strict_tau=True`: eq (7)'s `ln(tau/(tau - T_N))` term is `+inf` when the last
-    event lands exactly on the truncation time. That is failure censoring, a different
+    `require_strict_tau=True`: eq (7)'s `ln((tau - T_{N-1})/(tau - T_N))` term, with
+    `T_0 = 0`, is `+inf` when the last event lands exactly on the truncation time. That is failure censoring, a different
     sampling scheme, and `validate_segment` explains the distinction where it raises.
     """
     if not segments:
@@ -180,7 +196,7 @@ def statistic(
 def statistic_batch(
     segments: list[Segment],
     perm: PermutationSet,
-    gamma_estimator: str = GAMMA_COMPLETE,
+    gamma_estimator: str = GAMMA_DEFAULT,
     permuted: np.ndarray | None = None,
 ) -> np.ndarray:
     """Eq (7) summed over segments, for every permutation.
@@ -203,7 +219,7 @@ def run(
     *,
     calibration: str = CALIB_ASYMPTOTIC,
     clock: str = CLOCK_IN_SPEC,
-    gamma_estimator: str = GAMMA_COMPLETE,
+    gamma_estimator: str = GAMMA_DEFAULT,
     perm: PermutationSet | None = None,
     n_perm: int = DEFAULT_N_PERM,
     rng: np.random.Generator | None = None,
@@ -218,9 +234,10 @@ def run(
         if len(segments) > 1:
             raise ValueError(
                 "C2 has no asymptotic calibration for m > 1 segments. Kvaloy & "
-                "Lindqvist Section 4.2 reject the normal approximation for the summed "
-                "Anderson-Darling statistic ('very skew distribution') and Section 5 "
-                "drops it for m > 1. Use calibration='permutation'."
+                "Lindqvist (Technometrics 2020) Section 4.2 find the normal "
+                "approximation works 'less well' for the summed Anderson-Darling "
+                "statistic ('very skew distribution'), and Section 6 drops AD for "
+                "m > 1. Use calibration='permutation'."
             )
         p_value = float(1.0 - ad_limiting_cdf(observed))
         notes += " limiting_AD"

@@ -3,8 +3,9 @@
 ## What this project computes, and what it does not
 
 **The statistic is not ours.** It is computed by `copula::serialIndepTest`, the CRAN
-implementation of the Genest and Remillard empirical-copula serial independence test (no
-locator for the paper is recorded in this repository); this package calls it and does not
+implementation of the Genest and Remillard empirical-copula serial independence test
+(Test 13:335-369, 2004, as the `copula` 1.1-7 documentation cites it; the paper was not opened
+here, so the entry is UNVERIFIED); this package calls it and does not
 reimplement it. Porting it was considered and declined in `spec/quebraplan.md` row 6.2,
 because validating a reimplementation of a validity test against the implementation it
 replaced is a scientific risk rather than an engineering win.
@@ -97,7 +98,8 @@ either way: the report is TRACKED and generated from two committed CSVs, so prob
 would make a committed artifact differ per machine. C3's absence from it rests on the bench, not
 on whether R is installed.
 
-`jobs/composite/independence_survey.py` sets `INCLUDE_C3 = True`, so where R is present the
-survey draws a real C3 p-value in every eligible cell. Read a green C3 cell as "did not
+`ledger_recipe.LEDGER_KNOBS` sets `include_c3` to `True` for every `check_ledger` job, so where
+R is present each ledger, and each survey built from them, carries a real C3 p-value in every
+eligible cell. Read a green C3 cell as "did not
 reject" and nothing stronger: there is no bench cell behind it to say whether that cell had
 the power to reject.

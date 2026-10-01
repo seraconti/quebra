@@ -12,6 +12,8 @@ number from 355 events calibrated by permutation.
     C6  portmanteau rank exchangeability, permutation
     CvM Cramer-von Mises renewal, time-censored               (promoted after C1-C6)
 
+Equation numbers are those of Kvaloy & Lindqvist, Technometrics 62(1):101-115 (2020).
+
 Nothing here reads disk (except C3's optional subprocess), imports matplotlib, or prints.
 """
 

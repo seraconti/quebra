@@ -57,15 +57,15 @@ and on the real record they DO disagree: at 4 µs the calendar clock passes ever
 while the in-spec clock cannot compute C1 or C2 at all.
 
 That last point is structural, not a bug. On the in-spec clock, time stops accruing the
-moment the record ends out of spec, so `tau == T_N` and eq (7)'s `ln(tau/(tau - T_N))` is
-`+inf`. Measured on synthetic iid reads: ~73% of replicates. Those rows read `not computed`
+moment the record ends out of spec, so `tau == T_N` and eq (7) (Kvaloy and Lindqvist 2020, p. 104) is `+inf`: its
+summand `ln((tau - T_{N-1})/(tau - T_N))` has a zero denominator. Measured on synthetic iid reads: ~73% of replicates. Those rows read `not computed`
 with the reason attached.
 
 ## Segments, because a read gap is not an interval
 
 A gap in the reads means unobserved time. Treating the stretch across it as one inter-event
 interval invents evidence. So a record is split at its gaps into independent time-censored
-processes and combined by the multi-process forms (Kvaloy & Lindqvist eqs 13-16).
+processes and combined by the multi-process forms (Kvaloy and Lindqvist 2020, eqs (13)-(16), p. 105).
 
 The split uses `WindowsResult.diagnostics["gap_spans_s"]`, not the birth taxonomy alone:
 `analyzers/windows.carve` only emits `gap_resume` next to an in-spec read, so a gap flanked
@@ -94,20 +94,22 @@ over 336 cells and 480,000 replicates. Its verdicts:
 | | verdict | why |
 |---|---|---|
 | C1, C2 permutation | PROMOTE | size holds across 80 null cells; mean power 0.60/0.61 at n = 100 |
-| C1, C2 asymptotic | REJECT | oversized inside the envelope (worst z = 10.8 and 7.0) |
-| CvM permutation | PROMOTE (worst z = 2.56 over 90 null cells) |
-| CvM asymptotic | REJECT (worst z = 5.54 over 56 null cells) |
-| C5, C6 | HOLD | correctly calibrated, but underpowered where it matters |
+| C1, C2 asymptotic | REJECT | oversized inside the envelope (worst z = 10.9 and 5.4) |
+| CvM permutation | PROMOTE | size holds across 90 null cells (worst z = 2.56) |
+| CvM asymptotic | REJECT | oversized inside the envelope (worst z = 4.41 over 56 null cells) |
+| C5, C6 | HOLD | correctly calibrated, but mean power at n = 100 is only 0.34-0.36 |
 | C3 | RUNS, UNCALIBRATED | exercised under Rscript 4.5.3 with `copula`; smoke-tested on iid input only - no bench cell, no size or power evidence |
 
-**The number to read before trusting a non-rejection**: at the dependence this instrument
-actually shows (duration lag-1 0.12-0.15), C5 and C6 have 6-13% power below n = 75 and
-25-29% at n = 100, reaching 78-85% only at n = 355. A non-rejection at a threshold with 50
-windows is close to uninformative. A rejection still means something; the silence does not.
+**The number to read before trusting a non-rejection**: averaged over the bench's
+dependence grid, C5 and C6 have 21-23% power at n = 50, 34-36% at n = 100 and 60-62% at
+n = 355, and below n = 100 they exceed 50% only at the strongest dependence the grid tests
+(`promotion_report.md`, "Power across the dependence grid"). A non-rejection at a threshold
+with 50 windows is close to uninformative unless the dependence is strong. A rejection still means something; the silence does not.
 
 That asymmetry is why `analyzers/check_ledger.py` requires three conditions for a `pass`
-and not one. On the 0704 record, 31 of 68 non-rejections would have printed `pass` under a
-p-value-only rule.
+and not one. On the 070423 record of qubit 1, 49 of its 63 non-rejections read
+`underpowered` or `not interpretable (ties)`, and would have printed `pass` under a p-value-only
+rule (`jobs/active/check_ledger_6d2s_q1.py`, its `q1_070423_check_ledger_data`).
 
 ## Files
 
@@ -123,19 +125,36 @@ p-value-only rule.
 [C5](C5_rank_autocorr.md) - [C6](C6_exchangeability.md) -
 [CvM](CvM_cramer_von_mises.md) - [limitations](LIMITATIONS.md)
 
-There is no C4. Lin-Wei-Ying is the fourth check in the source's numbering and is not
+There is no C4. Lin-Wei-Ying is C4 in the numbering of `.claude/qre_checks_reference.tex`, the repository's own design note, and is not
 implemented here; nothing in the battery depends on it.
 
 ## Sources
 
-- J. T. Kvaloy and B. H. Lindqvist, *Tests for trend in more than one repairable system*,
-  arXiv:1802.08339. Equations (4), (7), (10), (11), (13)-(16); Sections 4.2 and 5.1.
+- J. T. Kvaloy and B. H. Lindqvist, *A class of tests for trend in time censored recurrent
+  event data*, Technometrics 62(1):101-115, 2020, doi:10.1080/00401706.2019.1605936.
+  Equations (4), (6), (7), (10), (11), (13)-(16); Sections 3.6, 4.2, 6.1, 8.1, 8.2; Appendix
+  A.2. The Technometrics paper's preprint, arXiv:1802.08339v1 (2018), has the same title but different section numbers,
+  a different second example, and DIFFERENT weights in eqs (14)-(16). `docs/GOLD_STANDARD.md`
+  section 2 maps the locators this repository uses between the two versions.
 - G. Marsaglia and J. Marsaglia, *Evaluating the Anderson-Darling Distribution*,
-  Journal of Statistical Software 9(2), 2004. The `adinf` limiting function.
-- C. Genest and B. Remillard, empirical-copula tests of serial independence; implemented in
-  R as `copula::serialIndepTest`.
-- S. Chatterjee, *A new coefficient of correlation*, JASA 116:2009-2022, 2021. Used by
-  `analyzers/shape_stats.py`, not by these checks.
-- B. H. Lindqvist, on trend-renewal processes - the model behind the bench's Arm D.
+  Journal of Statistical Software 9(2):1-5, 2004, doi:10.18637/jss.v009.i02. The `adinf`
+  limiting function (p. 3), and the correction of the published 1% point from 3.857 to
+  3.878125 (p. 2).
+- T. W. Anderson and D. A. Darling, *Asymptotic theory of certain "goodness of fit" criteria
+  based on stochastic processes*, Annals of Mathematical Statistics 23:193-212, 1952. The
+  limiting Cramer-von Mises distribution, eq (4.35) p. 202 and Table 1 p. 203; the limiting
+  Anderson-Darling distribution, eq (4.38) p. 204.
+- M. A. Stephens, *EDF statistics for goodness of fit and some comparisons*, JASA
+  69(347):730-737, 1974. Table 1A part 1.0, p. 732: the tabled critical values 1.933, 2.492,
+  3.070, 3.857 for A^2 and 0.347, 0.461, 0.581, 0.743 for the modified W^2.
+- C. Genest and B. Remillard, *Tests of independence and randomness based on the empirical
+  copula process*, Test 13:335-369, 2004, as the references of `copula::serialIndepTest`
+  (copula 1.1-7) give it. UNVERIFIED: the paper was not opened. Implemented in R as
+  `copula::serialIndepTest`.
+- S. Chatterjee, *A new coefficient of correlation*, JASA 116(536):2009-2022, 2021,
+  doi:10.1080/01621459.2020.1758115. Used by `analyzers/shape_stats.py`, not by these checks.
+- B. H. Lindqvist, G. Elvebakk and K. Heggland, *The trend-renewal process for statistical
+  analysis of repairable systems*, Technometrics 45:31-44, 2003. The model behind the bench's
+  Arm D.
 - D. R. Cox and P. A. W. Lewis, *The Statistical Analysis of Series of Events*, 1966, for
   the renewal-versus-trend framing.

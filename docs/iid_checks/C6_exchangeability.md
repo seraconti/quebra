@@ -28,10 +28,10 @@ that ORDER carries no information, not that the durations are independent.
 
 **A rank statistic, so ties degrade it** - identically to C5. See that page.
 
-**Underpowered at the operating point.** Power at the record's own duration dependence is
-0.060 at n = 20, 0.117 at n = 50, 0.249 at n = 100, 0.782 at n = 355. Of the four assessed
-checks it is the weakest at the operating point, which is the price of testing a broad null
-with a portmanteau.
+**Underpowered unless the dependence is strong.** Averaged over the bench's dependence grid
+(`jobs/bench/results/power_table.csv`, arm=E_copula_ar1_durations, mean over `rho` and shape), its power is 0.086 at n = 20, 0.207 at n = 50, 0.340 at n = 100 and
+0.599 at n = 355, below the studentized C5 at every n, which is the price of testing a broad
+null with a portmanteau.
 
 **It is nearly redundant with C5.** Mean absolute difference in rejection rate against C5
 is 0.014-0.016 across 192 shared power cells; the maximum is 0.14. They are measuring
@@ -41,8 +41,8 @@ nearly the same thing.
 
 Report it, treat it as the reference the others are compared against (that is what
 `jobs/bench/report.py::check_agreement` does), and require the same three conditions before a
-`pass`. The bench put it on HOLD: calibrated (worst z = -2.46 against 3.45), underpowered
-where it matters.
+`pass`. The bench put it on HOLD: calibrated (worst z = -2.46 against 3.45), with mean
+power 0.340 at n = 100 over its dependence grid.
 
 Its worst null cell in the bench came from Arm D at b = 1 - the trend-renewal generator
 with no trend - which is the cross-check that the TRP generator itself is sound.
