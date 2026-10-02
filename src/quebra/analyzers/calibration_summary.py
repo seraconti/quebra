@@ -368,8 +368,8 @@ __all__ = [
 # They can therefore disagree, by design and in both directions. Two live examples:
 # C5-unstudentized is flagged by the ledger at n = 20 (z = -2.97 against 2.955) but reads
 # calibrated in the report, which only scores n >= 35; C2-asymptotic reads REJECT overall
-# in the report but is accepted by the ledger on the in-spec clock at n = 50, 75, 100 and
-# 355, which is the more useful statement for a record with 355 windows.
+# in the report but is accepted by the ledger on the in-spec clock at every n from 50 up,
+# which is the more useful statement for a record of a few hundred windows.
 
 # Censoring the real data exhibits (0.000-0.026 wherever n >= 20). Cells beyond it are a
 # corner the data never reaches and must not condemn a check that works where it lives.
@@ -394,7 +394,7 @@ def null_se(alpha: float, n_used: float) -> float:
 def bonferroni_z_crit(n_cells: int, familywise: float = FAMILYWISE_ALPHA) -> float:
     """Two-sided z threshold for the worst of `n_cells` comparisons.
 
-    Without this the rule is a coin flip: the largest of 56-90 deviations is ~2.5-3 MC SE
+    Without this the rule is a coin flip: the largest of 86-144 deviations is ~2.5-3 MC SE
     by chance alone, so a flat tolerance flags a correct check as often as a broken one.
     """
     from scipy import stats as _stats
@@ -467,9 +467,9 @@ def bench_acceptance_at_n(
 def nearest_bracketing_n(available: list[int], n_events: int) -> int:
     """The grid point a real event count is judged at. Never interpolate.
 
-    The bench measured six event counts; a record with 356 windows is judged at the
-    nearest one and the table says which. Interpolating between grid points would invent
-    a size that was never measured.
+    The bench measured a fixed set of event counts (`jobs/bench/grid.py:N_GRID`); a record
+    is judged at the nearest one and the table says which. Interpolating between grid
+    points would invent a size that was never measured.
     """
     if not available:
         raise ValueError("no bench grid points to bracket against")

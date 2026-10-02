@@ -17,7 +17,7 @@ carve's doing and not the check's.
 
 **Arm C turned out to be a null arm, and Arm E was added because of it.** The plan had
 Arm C as the power arm for C5/C6, on the assumption that correlated reads yield correlated
-durations. They do not: the induced duration-level lag-1 is never positive over the
+durations. They do not: the induced duration-level lag-1 never exceeds +0.002 over the
 whole rho grid (`promotion_report.md`, "Two findings the grid was not designed to
 produce"), because successive level crossings of a stationary Gaussian process are very
 nearly a renewal process. Arm C is kept exactly as briefed since that is a real and

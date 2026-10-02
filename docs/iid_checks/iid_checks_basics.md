@@ -37,8 +37,8 @@ Six checks ask whether that assumption survives contact with the data.
 | CvM Cramer-von Mises | renewal process | event times are not uniform on `[0, tau]` |
 
 They are not redundant, but two of them are close. Measured against C6 as the reference,
-C5 agrees with it to a mean absolute difference of 0.014-0.016 in rejection rate over 192
-shared power cells, while C1/C2 differ from it by 0.18-0.19 over the 156 they share. C5 and
+C5 agrees with it to a mean absolute difference of 0.017-0.018 in rejection rate over 288
+shared power cells, while C1/C2 differ from it by 0.256-0.267 over the 234 they share. C5 and
 C6 are largely measuring the same thing; C1/C2 measure a different one.
 
 ## Two clocks, because the mapping is not unique
@@ -89,22 +89,23 @@ p = 0.3860 / 0.4040 / 0.3790 while the provenance record stayed identical.
 ## What the bench establishes, and what it does not
 
 `jobs/bench/` measures empirical size and power at the event counts this project actually has,
-over 336 cells and 480,000 replicates. Its verdicts:
+over 504 cells and 720,000 replicates. Its verdicts:
 
 | | verdict | why |
 |---|---|---|
-| C1, C2 permutation | PROMOTE | size holds across 80 null cells; mean power 0.60/0.61 at n = 100 |
-| C1, C2 asymptotic | REJECT | oversized inside the envelope (worst z = 10.9 and 5.4) |
-| CvM permutation | PROMOTE | size holds across 90 null cells (worst z = 2.56) |
-| CvM asymptotic | REJECT | oversized inside the envelope (worst z = 4.41 over 56 null cells) |
-| C5, C6 | HOLD | correctly calibrated, but mean power at n = 100 is only 0.34-0.36 |
+| C1, C2 permutation | PROMOTE | size holds across 128 null cells; mean power 0.60/0.62 at n = 100 |
+| C1, C2 asymptotic | REJECT | oversized inside the envelope (worst z = 31.7 and 5.4) |
+| CvM permutation | PROMOTE | size holds across 144 null cells (worst z = 2.56) |
+| CvM asymptotic | REJECT | oversized inside the envelope (worst z = 4.41 over 86 null cells) |
+| C5, C6 | HOLD | correctly calibrated, but mean power at n = 100 is only 0.33-0.36 |
 | C3 | RUNS, UNCALIBRATED | exercised under Rscript 4.5.3 with `copula`; smoke-tested on iid input only - no bench cell, no size or power evidence |
 
-**The number to read before trusting a non-rejection**: averaged over the bench's
-dependence grid, C5 and C6 have 21-23% power at n = 50, 34-36% at n = 100 and 60-62% at
-n = 355, and below n = 100 they exceed 50% only at the strongest dependence the grid tests
-(`promotion_report.md`, "Power across the dependence grid"). A non-rejection at a threshold
-with 50 windows is close to uninformative unless the dependence is strong. A rejection still means something; the silence does not.
+**The number to read before trusting a non-rejection**: averaged over the bench's dependence
+grid, C5 and C6 have 21-24% power at n = 50, 33-36% at n = 100, 60-63% at n = 355 and 79-80%
+at n = 1000, and below n = 100 they exceed 50% only at the strongest dependence the grid
+tests (`promotion_report.md`, "Power across the dependence grid"). A non-rejection at a
+threshold with 50 windows is close to uninformative unless the dependence is strong. A
+rejection still means something; the silence does not.
 
 That asymmetry is why `analyzers/check_ledger.py` requires three conditions for a `pass`
 and not one. On the 070423 record of qubit 1, 49 of its 63 non-rejections read

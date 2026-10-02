@@ -9,10 +9,10 @@ This is the binding one. Power depends on how strong the dependence is, and the 
 sweeps it: Arm E, `rho` 0.05-0.5, inducing a duration-level lag-1 from about 0 to 0.48.
 Averaged over that grid (`jobs/bench/results/power_table.csv`, arm=E_copula_ar1_durations, mean over `rho` and shape), C5 and C6 have:
 
-| n | 20 | 35 | 50 | 75 | 100 | 355 |
-|---|---|---|---|---|---|---|
-| C5 studentized | 0.103 | 0.173 | 0.232 | 0.311 | 0.364 | 0.623 |
-| C6 | 0.086 | 0.152 | 0.207 | 0.284 | 0.340 | 0.599 |
+| n | 20 | 35 | 50 | 75 | 100 | 355 | 500 | 700 | 1000 |
+|---|---|---|---|---|---|---|---|---|---|
+| C5 studentized | 0.106 | 0.174 | 0.236 | 0.307 | 0.357 | 0.626 | 0.691 | 0.750 | 0.804 |
+| C6 | 0.087 | 0.153 | 0.208 | 0.285 | 0.332 | 0.599 | 0.670 | 0.729 | 0.788 |
 
 Below n = 100 neither exceeds 0.5 except at the strongest grid point, `rho` = 0.5
 (`promotion_report.md`, "Power across the dependence grid"). So below n = 100 a

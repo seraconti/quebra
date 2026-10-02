@@ -50,15 +50,16 @@ windows gave 355 distinct values.
 
 **Underpowered unless the dependence is strong.** This is the binding limitation. Averaged
 over the bench's dependence grid (`jobs/bench/results/power_table.csv`, arm=E_copula_ar1_durations, mean over `rho` and shape), the studentized variant's power is
-0.103 at n = 20, 0.232 at n = 50, 0.364 at n = 100 and 0.623 at n = 355. Below n = 100 it
+0.106 at n = 20, 0.236 at n = 50, 0.357 at n = 100, 0.626 at n = 355 and 0.804 at
+n = 1000. Below n = 100 it
 exceeds 0.5 only at the strongest grid point, `rho` = 0.5.
 
 ## What we do
 
 Report it, and require more than its p-value before calling anything a pass. The bench put
-C5 on HOLD - correctly calibrated (studentized variant: worst z = 2.36 against 3.45) but underpowered (mean
-power 0.364 at n = 100) - so `analyzers/check_ledger.py` marks a non-rejection below
-`min_events_pass` as `underpowered`, never `pass`.
+C5 on HOLD - correctly calibrated (studentized variant: worst z = -3.18 against 3.58) but
+underpowered (mean power 0.357 at n = 100) - so `analyzers/check_ledger.py` marks a
+non-rejection below `min_events_pass` as `underpowered`, never `pass`.
 
-C5 and C6 agree with each other to a mean absolute difference of 0.016 across 192 shared
-cells. Running both buys very little; running one of them and C1/C2 buys a lot.
+C5 and C6 agree with each other to a mean absolute difference of 0.017-0.018 across 288
+shared cells. Running both buys very little; running one of them and C1/C2 buys a lot.

@@ -62,10 +62,10 @@ quantised=False, censoring_target=0.0).
 **The multi-process asymptotic collapses under segmentation.** With many short segments the
 normal approximation fails outright: at a realised censoring of 0.17 the bench measured a
 rejection rate of **0.8625** against a nominal 0.05 (Arm A, shape 1.5, n = 355,
-unquantised). Among the adequately supported c = 0.25 cells the worst is 0.8695 (Arm D,
-shape 1.5, n = 355); a quantised Arm A cell with 819 usable replicates of 2000 reaches
-0.973. The
-permutation form on the Arm A cell stayed at 0.0435, and within 0.0425-0.0645 on every
+unquantised). Among the adequately supported c = 0.25 cells the worst is 0.9625 (Arm D,
+shape 1.5, n = 1000); a quantised Arm A cell at n = 355 with 819 usable replicates of 2000 reaches
+0.973, and the quantised cells above it, on fewer than half their replicates, reach 1.0. The
+permutation form on the Arm A cell stayed at 0.0435, and within 0.0405-0.0645 on every
 adequately supported c = 0.25 cell (`size_table.csv`, check=c1_lewis_robinson,
 censoring_target=0.25). The
 paper's asymptotics let every `tau_j` grow; many short segments is the other limit. Whether a
@@ -81,10 +81,13 @@ This raises rather than returning a number.
 Use the permutation calibration. It is exactly valid rather than asymptotically - `tau`,
 `N` and `gamma_hat`, hence the weights, are all invariant to reordering gaps within a
 segment, so the only thing a permutation moves is `sum_i T_ij`. The bench PROMOTEd it:
-calibrated across 80 null cells inside the censoring envelope (worst z = -2.15 against a
-Bonferroni threshold of 3.42), with mean power 0.596 at n = 100 across the trend grid
-(range 0.170-0.999 - the spread is over trend strength and Weibull shape, and mild trends
+calibrated across 128 null cells inside the censoring envelope (worst z = -2.15 against a
+Bonferroni threshold of 3.55), with mean power 0.603 at n = 100 across the trend grid
+(range 0.195-1.000 - the spread is over trend strength and Weibull shape, and mild trends
 are genuinely hard).
 
 The asymptotic form is REJECTed by the bench and the ledger hatches any cell that uses it
-at an event count where it was miscalibrated.
+at an event count where it was miscalibrated. Inside the envelope its size grows with n
+once there is more than one segment: the worst cell (Arm A, shape 1.5, quantised, c = 0.03)
+rejects at 0.103 at n = 355 and 0.2045 at n = 1000 (`size_table.csv`, check=c1_lewis_robinson,
+calibration=asymptotic, clock=in_spec).

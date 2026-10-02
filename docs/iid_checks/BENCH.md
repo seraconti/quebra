@@ -20,25 +20,26 @@ A cell is one generating configuration at one event count on one clock
 | D, `arm_d` | Weibull trend-renewal process, cumulative intensity `t^b` | the trend C1, C2 and CvM are directed at; `b = 1` is a second null |
 | E, `arm_e` | Weibull durations with a Gaussian-copula AR(1) dependence of strength `rho` | the serial dependence C5 and C6 are directed at; `rho = 0` is Arm A |
 
-The factors (`jobs/bench/grid.py`): event count `N_GRID` = 20, 35, 50, 75, 100, 355; Weibull
-shape 0.75 and 1.5; quantised or continuous durations (Arm A); target censoring 0, 0.03 and
-0.25 (Arms A and D, through `arms.n_segments_for_censoring`); `rho` 0.05-0.5 (Arms C and E);
-`b` 0.7, 0.85, 1.2, 1.5 (Arm D). Arms B and C are carved on two clocks, and their in-spec
-cells run only the rows that stay defined when `tau == T_N`: C5, C6 and CvM by
-permutation (`grid._carved_clocks`, `checks/battery.py:run_battery`). `grid.size_cells` and
-`grid.power_cells` give 144 and 192 cells.
+The factors (`jobs/bench/grid.py`): event count `N_GRID` = 20, 35, 50, 75, 100, 355, 500,
+700, 1000; Weibull shape 0.75 and 1.5; quantised or continuous durations (Arm A); target
+censoring 0, 0.03 and 0.25 (Arms A and D, through `arms.n_segments_for_censoring`); `rho`
+0.05-0.5 (Arms C and E); `b` 0.7, 0.85, 1.2, 1.5 (Arm D). Arms B and C are carved on two
+clocks, and their in-spec cells run only the rows that stay defined when `tau == T_N`: C5,
+C6 and CvM by permutation (`grid._carved_clocks`, `checks/battery.py:run_battery`).
+`grid.size_cells` and `grid.power_cells` give 216 and 288 cells.
 
-The levels were set from one record family, measured before the bench was written
-(`grid.py` module docstring, `REAL_DATA_NOTES` in `jobs/bench/report.py`): 20-355 usable
-windows, censoring 0.000-0.026 wherever n >= 20, and its T2* quantisation. Nothing in the
-code compares another record's event counts, censoring or quantisation with the grid.
+The event counts cover the 6D2S check-ledger records, which reach 935 events. The
+censoring and quantisation levels were set from one record family, measured before the
+bench was written (`grid.py` module docstring, `REAL_DATA_NOTES` in `jobs/bench/report.py`):
+censoring 0.000-0.026 wherever n >= 20, and its T2* quantisation. Nothing in the code
+compares another record's event counts, censoring or quantisation with the grid.
 
 ## 2. What is measured
 
 Each replicate is generated, the whole battery runs on it, and a row counts a rejection
 when `p < 0.05` (`jobs/bench/runner.py:run_cell`). Size cells have 2000 replicates, power
 cells 1000, and permutation rows use B = 999 (`grid.py`: `N_REPLICATES_SIZE`,
-`N_REPLICATES_POWER`, `N_PERM`). The last run covered 336 cells and 480,000 replicates
+`N_REPLICATES_POWER`, `N_PERM`). The last run covered 504 cells and 720,000 replicates
 (`jobs/bench/results/runtime.txt`).
 
 The Monte Carlo standard error of a size at a true 0.05 is `sqrt(0.05 * 0.95 / 2000)` =
@@ -62,7 +63,9 @@ still be accepted is 0.05 +/- 0.011, 0.013, 0.014 and 0.014 respectively
 **`analyzers/check_ledger.py`.**
 - `run` computes the acceptance table once.
 - `_rows_for` judges each real record at `calibration_summary.nearest_bracketing_n`: the grid
-  n nearest its event count, with ties going to the smaller.
+  n nearest its event count, with ties going to the smaller. On other data, check the event
+  counts against `N_GRID` first: above 1000 events a record is judged at 1000, an n the
+  bench never measured.
 - `_verdict` applies the outcome, in this order:
   - no p-value is `not computed`, and a tie-sensitive check on fewer than
     `tie_cutoff_distinct` (5) distinct durations is `not interpretable (ties)`;
@@ -108,18 +111,20 @@ None of these fixes is implemented. Each is a proposal.
 3. **The envelope was fitted to one record family.** The ledger does not check a new
    record's censoring, segment count or coefficient of variation against it. *Proposal:* an
    envelope check in the ledger that marks a record outside the simulated range.
-4. **Nearest-n extrapolates.** A record below 20 events is judged at 20 and one above 355 at
-   355. Between grid points the nearest is taken by distance, so 228-354 events are judged at
-   355, a larger n than the record has. That is optimistic for asymptotic rows, whose size
-   improves with n. *Proposal:* judge at the largest grid n not above the record's count, and
-   report records below 20 as outside the grid.
+4. **Nearest-n can judge a record at a larger n than it has.** Between two grid points the
+   nearest is taken by distance, so a count in the upper half of a gap is judged at the
+   larger point (228-354 events at 355, for example), and a record below 20 events is judged
+   at 20. On the 6D2S ledgers, 181 of the 369 (record, threshold, clock) rungs with at least
+   one event are judged at a larger n than they have, 40 of them below 20. *Proposal:* judge
+   at the largest grid n not above the record's count, and report records below 20 as
+   outside the grid.
 5. **Permutation rows are exact by construction.** Within-segment permutation of
    exchangeable gaps has the nominal size up to the `p < 0.05` grid (49/1000 at B = 999), so
    the bench tests only their implementation. No fix proposed: that is what such a row can
    show.
 6. **Power never enters a ledger verdict.** `_verdict` reads the size acceptance only, so
    `pass` is a non-rejection by a calibrated check, not evidence of no trend or no
-   dependence. Averaged over its dependence grid, C5 has 36% (studentized) and 35%
+   dependence. Averaged over its dependence grid, C5 has 36% (studentized) and 34%
    (unstudentized) power at n = 100
    (`promotion_report.md`, verdict table, `power_n100_mean`). *Proposal:* carry the
    power at the record's n into the ledger row.
@@ -127,10 +132,11 @@ None of these fixes is implemented. Each is a proposal.
    same check code it calibrates, so a wrong equation is wrong in both and its size can
    still look right. Only published values catch it (`tests/test_checks_published_values.py`,
    `docs/GOLD_STANDARD.md`). No fix proposed.
-8. **Multiplicity across groups is uncorrected.** The Bonferroni is per group, over 108
-   groups, so about five false "miscalibrated" flags are expected even for exact tests. Two
-   exact permutation rows are flagged today: C5 unstudentized, in-spec, n = 20, and CvM
-   permutation, calendar, n = 100 (`bench_acceptance_at_n` computed from `size_table.csv`).
+8. **Multiplicity across groups is uncorrected.** The Bonferroni is per group, over 162
+   groups, so about eight false "miscalibrated" flags are expected even for exact tests.
+   Three exact permutation rows are flagged today: C5 studentized, in-spec, n = 700; C5
+   unstudentized, in-spec, n = 20; and CvM permutation, calendar, n = 100
+   (`bench_acceptance_at_n` computed from `size_table.csv`).
    *Proposal:* correct across groups, or exempt permutation rows from the size gate.
 9. **Ties are under-counted on quantised data.** `_permutation.permutation_p_value` counts
    ties with a float-exact `>=`. On a read grid, shuffles that tie the observed statistic
@@ -140,11 +146,10 @@ None of these fixes is implemented. Each is a proposal.
 10. **The tau-free retry never succeeds.** `run_cell` retries a failed replicate without the
     tau checks, but CvM's permutation row stays in that reduced battery and raises on the
     same degenerate segment. `n_failed_tau_only` is 0 in every row of both tables, so C5 and
-    C6 lose those replicates too. All 12 cells that lose replicates this way are at
-    censoring 0.25, outside the envelope; inside it, five n = 20 cells (three size, two Arm E
-    power) lost one replicate each to a segment too short for any lag, which no retry can
-    save. *Proposal:* drop CvM
-    from the retry.
+    C6 lose those replicates too. All 18 cells that lose replicates this way are at
+    censoring 0.25, outside the envelope; inside it, nine cells at n = 20 or 35 (three size,
+    six power) lost one to three replicates each to segments too short for any lag, which no
+    retry can save. *Proposal:* drop CvM from the retry.
 11. **Some of the null is not exercised.**
     - The carved arms have no gaps, so the carve's gap handling is never run under a null.
     - At n <= 35 a censoring target of 0.03 yields one segment, the same as 0

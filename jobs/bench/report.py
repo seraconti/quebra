@@ -14,7 +14,7 @@ Decision rule, stated once here and applied uniformly:
     REJECT   size miscalibrated somewhere inside the envelope
 
 Size is judged by a multiplicity-corrected z-test (`FAMILYWISE_ALPHA`) rather than a flat
-tolerance: a flat tolerance rejected all seven rows, because the max of 56-90 deviations is
+tolerance: a flat tolerance rejects every row, because the max of 86-144 deviations is
 ~3 SE by chance. Power is judged by its mean over the alternative's grid rather than at the
 grid's strongest point, which reports a capability few records call on. No grid point is
 singled out as "the real data's": the bench's dependence knob is not calibrated to a record.
@@ -41,9 +41,10 @@ from quebra.analyzers.checks.result import CLOCK_IN_SPEC
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
-# Where the real data sits, measured before the bench was built.
+# Where the real data sits. Censoring and quantisation were measured before the bench was
+# built; the event counts come from the 6D2S ledgers.
 REAL_DATA_NOTES = {
-    "event_counts": "20-355 usable windows depending on threshold",
+    "event_counts": "up to 935 events per record, threshold and clock (28 6D2S ledger records)",
     "censoring": "0.000-0.026 wherever n >= 20",
     "quantisation": "3 us spans k=1..72 with 43 distinct values; 4 us has 79% at k=1",
 }
@@ -420,8 +421,8 @@ def verdicts(size: pd.DataFrame, power: pd.DataFrame) -> pd.DataFrame:
         ]
         # min / mean / max over the directed grid. The gate uses the MEAN, for every check:
         # taking the max reports the single most favourable cell as if it were the expected
-        # power - for c1 [permutation] at n = 100 the eight (shape, b) cells run 0.170 to
-        # 0.999, and a hand-typed driver string would print 0.999.
+        # power - for c1 [permutation] at n = 100 the eight (shape, b) cells run 0.195 to
+        # 1.000, and a hand-typed driver string would print 1.000.
         power_min = (
             float(directed["rejection_rate"].min()) if len(directed) else float("nan")
         )
@@ -677,8 +678,8 @@ def build(runtime_note: str = "") -> str:
     add(
         "\n**1. Read-level dependence does not reach the durations.** Arm C was planned as "
         "the power arm for C5 and C6. It cannot be: correlated READS do not produce "
-        f"correlated DURATIONS. Measured induced duration-level lag-1 averages {arm_c_lag1} "
-        "- never positive - because successive level "
+        f"correlated DURATIONS. Measured induced duration-level lag-1 averages {arm_c_lag1}, "
+        "because successive level "
         "crossings of a stationary Gaussian process are very nearly a renewal process. The "
         "power table below is flat at the nominal level across the whole rho grid, which is "
         "the evidence for that claim.\n\n"

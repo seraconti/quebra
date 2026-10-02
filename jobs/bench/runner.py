@@ -15,8 +15,8 @@ what is needed to read it honestly:
 - `mean_induced_lag1`. The swept parameter is a latent correlation; this is the
   duration-level dependence it actually produced, which is the quantity a check sees.
 
-Parallelism is over CELLS, via joblib. Cells differ ~16x in cost between n = 20 and
-n = 355, so the work is handed out cell by cell and the scheduler balances it; each worker
+Parallelism is over CELLS, via joblib. A cell's cost grows with its n, so the work is
+handed out cell by cell and the scheduler balances it; each worker
 seeds its own generator from `(MASTER_SEED, cell index, replicate)` so the run reproduces
 exactly regardless of how the cells were distributed.
 """

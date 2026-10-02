@@ -5,13 +5,17 @@ replicated many times and yields one ROW per (check, calibration, variant) - so 
 are keyed by cell x row, and a check's size at n = 20 is a single number with a stated
 Monte Carlo error rather than an impression.
 
-The event-count, censoring and shape levels are set from what the real data shows,
-measured before the bench was written; the dependence grid is a sweep, not a calibration to
-a record:
+The event-count levels cover the 6D2S check-ledger records; the censoring and shape levels
+are set from what the real data showed, measured before the bench was written; the
+dependence grid is a sweep, not a calibration to a record:
 
-- `N_GRID` ends at 355 because that is the largest usable event count in the record, and
-  starts at 20 because below that `lag_layout` runs out of pairs. 35 is included because it
-  is roughly the count at the thresholds that matter most.
+- `N_GRID` starts at 20 because below that `lag_layout` runs out of pairs, and ends at 1000
+  because the 6D2S check-ledger records (`jobs/active/check_ledger_6d2s_q*.py`) reach 935
+  events; above 355 the points are spaced so every one of their event counts is within 150
+  of a grid point. 35 is included because it is roughly the count at the thresholds that
+  matter most. A cell's seed is its index in `all_cells()`, so a new n goes at the END:
+  the size cells before it keep their seeds, and every power cell, which follows all the
+  size cells, is re-seeded.
 - `CENSORING_GRID` is `{0, 0.03, 0.25}`. The real data sits at 0.000-0.026 wherever
   n >= 20, so 0 and 0.03 bracket it; 0.25 is deliberately outside it, and exists only to
   show what C1 and C2's censoring machinery buys when there is enough censoring to matter.
@@ -46,7 +50,7 @@ N_PERM = 999
 N_REPLICATES_SIZE = 2000
 N_REPLICATES_POWER = 1000
 
-N_GRID = (20, 35, 50, 75, 100, 355)
+N_GRID = (20, 35, 50, 75, 100, 355, 500, 700, 1000)
 SHAPE_GRID = (0.75, 1.5)
 CENSORING_GRID = (0.0, 0.03, 0.25)
 RHO_GRID = (0.05, 0.1, 0.15, 0.2, 0.3, 0.5)

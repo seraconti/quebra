@@ -69,5 +69,5 @@ under iid gaps. For m > 1 the statistic is the unweighted SUM of per-segment eq 
 there is no eq (16) analogue to borrow, because eq (14)'s optimal weights are derived for a
 normal limit these statistics do not have.
 
-The bench PROMOTEd the permutation form (worst z = 2.67 against 3.42, mean power 0.612 at
+The bench PROMOTEd the permutation form (worst z = 2.67 against 3.55, mean power 0.621 at
 n = 100) and REJECTed the asymptotic one.

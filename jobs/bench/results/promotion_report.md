@@ -18,103 +18,103 @@ HOLD     size calibrated but mean power at n = 100 below 0.5
 REJECT   size miscalibrated somewhere inside the envelope
 ```
 
-**Size is judged by a multiplicity-corrected z-test, not by a flat tolerance.** Each row is scored against 56-90 null cells. Under a PERFECT test the largest of that many deviations is about 2.5-3 Monte Carlo SE by chance alone, so a flat "every cell within 0.01" rule would reject every check regardless of truth - the first draft of this report did exactly that. Instead each cell gets `z = (rate - alpha)/sqrt(alpha(1-alpha)/n_used)` and the row is flagged only if its worst |z| exceeds a Bonferroni threshold at family-wise 0.05 for that row's cell count (z_crit 3.32-3.45 here).
+**Size is judged by a multiplicity-corrected z-test, not by a flat tolerance.** Each row is scored against 86-144 null cells. Under a PERFECT test the largest of that many deviations is about 2.5-3 Monte Carlo SE by chance alone, so a flat "every cell within 0.01" rule would reject every check regardless of truth - the first draft of this report did exactly that. Instead each cell gets `z = (rate - alpha)/sqrt(alpha(1-alpha)/n_used)` and the row is flagged only if its worst |z| exceeds a Bonferroni threshold at family-wise 0.05 for that row's cell count (z_crit 3.44-3.58 here).
 
 **The envelope is `censoring <= 0.03`**, because the real data sits at 0.000-0.026 wherever n >= 20. The 0.25 arm is deliberately outside it and is scored separately below: a check that works where the data lives should not be condemned by a corner the data never reaches, and what happens in that corner is a finding in its own right.
 
 ## Verdicts
 | row | verdict | worst_rate | worst_z | power_n100_min | power_n100_mean | power_n100_max | driver |
 |---|---|---|---|---|---|---|---|
-| c1_lewis_robinson [asymptotic] | REJECT | 0.103 | 10.88 | 0.165 | 0.598 | 0.999 | size 0.103 at A_iid_weibull/in_spec n=355 q=True c=0.03, z=10.88 against a 3.42 threshold |
-| c1_lewis_robinson [permutation] | PROMOTE | 0.0395 | -2.15 | 0.170 | 0.596 | 0.999 | size calibrated across 80 cells (worst z=-2.15 of 3.42), mean power 0.596 at n=100 (range 0.170-0.999) |
-| c2_anderson_darling [asymptotic] | REJECT | 0.0765 | 5.44 | 0.156 | 0.611 | 0.998 | size 0.0765 at C_ar1_reads_carved/calendar n=35 q=False c=0.0, z=5.44 against a 3.32 threshold |
-| c2_anderson_darling [permutation] | PROMOTE | 0.063 | 2.67 | 0.166 | 0.612 | 0.998 | size calibrated across 80 cells (worst z=2.67 of 3.42), mean power 0.612 at n=100 (range 0.166-0.998) |
-| c5_rank_autocorr [permutation/studentized] | HOLD | 0.0615 | 2.36 | 0.051 | 0.364 | 0.990 | size calibrated (worst z=2.36 of 3.45) but mean power at n=100 is only 0.364 |
-| c5_rank_autocorr [permutation/unstudentized] | HOLD | 0.0395 | -2.15 | 0.051 | 0.349 | 0.984 | size calibrated (worst z=-2.15 of 3.45) but mean power at n=100 is only 0.349 |
-| c6_exchangeability [permutation] | HOLD | 0.038 | -2.46 | 0.060 | 0.340 | 0.969 | size calibrated (worst z=-2.46 of 3.45) but mean power at n=100 is only 0.340 |
-| cvm_cramer_von_mises [asymptotic] | REJECT | 0.0715 | 4.41 | 0.157 | 0.581 | 0.997 | size 0.0715 at C_ar1_reads_carved/calendar n=35 q=False c=0.0, z=4.41 against a 3.32 threshold |
-| cvm_cramer_von_mises [permutation] | PROMOTE | 0.0625 | 2.56 | 0.162 | 0.583 | 0.997 | size calibrated across 90 cells (worst z=2.56 of 3.45), mean power 0.583 at n=100 (range 0.162-0.997) |
+| c1_lewis_robinson [asymptotic] | REJECT | 0.2045 | 31.7 | 0.190 | 0.606 | 1.000 | size 0.2045 at A_iid_weibull/in_spec n=1000 q=True c=0.03, z=31.7 against a 3.55 threshold |
+| c1_lewis_robinson [permutation] | PROMOTE | 0.0395 | -2.15 | 0.195 | 0.603 | 1.000 | size calibrated across 128 cells (worst z=-2.15 of 3.55), mean power 0.603 at n=100 (range 0.195-1.000) |
+| c2_anderson_darling [asymptotic] | REJECT | 0.0765 | 5.44 | 0.170 | 0.616 | 1.000 | size 0.0765 at C_ar1_reads_carved/calendar n=35 q=False c=0.0, z=5.44 against a 3.44 threshold |
+| c2_anderson_darling [permutation] | PROMOTE | 0.063 | 2.67 | 0.182 | 0.621 | 1.000 | size calibrated across 128 cells (worst z=2.67 of 3.55), mean power 0.621 at n=100 (range 0.182-1.000) |
+| c5_rank_autocorr [permutation/studentized] | HOLD | 0.0345 | -3.18 | 0.057 | 0.357 | 0.983 | size calibrated (worst z=-3.18 of 3.58) but mean power at n=100 is only 0.357 |
+| c5_rank_autocorr [permutation/unstudentized] | HOLD | 0.0375 | -2.56 | 0.040 | 0.341 | 0.978 | size calibrated (worst z=-2.56 of 3.58) but mean power at n=100 is only 0.341 |
+| c6_exchangeability [permutation] | HOLD | 0.0365 | -2.77 | 0.041 | 0.332 | 0.963 | size calibrated (worst z=-2.77 of 3.58) but mean power at n=100 is only 0.332 |
+| cvm_cramer_von_mises [asymptotic] | REJECT | 0.0715 | 4.41 | 0.181 | 0.593 | 1.000 | size 0.0715 at C_ar1_reads_carved/calendar n=35 q=False c=0.0, z=4.41 against a 3.44 threshold |
+| cvm_cramer_von_mises [permutation] | PROMOTE | 0.0625 | 2.56 | 0.185 | 0.595 | 1.000 | size calibrated across 144 cells (worst z=2.56 of 3.58), mean power 0.595 at n=100 (range 0.185-1.000) |
 
 Size inside the envelope, per row:
 
 | row | n_cells | worst_rate | worst_z | z_crit | calibrated | worst_cell |
 |---|---|---|---|---|---|---|
-| c1_lewis_robinson [asymptotic] | 80 | 0.103 | 10.88 | 3.42 | False | A_iid_weibull/in_spec n=355 q=True c=0.03 |
-| c2_anderson_darling [asymptotic] | 56 | 0.0765 | 5.44 | 3.32 | False | C_ar1_reads_carved/calendar n=35 q=False c=0.0 |
-| cvm_cramer_von_mises [asymptotic] | 56 | 0.0715 | 4.41 | 3.32 | False | C_ar1_reads_carved/calendar n=35 q=False c=0.0 |
-| c2_anderson_darling [permutation] | 80 | 0.063 | 2.67 | 3.42 | True | A_iid_weibull/in_spec n=355 q=False c=0.03 |
-| cvm_cramer_von_mises [permutation] | 90 | 0.0625 | 2.56 | 3.45 | True | B_iid_reads_carved/calendar n=100 q=False c=0.0 |
-| c6_exchangeability [permutation] | 90 | 0.038 | -2.46 | 3.45 | True | D_trp_power_law/in_spec n=100 q=False c=0.0 |
-| c5_rank_autocorr [permutation/studentized] | 90 | 0.0615 | 2.36 | 3.45 | True | A_iid_weibull/in_spec n=100 q=True c=0.03 |
-| c1_lewis_robinson [permutation] | 80 | 0.0395 | -2.15 | 3.42 | True | A_iid_weibull/in_spec n=355 q=False c=0.03 |
-| c5_rank_autocorr [permutation/unstudentized] | 90 | 0.0395 | -2.15 | 3.45 | True | A_iid_weibull/in_spec n=355 q=False c=0.0 |
+| c1_lewis_robinson [asymptotic] | 128 | 0.2045 | 31.7 | 3.55 | False | A_iid_weibull/in_spec n=1000 q=True c=0.03 |
+| c2_anderson_darling [asymptotic] | 86 | 0.0765 | 5.44 | 3.44 | False | C_ar1_reads_carved/calendar n=35 q=False c=0.0 |
+| cvm_cramer_von_mises [asymptotic] | 86 | 0.0715 | 4.41 | 3.44 | False | C_ar1_reads_carved/calendar n=35 q=False c=0.0 |
+| c5_rank_autocorr [permutation/studentized] | 144 | 0.0345 | -3.18 | 3.58 | True | A_iid_weibull/in_spec n=700 q=False c=0.0 |
+| c6_exchangeability [permutation] | 144 | 0.0365 | -2.77 | 3.58 | True | A_iid_weibull/in_spec n=700 q=False c=0.0 |
+| c2_anderson_darling [permutation] | 128 | 0.063 | 2.67 | 3.55 | True | A_iid_weibull/in_spec n=355 q=False c=0.03 |
+| c5_rank_autocorr [permutation/unstudentized] | 144 | 0.0375 | -2.56 | 3.58 | True | D_trp_power_law/in_spec n=1000 q=False c=0.03 |
+| cvm_cramer_von_mises [permutation] | 144 | 0.0625 | 2.56 | 3.58 | True | B_iid_reads_carved/calendar n=100 q=False c=0.0 |
+| c1_lewis_robinson [permutation] | 128 | 0.0395 | -2.15 | 3.55 | True | A_iid_weibull/in_spec n=355 q=False c=0.03 |
 
 Size OUTSIDE the envelope (censoring 0.25, which the real data never reaches), reported separately rather than folded into the verdict:
 
 | row | n_cells | worst_rate | worst_z | z_crit | calibrated | worst_cell |
 |---|---|---|---|---|---|---|
-| c1_lewis_robinson [asymptotic] | 28 | 0.8695 | 168.16 | 3.12 | False | D_trp_power_law/in_spec n=355 q=False c=0.25 |
-| c5_rank_autocorr [permutation/studentized] | 28 | 0.034 | -3.28 | 3.12 | False | A_iid_weibull/in_spec n=100 q=False c=0.25 |
-| c1_lewis_robinson [permutation] | 28 | 0.0645 | 2.98 | 3.12 | True | D_trp_power_law/in_spec n=50 q=False c=0.25 |
-| cvm_cramer_von_mises [permutation] | 28 | 0.063 | 2.67 | 3.12 | True | D_trp_power_law/in_spec n=50 q=False c=0.25 |
-| c2_anderson_darling [permutation] | 28 | 0.06 | 2.05 | 3.12 | True | D_trp_power_law/in_spec n=50 q=False c=0.25 |
-| c6_exchangeability [permutation] | 28 | 0.04 | -2.05 | 3.12 | True | D_trp_power_law/in_spec n=35 q=False c=0.25 |
-| c5_rank_autocorr [permutation/unstudentized] | 28 | 0.041 | -1.85 | 3.12 | True | D_trp_power_law/in_spec n=35 q=False c=0.25 |
+| c1_lewis_robinson [asymptotic] | 40 | 0.9625 | 187.24 | 3.23 | False | D_trp_power_law/in_spec n=1000 q=False c=0.25 |
+| c5_rank_autocorr [permutation/studentized] | 40 | 0.034 | -3.28 | 3.23 | False | A_iid_weibull/in_spec n=100 q=False c=0.25 |
+| c1_lewis_robinson [permutation] | 40 | 0.0645 | 2.98 | 3.23 | True | D_trp_power_law/in_spec n=50 q=False c=0.25 |
+| cvm_cramer_von_mises [permutation] | 40 | 0.037 | -2.67 | 3.23 | True | D_trp_power_law/in_spec n=1000 q=False c=0.25 |
+| c2_anderson_darling [permutation] | 40 | 0.0385 | -2.36 | 3.23 | True | D_trp_power_law/in_spec n=1000 q=False c=0.25 |
+| c5_rank_autocorr [permutation/unstudentized] | 40 | 0.0385 | -2.36 | 3.23 | True | A_iid_weibull/in_spec n=700 q=False c=0.25 |
+| c6_exchangeability [permutation] | 40 | 0.04 | -2.05 | 3.23 | True | D_trp_power_law/in_spec n=35 q=False c=0.25 |
 
 ## Power across the dependence grid - read before trusting a non-rejection
 C5 and C6 are scored on Arm E, whose `rho` sets the serial dependence between durations. Power by event count at every grid point, as the mean over the two Weibull shapes, with the range of duration-level lag-1 each `rho` induces across its cells:
 
-| row | rho | induced_lag1 | 20 | 35 | 50 | 75 | 100 | 355 |
-|---|---|---|---|---|---|---|---|---|
-| c5_rank_autocorr [permutation/studentized] | 0.05 | -0.017 to 0.044 | 0.047 | 0.052 | 0.053 | 0.066 | 0.06 | 0.082 |
-| c5_rank_autocorr [permutation/studentized] | 0.1 | 0.015 to 0.094 | 0.044 | 0.057 | 0.069 | 0.078 | 0.093 | 0.244 |
-| c5_rank_autocorr [permutation/studentized] | 0.15 | 0.053 to 0.139 | 0.058 | 0.066 | 0.084 | 0.144 | 0.147 | 0.562 |
-| c5_rank_autocorr [permutation/studentized] | 0.2 | 0.086 to 0.187 | 0.07 | 0.1 | 0.134 | 0.192 | 0.292 | 0.849 |
-| c5_rank_autocorr [permutation/studentized] | 0.3 | 0.171 to 0.284 | 0.11 | 0.198 | 0.279 | 0.458 | 0.605 | 0.999 |
-| c5_rank_autocorr [permutation/studentized] | 0.5 | 0.299 to 0.475 | 0.287 | 0.563 | 0.775 | 0.932 | 0.986 | 1.0 |
-| c5_rank_autocorr [permutation/unstudentized] | 0.05 | -0.017 to 0.044 | 0.046 | 0.043 | 0.048 | 0.062 | 0.054 | 0.078 |
-| c5_rank_autocorr [permutation/unstudentized] | 0.1 | 0.015 to 0.094 | 0.035 | 0.048 | 0.058 | 0.062 | 0.081 | 0.235 |
-| c5_rank_autocorr [permutation/unstudentized] | 0.15 | 0.053 to 0.139 | 0.04 | 0.053 | 0.07 | 0.134 | 0.135 | 0.551 |
-| c5_rank_autocorr [permutation/unstudentized] | 0.2 | 0.086 to 0.187 | 0.062 | 0.088 | 0.117 | 0.17 | 0.265 | 0.836 |
-| c5_rank_autocorr [permutation/unstudentized] | 0.3 | 0.171 to 0.284 | 0.08 | 0.166 | 0.248 | 0.416 | 0.577 | 0.998 |
-| c5_rank_autocorr [permutation/unstudentized] | 0.5 | 0.299 to 0.475 | 0.234 | 0.502 | 0.738 | 0.921 | 0.984 | 1.0 |
-| c6_exchangeability [permutation] | 0.05 | -0.017 to 0.044 | 0.046 | 0.052 | 0.049 | 0.056 | 0.068 | 0.084 |
-| c6_exchangeability [permutation] | 0.1 | 0.015 to 0.094 | 0.042 | 0.052 | 0.068 | 0.07 | 0.088 | 0.226 |
-| c6_exchangeability [permutation] | 0.15 | 0.053 to 0.139 | 0.042 | 0.064 | 0.077 | 0.124 | 0.135 | 0.506 |
-| c6_exchangeability [permutation] | 0.2 | 0.086 to 0.187 | 0.06 | 0.092 | 0.117 | 0.168 | 0.25 | 0.782 |
-| c6_exchangeability [permutation] | 0.3 | 0.171 to 0.284 | 0.089 | 0.169 | 0.23 | 0.39 | 0.53 | 0.996 |
-| c6_exchangeability [permutation] | 0.5 | 0.299 to 0.475 | 0.235 | 0.485 | 0.698 | 0.899 | 0.969 | 1.0 |
+| row | rho | induced_lag1 | 20 | 35 | 50 | 75 | 100 | 355 | 500 | 700 | 1000 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| c5_rank_autocorr [permutation/studentized] | 0.05 | -0.011 to 0.047 | 0.048 | 0.055 | 0.048 | 0.058 | 0.062 | 0.088 | 0.099 | 0.122 | 0.168 |
+| c5_rank_autocorr [permutation/studentized] | 0.1 | 0.019 to 0.096 | 0.052 | 0.062 | 0.07 | 0.075 | 0.085 | 0.252 | 0.349 | 0.508 | 0.68 |
+| c5_rank_autocorr [permutation/studentized] | 0.15 | 0.051 to 0.144 | 0.059 | 0.073 | 0.092 | 0.129 | 0.143 | 0.58 | 0.746 | 0.879 | 0.975 |
+| c5_rank_autocorr [permutation/studentized] | 0.2 | 0.095 to 0.190 | 0.073 | 0.097 | 0.134 | 0.21 | 0.266 | 0.838 | 0.954 | 0.994 | 1.0 |
+| c5_rank_autocorr [permutation/studentized] | 0.3 | 0.169 to 0.286 | 0.105 | 0.184 | 0.297 | 0.441 | 0.602 | 0.998 | 1.0 | 1.0 | 1.0 |
+| c5_rank_autocorr [permutation/studentized] | 0.5 | 0.314 to 0.480 | 0.301 | 0.574 | 0.775 | 0.93 | 0.982 | 1.0 | 1.0 | 1.0 | 1.0 |
+| c5_rank_autocorr [permutation/unstudentized] | 0.05 | -0.011 to 0.047 | 0.044 | 0.049 | 0.043 | 0.056 | 0.055 | 0.081 | 0.097 | 0.116 | 0.165 |
+| c5_rank_autocorr [permutation/unstudentized] | 0.1 | 0.019 to 0.096 | 0.044 | 0.052 | 0.064 | 0.064 | 0.077 | 0.238 | 0.33 | 0.492 | 0.666 |
+| c5_rank_autocorr [permutation/unstudentized] | 0.15 | 0.051 to 0.144 | 0.049 | 0.068 | 0.084 | 0.118 | 0.128 | 0.564 | 0.734 | 0.874 | 0.972 |
+| c5_rank_autocorr [permutation/unstudentized] | 0.2 | 0.095 to 0.190 | 0.058 | 0.074 | 0.118 | 0.187 | 0.244 | 0.824 | 0.951 | 0.995 | 1.0 |
+| c5_rank_autocorr [permutation/unstudentized] | 0.3 | 0.169 to 0.286 | 0.074 | 0.156 | 0.256 | 0.404 | 0.565 | 0.997 | 1.0 | 1.0 | 1.0 |
+| c5_rank_autocorr [permutation/unstudentized] | 0.5 | 0.314 to 0.480 | 0.235 | 0.516 | 0.736 | 0.919 | 0.978 | 1.0 | 1.0 | 1.0 | 1.0 |
+| c6_exchangeability [permutation] | 0.05 | -0.011 to 0.047 | 0.046 | 0.052 | 0.046 | 0.061 | 0.056 | 0.083 | 0.096 | 0.123 | 0.161 |
+| c6_exchangeability [permutation] | 0.1 | 0.019 to 0.096 | 0.043 | 0.056 | 0.065 | 0.064 | 0.079 | 0.216 | 0.32 | 0.442 | 0.621 |
+| c6_exchangeability [permutation] | 0.15 | 0.051 to 0.144 | 0.05 | 0.072 | 0.088 | 0.118 | 0.128 | 0.526 | 0.678 | 0.828 | 0.949 |
+| c6_exchangeability [permutation] | 0.2 | 0.095 to 0.190 | 0.061 | 0.079 | 0.113 | 0.184 | 0.24 | 0.776 | 0.924 | 0.982 | 1.0 |
+| c6_exchangeability [permutation] | 0.3 | 0.169 to 0.286 | 0.087 | 0.154 | 0.248 | 0.396 | 0.53 | 0.991 | 1.0 | 1.0 | 1.0 |
+| c6_exchangeability [permutation] | 0.5 | 0.314 to 0.480 | 0.236 | 0.505 | 0.686 | 0.888 | 0.961 | 1.0 | 1.0 | 1.0 | 1.0 |
 
 Below n = 100, power exceeds 0.5 only at rho = 0.5. A non-rejection from these checks at small n is therefore close to uninformative unless the dependence is strong - it is the expected outcome whether the durations are dependent or not - and must not be read as evidence of independence. They are correctly calibrated, so a REJECTION is meaningful; it is the silence that carries no information.
 
 
 ## Criterion 1 - size at the event counts this project has
 Arm A, continuous durations, minimal censoring. Columns are the target event count; nominal is 0.05.
-| row | 20 | 35 | 50 | 75 | 100 | 355 |
-|---|---|---|---|---|---|---|
-| c1_lewis_robinson [asymptotic] | 0.0608 | 0.0543 | 0.0562 | 0.0427 | 0.0495 | 0.051 |
-| c1_lewis_robinson [permutation] | 0.0565 | 0.0505 | 0.0522 | 0.0417 | 0.0458 | 0.0492 |
-| c2_anderson_darling [asymptotic] | 0.0682 | 0.0568 | 0.0542 | 0.047 | 0.0503 | 0.051 |
-| c2_anderson_darling [permutation] | 0.0552 | 0.0498 | 0.0512 | 0.0442 | 0.049 | 0.0495 |
-| c5_rank_autocorr [permutation/studentized] | 0.0512 | 0.0508 | 0.046 | 0.0462 | 0.0512 | 0.0438 |
-| c5_rank_autocorr [permutation/unstudentized] | 0.0505 | 0.0482 | 0.0508 | 0.0488 | 0.047 | 0.0422 |
-| c6_exchangeability [permutation] | 0.0512 | 0.0427 | 0.048 | 0.0503 | 0.0485 | 0.0458 |
-| cvm_cramer_von_mises [asymptotic] | 0.0605 | 0.0538 | 0.0545 | 0.044 | 0.0498 | 0.0528 |
-| cvm_cramer_von_mises [permutation] | 0.0568 | 0.0505 | 0.053 | 0.0455 | 0.0508 | 0.0503 |
+| row | 20 | 35 | 50 | 75 | 100 | 355 | 500 | 700 | 1000 |
+|---|---|---|---|---|---|---|---|---|---|
+| c1_lewis_robinson [asymptotic] | 0.0608 | 0.0543 | 0.0562 | 0.0427 | 0.0495 | 0.051 | 0.0458 | 0.051 | 0.0485 |
+| c1_lewis_robinson [permutation] | 0.0565 | 0.0505 | 0.0522 | 0.0417 | 0.0458 | 0.0492 | 0.0458 | 0.0472 | 0.047 |
+| c2_anderson_darling [asymptotic] | 0.0682 | 0.0568 | 0.0542 | 0.047 | 0.0503 | 0.051 | 0.0455 | 0.0508 | 0.0495 |
+| c2_anderson_darling [permutation] | 0.0552 | 0.0498 | 0.0512 | 0.0442 | 0.049 | 0.0495 | 0.046 | 0.0495 | 0.049 |
+| c5_rank_autocorr [permutation/studentized] | 0.0512 | 0.0508 | 0.046 | 0.0462 | 0.0512 | 0.0438 | 0.05 | 0.0418 | 0.0532 |
+| c5_rank_autocorr [permutation/unstudentized] | 0.0505 | 0.0482 | 0.0508 | 0.0488 | 0.047 | 0.0422 | 0.052 | 0.0448 | 0.053 |
+| c6_exchangeability [permutation] | 0.0512 | 0.0427 | 0.048 | 0.0503 | 0.0485 | 0.0458 | 0.049 | 0.0425 | 0.0545 |
+| cvm_cramer_von_mises [asymptotic] | 0.0605 | 0.0538 | 0.0545 | 0.044 | 0.0498 | 0.0528 | 0.0455 | 0.0492 | 0.0498 |
+| cvm_cramer_von_mises [permutation] | 0.0568 | 0.0505 | 0.053 | 0.0455 | 0.0508 | 0.0503 | 0.0455 | 0.0495 | 0.0488 |
 
 Worst deviation from nominal across EVERY null cell at n >= 35:
 
 | row | arm | clock | n_target | quantised | censoring_target | rejection_rate | mc_se | deviation | n_used |
 |---|---|---|---|---|---|---|---|---|---|
-| c1_lewis_robinson [asymptotic] | D_trp_power_law | in_spec | 355 | False | 0.25 | 0.8695 | 0.0075 | 0.8195 | 2000 |
+| c1_lewis_robinson [asymptotic] | D_trp_power_law | in_spec | 1000 | False | 0.25 | 0.9625 | 0.0042 | 0.9125 | 2000 |
 | c2_anderson_darling [asymptotic] | C_ar1_reads_carved | calendar | 35 | False | 0.0 | 0.0765 | 0.0059 | 0.0265 | 2000 |
 | cvm_cramer_von_mises [asymptotic] | C_ar1_reads_carved | calendar | 35 | False | 0.0 | 0.0715 | 0.0058 | 0.0215 | 2000 |
 | c5_rank_autocorr [permutation/studentized] | A_iid_weibull | in_spec | 100 | False | 0.25 | 0.034 | 0.0041 | 0.016 | 2000 |
 | c1_lewis_robinson [permutation] | D_trp_power_law | in_spec | 50 | False | 0.25 | 0.0645 | 0.0055 | 0.0145 | 2000 |
+| c6_exchangeability [permutation] | A_iid_weibull | in_spec | 700 | False | 0.0 | 0.0365 | 0.0042 | 0.0135 | 2000 |
+| cvm_cramer_von_mises [permutation] | D_trp_power_law | in_spec | 1000 | False | 0.25 | 0.037 | 0.0042 | 0.013 | 2000 |
 | c2_anderson_darling [permutation] | A_iid_weibull | in_spec | 355 | False | 0.03 | 0.063 | 0.0054 | 0.013 | 2000 |
-| cvm_cramer_von_mises [permutation] | D_trp_power_law | in_spec | 50 | False | 0.25 | 0.063 | 0.0054 | 0.013 | 2000 |
-| c6_exchangeability [permutation] | D_trp_power_law | in_spec | 100 | False | 0.0 | 0.038 | 0.0043 | 0.012 | 2000 |
-| c5_rank_autocorr [permutation/unstudentized] | A_iid_weibull | in_spec | 355 | False | 0.0 | 0.0395 | 0.0044 | 0.0105 | 2000 |
+| c5_rank_autocorr [permutation/unstudentized] | D_trp_power_law | in_spec | 1000 | False | 0.03 | 0.0375 | 0.0042 | 0.0125 | 2000 |
 
 ## Criterion 2 - power against the alternative each check is directed at
 
@@ -122,50 +122,50 @@ Worst deviation from nominal across EVERY null cell at n >= 35:
 
 | row | 0.7 | 0.85 | 1.2 | 1.5 |
 |---|---|---|---|---|
-| c1_lewis_robinson [asymptotic] | 0.786 | 0.353 | 0.401 | 0.85 |
-| c1_lewis_robinson [permutation] | 0.782 | 0.349 | 0.399 | 0.854 |
+| c1_lewis_robinson [asymptotic] | 0.798 | 0.344 | 0.43 | 0.854 |
+| c1_lewis_robinson [permutation] | 0.794 | 0.338 | 0.426 | 0.854 |
 
 **c2_anderson_darling** - directed at departure from a renewal process; Arm D, n = 100.
 
 | row | 0.7 | 0.85 | 1.2 | 1.5 |
 |---|---|---|---|---|
-| c2_anderson_darling [asymptotic] | 0.828 | 0.374 | 0.4 | 0.84 |
-| c2_anderson_darling [permutation] | 0.829 | 0.372 | 0.4 | 0.846 |
+| c2_anderson_darling [asymptotic] | 0.83 | 0.368 | 0.424 | 0.842 |
+| c2_anderson_darling [permutation] | 0.834 | 0.368 | 0.427 | 0.856 |
 
 **c5_rank_autocorr** - directed at serial dependence between durations; Arm E, n = 100.
 
 | row | 0.05 | 0.1 | 0.15 | 0.2 | 0.3 | 0.5 |
 |---|---|---|---|---|---|---|
-| c5_rank_autocorr [permutation/studentized] | 0.06 | 0.093 | 0.147 | 0.292 | 0.605 | 0.986 |
-| c5_rank_autocorr [permutation/unstudentized] | 0.054 | 0.081 | 0.135 | 0.265 | 0.577 | 0.984 |
+| c5_rank_autocorr [permutation/studentized] | 0.062 | 0.085 | 0.143 | 0.266 | 0.602 | 0.982 |
+| c5_rank_autocorr [permutation/unstudentized] | 0.055 | 0.077 | 0.128 | 0.244 | 0.565 | 0.978 |
 
 **c6_exchangeability** - directed at any departure from exchangeability; Arm E, n = 100.
 
 | row | 0.05 | 0.1 | 0.15 | 0.2 | 0.3 | 0.5 |
 |---|---|---|---|---|---|---|
-| c6_exchangeability [permutation] | 0.068 | 0.088 | 0.135 | 0.25 | 0.53 | 0.969 |
+| c6_exchangeability [permutation] | 0.056 | 0.079 | 0.128 | 0.24 | 0.53 | 0.961 |
 
 **cvm_cramer_von_mises** - directed at departure from a renewal process; Arm D, n = 100.
 
 | row | 0.7 | 0.85 | 1.2 | 1.5 |
 |---|---|---|---|---|
-| cvm_cramer_von_mises [asymptotic] | 0.776 | 0.328 | 0.382 | 0.839 |
-| cvm_cramer_von_mises [permutation] | 0.773 | 0.327 | 0.384 | 0.846 |
+| cvm_cramer_von_mises [asymptotic] | 0.786 | 0.329 | 0.412 | 0.845 |
+| cvm_cramer_von_mises [permutation] | 0.786 | 0.329 | 0.411 | 0.853 |
 
 ## Criterion 3 - what the censoring machinery buys
 Restated as a PREDICTION rather than a gate, per the plan. Kvaloy & Lindqvist (Technometrics 62(1) 2020, Section 6.1, Figure 1, p. 107) report that these asymptotic calibrations are mildly NON-conservative at small samples. Read off Figure 1 at 10 expected events: AD about 0.11 at shape 1.5 and 0.09 at shape 0.75, LR about 0.08 at both, converging to 0.05 by 40-60. The size table above is the comparison. Note this criterion barely discriminates on the real data, where censoring is 0.000-0.026 wherever n >= 20; the 0.25 arm is deliberately outside that range.
 
-| row | target 0 (realised 0.012) | target 0.03 (realised 0.033) | target 0.25 (realised 0.167) |
+| row | target 0 (realised 0.008) | target 0.03 (realised 0.032) | target 0.25 (realised 0.165) |
 |---|---|---|---|
-| c1_lewis_robinson [asymptotic] | 0.0514 | 0.0652 | 0.5282 |
-| c1_lewis_robinson [permutation] | 0.0488 | 0.0489 | 0.0485 |
-| c2_anderson_darling [asymptotic] | 0.0508 | nan | nan |
-| c2_anderson_darling [permutation] | 0.049 | 0.048 | 0.0492 |
-| c5_rank_autocorr [permutation/studentized] | 0.0472 | 0.0514 | 0.0471 |
-| c5_rank_autocorr [permutation/unstudentized] | 0.0472 | 0.0506 | 0.0476 |
-| c6_exchangeability [permutation] | 0.0473 | 0.051 | 0.0481 |
-| cvm_cramer_von_mises [asymptotic] | 0.0503 | nan | nan |
-| cvm_cramer_von_mises [permutation] | 0.0492 | 0.0483 | 0.0505 |
+| c1_lewis_robinson [asymptotic] | 0.0503 | 0.0809 | 0.6537 |
+| c1_lewis_robinson [permutation] | 0.0485 | 0.0496 | 0.0484 |
+| c2_anderson_darling [asymptotic] | 0.0501 | nan | nan |
+| c2_anderson_darling [permutation] | 0.0487 | 0.0485 | 0.0493 |
+| c5_rank_autocorr [permutation/studentized] | 0.0477 | 0.0503 | 0.0479 |
+| c5_rank_autocorr [permutation/unstudentized] | 0.0479 | 0.0498 | 0.0471 |
+| c6_exchangeability [permutation] | 0.0471 | 0.0497 | 0.0479 |
+| cvm_cramer_von_mises [asymptotic] | 0.0499 | nan | nan |
+| cvm_cramer_von_mises [permutation] | 0.0491 | 0.0486 | 0.0497 |
 
 ## Criterion 4 - do the checks agree where they should
 Every row from one replicate reads the SAME permutation set, so differences between checks within a cell are paired and their Monte Carlo error is smaller than that of two independent estimates. (Across ARMS the comparison is not paired - Arm B and Arm C realise different segment sizes, so no shared permutation set exists. Those are compared unpaired, with both SEs shown.)
@@ -176,41 +176,41 @@ C6 is the natural reference: it is a pure permutation test of exchangeability, s
 
 | row | n_shared_cells | mean_abs_diff_vs_c6 | max_abs_diff_vs_c6 |
 |---|---|---|---|
-| c1_lewis_robinson [asymptotic] | 156 | 0.189 | 0.866 |
-| c1_lewis_robinson [permutation] | 156 | 0.188 | 0.868 |
-| c2_anderson_darling [asymptotic] | 156 | 0.184 | 0.82 |
-| c2_anderson_darling [permutation] | 156 | 0.181 | 0.823 |
-| cvm_cramer_von_mises [asymptotic] | 156 | 0.178 | 0.834 |
-| cvm_cramer_von_mises [permutation] | 192 | 0.146 | 0.834 |
-| c5_rank_autocorr [permutation/studentized] | 192 | 0.016 | 0.09 |
-| c5_rank_autocorr [permutation/unstudentized] | 192 | 0.014 | 0.14 |
+| c1_lewis_robinson [asymptotic] | 234 | 0.267 | 0.913 |
+| c1_lewis_robinson [permutation] | 234 | 0.266 | 0.917 |
+| c2_anderson_darling [asymptotic] | 234 | 0.258 | 0.898 |
+| c2_anderson_darling [permutation] | 234 | 0.256 | 0.898 |
+| cvm_cramer_von_mises [asymptotic] | 234 | 0.256 | 0.903 |
+| cvm_cramer_von_mises [permutation] | 288 | 0.209 | 0.904 |
+| c5_rank_autocorr [permutation/studentized] | 288 | 0.018 | 0.158 |
+| c5_rank_autocorr [permutation/unstudentized] | 288 | 0.017 | 0.171 |
 
 Effect of quantisation on size (Arm A, no extra censoring):
 
 | row | False | True |
 |---|---|---|
-| c1_lewis_robinson [asymptotic] | 0.0524 | 0.0549 |
-| c1_lewis_robinson [permutation] | 0.0493 | 0.0486 |
-| c2_anderson_darling [asymptotic] | 0.0546 | 0.0544 |
-| c2_anderson_darling [permutation] | 0.0498 | 0.0475 |
-| c5_rank_autocorr [permutation/studentized] | 0.0482 | 0.0467 |
-| c5_rank_autocorr [permutation/unstudentized] | 0.0479 | 0.046 |
-| c6_exchangeability [permutation] | 0.0477 | 0.0466 |
-| cvm_cramer_von_mises [asymptotic] | 0.0525 | 0.0524 |
-| cvm_cramer_von_mises [permutation] | 0.0511 | 0.0472 |
+| c1_lewis_robinson [asymptotic] | 0.0511 | 0.0526 |
+| c1_lewis_robinson [permutation] | 0.0484 | 0.0483 |
+| c2_anderson_darling [asymptotic] | 0.0526 | 0.0528 |
+| c2_anderson_darling [permutation] | 0.0493 | 0.0477 |
+| c5_rank_autocorr [permutation/studentized] | 0.0482 | 0.0477 |
+| c5_rank_autocorr [permutation/unstudentized] | 0.0486 | 0.047 |
+| c6_exchangeability [permutation] | 0.0481 | 0.0468 |
+| cvm_cramer_von_mises [asymptotic] | 0.0511 | 0.0515 |
+| cvm_cramer_von_mises [permutation] | 0.0501 | 0.0477 |
 
 ## Two findings the grid was not designed to produce
 
-**1. Read-level dependence does not reach the durations.** Arm C was planned as the power arm for C5 and C6. It cannot be: correlated READS do not produce correlated DURATIONS. Measured induced duration-level lag-1 averages -0.019 at rho = 0 and -0.032 at rho = 0.5, with every cell between -0.077 and -0.001 - never positive - because successive level crossings of a stationary Gaussian process are very nearly a renewal process. The power table below is flat at the nominal level across the whole rho grid, which is the evidence for that claim.
+**1. Read-level dependence does not reach the durations.** Arm C was planned as the power arm for C5 and C6. It cannot be: correlated READS do not produce correlated DURATIONS. Measured induced duration-level lag-1 averages -0.013 at rho = 0 and -0.024 at rho = 0.5, with every cell between -0.089 and +0.001, because successive level crossings of a stationary Gaussian process are very nearly a renewal process. The power table below is flat at the nominal level across the whole rho grid, which is the evidence for that claim.
 
 **Arm E was added because of this** - Gaussian-copula AR(1) on the durations themselves, which has exactly Arm A's marginal so `rho` moves dependence and nothing else. Without it, criterion 2 would be unscoreable for C5 and C6. It was not in the approved plan.
 
 | row | 0.05 | 0.1 | 0.15 | 0.2 | 0.3 | 0.5 |
 |---|---|---|---|---|---|---|
-| c5_rank_autocorr [permutation/studentized] | 0.052 | 0.052 | 0.046 | 0.044 | 0.051 | 0.046 |
-| c5_rank_autocorr [permutation/unstudentized] | 0.05 | 0.052 | 0.044 | 0.047 | 0.05 | 0.044 |
-| c6_exchangeability [permutation] | 0.05 | 0.052 | 0.045 | 0.047 | 0.048 | 0.045 |
-| cvm_cramer_von_mises [permutation] | 0.048 | 0.046 | 0.053 | 0.044 | 0.052 | 0.051 |
+| c5_rank_autocorr [permutation/studentized] | 0.048 | 0.05 | 0.048 | 0.05 | 0.051 | 0.049 |
+| c5_rank_autocorr [permutation/unstudentized] | 0.049 | 0.051 | 0.05 | 0.049 | 0.056 | 0.05 |
+| c6_exchangeability [permutation] | 0.051 | 0.048 | 0.049 | 0.047 | 0.053 | 0.05 |
+| cvm_cramer_von_mises [permutation] | 0.049 | 0.052 | 0.045 | 0.048 | 0.052 | 0.05 |
 
 **2. Eq (10)'s `gamma_tilde` is unusable at small per-segment N.** It is a difference of two large terms and goes negative: a regular process with unit gaps truncated at tau = 5.5 gives N = 5, mu = 1.1 and sigma^2 = 1.05 - 1.21 = -0.16. At ~5 events per segment it killed 383 of 400 replicates. The default is therefore the complete-gap coefficient of variation - which is the `gamma_hat` that actually appears in eqs (4) and (7); eq (10) is the paper's ALTERNATIVE, and it is kept as a selectable variant with this caveat recorded.
 
@@ -242,6 +242,48 @@ A replicate whose statistic is undefined is counted, never silently treated as a
 | A_iid_weibull | 355 | True | 0.25 | c5_rank_autocorr | permutation | 2000 | 819 | 0.0464 |
 | A_iid_weibull | 355 | True | 0.25 | c6_exchangeability | permutation | 2000 | 819 | 0.0464 |
 | A_iid_weibull | 355 | True | 0.25 | cvm_cramer_von_mises | permutation | 2000 | 819 | 0.0488 |
+| A_iid_weibull | 500 | True | 0.25 | c1_lewis_robinson | asymptotic | 2000 | 453 | 0.6115 |
+| A_iid_weibull | 500 | True | 0.25 | c1_lewis_robinson | permutation | 2000 | 453 | 0.0464 |
+| A_iid_weibull | 500 | True | 0.25 | c2_anderson_darling | permutation | 2000 | 453 | 0.0684 |
+| A_iid_weibull | 500 | True | 0.25 | c5_rank_autocorr | permutation | 2000 | 453 | 0.0552 |
+| A_iid_weibull | 500 | True | 0.25 | c5_rank_autocorr | permutation | 2000 | 453 | 0.0618 |
+| A_iid_weibull | 500 | True | 0.25 | c6_exchangeability | permutation | 2000 | 453 | 0.0618 |
+| A_iid_weibull | 500 | True | 0.25 | cvm_cramer_von_mises | permutation | 2000 | 453 | 0.064 |
+| A_iid_weibull | 500 | True | 0.25 | c1_lewis_robinson | asymptotic | 2000 | 587 | 0.9983 |
+| A_iid_weibull | 500 | True | 0.25 | c1_lewis_robinson | permutation | 2000 | 587 | 0.0426 |
+| A_iid_weibull | 500 | True | 0.25 | c2_anderson_darling | permutation | 2000 | 587 | 0.0426 |
+| A_iid_weibull | 500 | True | 0.25 | c5_rank_autocorr | permutation | 2000 | 587 | 0.0392 |
+| A_iid_weibull | 500 | True | 0.25 | c5_rank_autocorr | permutation | 2000 | 587 | 0.0426 |
+| A_iid_weibull | 500 | True | 0.25 | c6_exchangeability | permutation | 2000 | 587 | 0.0324 |
+| A_iid_weibull | 500 | True | 0.25 | cvm_cramer_von_mises | permutation | 2000 | 587 | 0.0426 |
+| A_iid_weibull | 700 | True | 0.25 | c1_lewis_robinson | asymptotic | 2000 | 231 | 0.6364 |
+| A_iid_weibull | 700 | True | 0.25 | c1_lewis_robinson | permutation | 2000 | 231 | 0.0303 |
+| A_iid_weibull | 700 | True | 0.25 | c2_anderson_darling | permutation | 2000 | 231 | 0.0606 |
+| A_iid_weibull | 700 | True | 0.25 | c5_rank_autocorr | permutation | 2000 | 231 | 0.0649 |
+| A_iid_weibull | 700 | True | 0.25 | c5_rank_autocorr | permutation | 2000 | 231 | 0.0433 |
+| A_iid_weibull | 700 | True | 0.25 | c6_exchangeability | permutation | 2000 | 231 | 0.0476 |
+| A_iid_weibull | 700 | True | 0.25 | cvm_cramer_von_mises | permutation | 2000 | 231 | 0.0563 |
+| A_iid_weibull | 700 | True | 0.25 | c1_lewis_robinson | asymptotic | 2000 | 330 | 1.0 |
+| A_iid_weibull | 700 | True | 0.25 | c1_lewis_robinson | permutation | 2000 | 330 | 0.0455 |
+| A_iid_weibull | 700 | True | 0.25 | c2_anderson_darling | permutation | 2000 | 330 | 0.0515 |
+| A_iid_weibull | 700 | True | 0.25 | c5_rank_autocorr | permutation | 2000 | 330 | 0.0667 |
+| A_iid_weibull | 700 | True | 0.25 | c5_rank_autocorr | permutation | 2000 | 330 | 0.0455 |
+| A_iid_weibull | 700 | True | 0.25 | c6_exchangeability | permutation | 2000 | 330 | 0.0545 |
+| A_iid_weibull | 700 | True | 0.25 | cvm_cramer_von_mises | permutation | 2000 | 330 | 0.0576 |
+| A_iid_weibull | 1000 | True | 0.25 | c1_lewis_robinson | asymptotic | 2000 | 84 | 0.6548 |
+| A_iid_weibull | 1000 | True | 0.25 | c1_lewis_robinson | permutation | 2000 | 84 | 0.0476 |
+| A_iid_weibull | 1000 | True | 0.25 | c2_anderson_darling | permutation | 2000 | 84 | 0.0357 |
+| A_iid_weibull | 1000 | True | 0.25 | c5_rank_autocorr | permutation | 2000 | 84 | 0.0833 |
+| A_iid_weibull | 1000 | True | 0.25 | c5_rank_autocorr | permutation | 2000 | 84 | 0.0357 |
+| A_iid_weibull | 1000 | True | 0.25 | c6_exchangeability | permutation | 2000 | 84 | 0.0357 |
+| A_iid_weibull | 1000 | True | 0.25 | cvm_cramer_von_mises | permutation | 2000 | 84 | 0.0357 |
+| A_iid_weibull | 1000 | True | 0.25 | c1_lewis_robinson | asymptotic | 2000 | 176 | 1.0 |
+| A_iid_weibull | 1000 | True | 0.25 | c1_lewis_robinson | permutation | 2000 | 176 | 0.0909 |
+| A_iid_weibull | 1000 | True | 0.25 | c2_anderson_darling | permutation | 2000 | 176 | 0.0739 |
+| A_iid_weibull | 1000 | True | 0.25 | c5_rank_autocorr | permutation | 2000 | 176 | 0.0568 |
+| A_iid_weibull | 1000 | True | 0.25 | c5_rank_autocorr | permutation | 2000 | 176 | 0.0625 |
+| A_iid_weibull | 1000 | True | 0.25 | c6_exchangeability | permutation | 2000 | 176 | 0.0739 |
+| A_iid_weibull | 1000 | True | 0.25 | cvm_cramer_von_mises | permutation | 2000 | 176 | 0.0739 |
 
 The `c2_anderson_darling` and `cvm_cramer_von_mises` `[asymptotic]` entries at `n_used` of 1 and 5 are not a degeneracy at all - both asymptotic calibrations are only defined for a single segment, and at censoring 0.25 a replicate has many, so the row exists only on the rare replicate where every segment but one was dropped for having too few events. It is an artefact of the row schema, not a measurement.
 
@@ -249,6 +291,12 @@ Cells with at least one failed replicate:
 
 | arm | clock | n_target | quantised | censoring_target | n_replicates | n_failed | n_failed_tau_only | mean_n_distinct_durations |
 |---|---|---|---|---|---|---|---|---|
+| A_iid_weibull | in_spec | 1000 | True | 0.25 | 2000 | 1916 | 0 | 13.51 |
+| A_iid_weibull | in_spec | 1000 | True | 0.25 | 2000 | 1824 | 0 | 11.04 |
+| A_iid_weibull | in_spec | 700 | True | 0.25 | 2000 | 1769 | 0 | 13.03 |
+| A_iid_weibull | in_spec | 700 | True | 0.25 | 2000 | 1670 | 0 | 10.63 |
+| A_iid_weibull | in_spec | 500 | True | 0.25 | 2000 | 1547 | 0 | 12.66 |
+| A_iid_weibull | in_spec | 500 | True | 0.25 | 2000 | 1413 | 0 | 10.3 |
 | A_iid_weibull | in_spec | 355 | True | 0.25 | 2000 | 1294 | 0 | 12.18 |
 | A_iid_weibull | in_spec | 355 | True | 0.25 | 2000 | 1181 | 0 | 9.92 |
 | A_iid_weibull | in_spec | 100 | True | 0.25 | 2000 | 509 | 0 | 9.74 |
@@ -261,24 +309,26 @@ Cells with at least one failed replicate:
 | A_iid_weibull | in_spec | 35 | True | 0.25 | 2000 | 151 | 0 | 7.06 |
 | A_iid_weibull | in_spec | 20 | True | 0.25 | 2000 | 138 | 0 | 5.79 |
 | A_iid_weibull | in_spec | 20 | True | 0.25 | 2000 | 109 | 0 | 6.14 |
+| E_copula_ar1_durations | in_spec | 20 | False | 0.0 | 1000 | 3 | 0 | 20.81 |
+| D_trp_power_law | in_spec | 20 | False | 0.0 | 1000 | 2 | 0 | 20.33 |
+| E_copula_ar1_durations | in_spec | 20 | False | 0.0 | 1000 | 2 | 0 | 21.84 |
 | A_iid_weibull | in_spec | 20 | False | 0.03 | 2000 | 1 | 0 | 20.61 |
 | A_iid_weibull | in_spec | 20 | True | 0.03 | 2000 | 1 | 0 | 6.61 |
 | D_trp_power_law | in_spec | 20 | False | 0.0 | 2000 | 1 | 0 | 20.79 |
-| E_copula_ar1_durations | in_spec | 20 | False | 0.0 | 1000 | 1 | 0 | 20.47 |
-| E_copula_ar1_durations | in_spec | 20 | False | 0.0 | 1000 | 1 | 0 | 21.32 |
+| E_copula_ar1_durations | in_spec | 20 | False | 0.0 | 1000 | 1 | 0 | 20.85 |
 
-(17 cell configurations had at least one failure.)
+(27 cell configurations had at least one failure.)
 
 ## Reproducibility limitation
 The bench and the checks are tracked, and every replicate is seeded from `(MASTER_SEED, cell index, replicate)`, so the tables reproduce from the commit that produced them. The tables do not say which commit that is: they carry no commit, code hash, weighting or divisor, so nothing detects that they describe code that has since changed.
 
 ## Runtime
 ```
-cells=336
-replicates=480000
+cells=504
+replicates=720000
 n_perm=999
 n_jobs=-1
-wall_clock_s=3752.0
-wall_clock_min=62.5
+wall_clock_s=14817.2
+wall_clock_min=247.0
 ```
 
