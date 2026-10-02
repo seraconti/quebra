@@ -1,190 +1,193 @@
 # QUEBRA
 
-QUEBRA is a toolkit for QUantum Engineering Reliability Analysis. The name is Portuguese for break, and that is the point of the tool.
+[![ci](https://github.com/seraconti/quebra/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/seraconti/quebra/actions/workflows/ci.yml)
+[![licence: GPL-3.0-or-later](https://img.shields.io/badge/licence-GPL--3.0--or--later-blue.svg)](LICENSE)
 
+**QUantum Engineering Reliability Analysis.** QUEBRA reads the quality metrics a quantum device
+already reports (coherence times, fidelities, frequencies) as time series, declares a threshold,
+and turns each record into alternating in-spec and out-of-spec windows. It then applies
+reliability statistics to those windows and to calibration logs, checks on each record what
+those statistics assume, and traces every figure to the content hashes of the data and code that
+produced it.
 
+The name is Portuguese for *break*, which is the point of the tool.
 
-## Why
+> **Status: v0.1.0.** Research software, developed alongside an MSc thesis. Interfaces may
+> change. Install from source: QUEBRA is not on PyPI. What is and is not implemented is listed
+> under [What it does](#what-it-does); open work is in the
+> [issues](https://github.com/seraconti/quebra/issues) and
+> [milestones](https://github.com/seraconti/quebra/milestones).
 
-Characterizing a quantum device means measuring it repeatedly and recording how good it was: coherence time, gate fidelity, frequency offset, readout error. Do that long enough, and you have a record spanning weeks or months. The usual summary is the metric average and its variation.
+## Statement of need
 
-That summary answers a question about typical quality, but not the questions an operator actually has. How long does the device hold specification before dropping out? When it drops out, how long until it is back? Is this device more dependable than that one, or does it only look that way because it was measured on a quieter week? Those are reliability questions, and reliability engineering has answered them for a century, for pumps, bearings, turbines and semiconductors. The statistics exist. They are written for a different kind of input.
+Characterizing a quantum device means measuring it repeatedly and recording how good it was.
+Run long enough, that gives a record spanning nights or months, usually summarized by an average
+and a spread. That summary answers a question about typical quality. It does not answer the
+questions an operator has: how long does the device stay in specification, how long does it take
+to come back, and is one device more dependable than another or only measured on a quieter week?
 
-They are written for durations: how long something lasts before it stops working. A characterization record is not durations. It is a sequence of quality readings, and it never says the device failed, because nothing failed. That is the gap.
+Those are reliability questions, and reliability engineering has standard statistics for them.
+The statistics are written for durations, and a characterization record contains none: it is a
+sequence of quality readings, and nothing in it ever says the device failed.
 
-We close it by defining what counts as failure. Fix a specification limit on the metric,
-call the device in-spec while it sits on the good side of that limit, and the record resolves
-into alternating intervals: stretches in spec and stretches out of it. The in-spec stretches
-have lengths, and those lengths are durations.
-
-The important part is that this is a choice, not a measurement. Nothing failed; we defined
-a threshold and named the crossing a failure. Every result is conditional on that threshold,
-which is why a threshold in QUEBRA is a swept parameter rather than a constant, and why a
-result is reported across a ladder of thresholds rather than at one of them.
-
-Once the record is expressed as durations, the canonical reliability toolbox applies to it
-unchanged: the estimators, the handling of incomplete observation, the comparison tests, the
-recurrence models. QUEBRA is our implementation of that toolbox for this kind of data, plus the
-machinery to get from a raw instrument record to durations without corrupting them on the way.
+QUEBRA closes that gap by constructing the failures. A threshold on the metric is declared, the
+device is in spec while the metric sits on the good side of it, and each crossing out of spec is
+a failure. The record then resolves into in-spec and out-of-spec windows, and their lengths are
+durations. This is a choice, not a measurement, so every result is conditional on its threshold:
+a threshold in QUEBRA is a swept parameter, always reported with the result.
 
 ## What it does
 
-A run moves through four stages, each marking what is implemented today.
+A run moves through four stages. Each lists what ships today and what does not yet.
 
-1. Read the record as measured. Characterization data is irregularly sampled: runs stop, instruments get retuned, nights end. Resampling onto a uniform grid is the obvious convenience, and it is a trap, because interpolation invents crossings the instrument never reported and hides crossings that fell between grid points. At working thresholds this shifts the crossing count by tens of percent and every downstream number with it. QUEBRA carves from observed reads only and never bridges gaps in observation.
+| Stage | Implemented today | Not implemented yet |
+|---|---|---|
+| **1. Read the record as measured** | Loaders for `.csv`, `.yaml`, `.h5`, `.pickle` with schema validation; schemas for the 912-day Ramsey record and calibration logs; time in explicitly suffixed units | Typed calibration fields beyond the timestamp (end, target, kind, outcome, trigger) |
+| **2. Carve the windows** | In-spec windows from observed reads only, with an explicit gap policy and censoring; per-read states, including unobserved stretches and read states by margin | Out-of-spec windows (time to recovery); read-schedule diagnostics |
+| **3. Check what the estimators assume** | Trend: Lewis-Robinson (C1), Anderson-Darling type (C2), Cramer-von Mises type. Dependence: rank autocorrelation (C5), exchangeability (C6), copula serial independence through R (C3). One shared, seeded permutation set; two clocks; a check ledger; a calibration bench with size and power tables | A bench cell for C3, whose verdicts are therefore reported as uncalibrated |
+| **4. Estimate, and report the licence with the number** | Kaplan-Meier with a log-log Greenwood band; share of time in spec and cumulative excess per threshold; shape statistics (Chatterjee's xi, Spearman, distance correlation); MTBF and MTBC as mean and spread of intervals; metric analyzers for T2\*, fidelity, telegraph noise and Allan deviation | Kaplan-Meier in the panel's reliability band (it still ships a crude empirical estimate); median and restricted mean; Nelson-Aalen and hazard; log-rank; between-record variance; product-limit on calibration cycles |
 
-Loaders for .csv, .yaml, .h5 and .pickle with schema validation; schemas for the
-912-day Ramsey record and for calibration event logs; time carried in explicitly suffixed
-units, so clock and unit mismatches fail loudly rather than quietly.
-
-2. Carve the windows. A window is a maximal run of consecutive reads meeting spec. The policy must say what happens at a gap in observation, at a window still open when the record ends, and at a window already running when observation began. Each is a different kind of incomplete information and is recorded as such rather than guessed at.
-
-analyzers/windows.py: gap policy, censoring, and a per-read state table saying why each read
-did what it did.
-
-3. Check what the estimators assume. Reliability estimators rely on assumptions about the durations they are handed, chiefly that those durations do not depend on each other in time. A confidence band and a two-sample comparison are consequences of the same assumption, so a failed check revokes both together rather than one of them.
-
-Lewis-Robinson, an Anderson-Darling type trend test, rank autocorrelation, exchangeability,
-and a copula serial-independence test through an R bridge. The permutation checks share one
-permutation set and require an explicit seed because defaulting to system entropy made
-p-values irreproducible while the run identity stayed unchanged. Each check is scored against
-a measured calibration bench, so “the check passed” stays distinguishable from “the check had
-no power to answer”.
-
-4. Estimate, and report the license with the number. An estimate whose assumptions were never checked differs from one whose were checked and held, and both differ from one whose checks failed. QUEBRA carries the check outcome, event count it was computed at, and power verdict alongside the estimate.
-
-Kaplan-Meier survival of in-spec windows. MTBF and MTBC over calibration event logs. Metric
-analyzers for T2*, fidelity, telegraph noise and Allan deviation. Nelson-Aalen, log-rank,
-RMST and the mean cumulative function belong to the methodology and are not implemented yet.
+Interpolating an irregular record onto a uniform grid invents crossings the instrument never
+reported and hides others, so QUEBRA carves from observed reads only and never bridges a gap in
+observation. A failed check revokes the confidence band and the comparison that rest on the same
+assumption together, and the check outcome, the event count and the power verdict travel with the
+estimate.
 
 ## How it works
 
-### Four ideas carry the design.
+Four ideas carry the design.
 
-**Everything is a step**. A step is a pure function of typed inputs returning a typed result. It
-does not read disk, and it does not draw. Input and output live at the edges: loaders read,
-render targets write, panels draw. A step that touches the world is not a function of its
-arguments, and could not be cached.
+- **Everything is a step.** A step is a pure function of typed inputs returning a typed result.
+  It does not read disk and does not draw: loaders read, render targets write, panels draw.
+- **Jobs are declarative.** A job is a Python file that names its datasets and wires steps
+  together. It describes a graph; nothing computes until a sink (a figure, or an explicit request
+  for an artifact) resolves.
+- **Identity is content, not filename.** A run is identified by hashes of its inputs and of the
+  code that transformed them, folded transitively through the graph. Change a threshold and it is
+  a different run; a cached result is reused only when the content that produced it is identical.
+- **Provenance is append-only.** Every figure and artifact is written beside a provenance record,
+  in JSON and Markdown, naming the graph and the identities that fed it.
 
-**Jobs are declarative**. A job is a Python file that names its datasets and wires steps
-together. It describes a graph; it does not execute one. Nothing computes until a sink
-resolves, which is either a figure or an explicit request to materialize an artifact.
+A figure in a paper therefore traces back to the exact data and code that made it, and changing
+one parameter recomputes only what changed.
 
-**Identity is content, not filename**. A run is identified by hashes of its inputs and of the
-code that transformed them, folded transitively through the graph. Change a threshold, and it is
-a different run. Edit an analyzer and everything downstream of it is a different run. A cached
-result is reused when, and only when, the content that produced it is identical.
+## Install
 
-**Provenance is append-only.** Every figure and every materialized artifact is written beside a
-provenance record, in JSON for machines and Markdown for people, naming the graph that produced
-it and the identities that fed it. Output directories are never overwritten and never deleted.
-
-Together these mean a figure in a paper traces back to the exact data and the exact code that
-made it, and that changing one parameter recomputes only what changed.
-
-### Status
-
-QUEBRA is in active development alongside an MSc thesis, and the documentation is under
-construction. Interfaces may change. Parts of the methodology described above are not
-implemented yet and are marked as such where they appear.
-
-Feedback is welcome, particularly from anyone who runs long characterization campaigns and
-disagrees with how this frames the problem. Open an issue, including for questions and for
-merely confusing things. See CONTRIBUTING.md.
-
-### Install
-
-QUEBRA installs as a package. Python 3.11 or newer.
+Python 3.11 or newer. From source; there is no PyPI release.
 
 ```bash
 git clone https://github.com/seraconti/quebra.git
 cd quebra
-
-# an isolated environment, so QUEBRA's dependencies stay out of your system Python
 python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-
-pip install .                      # or: pip install -e ".[dev]" to work on it
-pip install pytest                 # the test runner is not a runtime dependency
-pytest tests/
+source .venv/bin/activate              # Windows: .venv\Scripts\activate
+pip install .                          # to work on it: pip install -e ".[dev]"
+pip install pytest hypothesis          # the test suite's conftest needs hypothesis
+pytest -m "not slow and not heavy and not r" tests/
 ```
 
-`scripts/acceptance.sh` checks the same claim from a harsher angle: it builds a wheel,
-installs THAT into a throwaway virtualenv outside the repository, and runs the suite from a
-directory that is not the checkout. If a packaging mistake makes the steps above work only
-from a git clone, that script is what catches it.
+`scripts/acceptance.sh` checks the same claim more harshly: it builds a wheel, installs it into a
+throwaway environment outside the repository, and runs the suite from a directory that is not the
+checkout. Dependencies are declared in `pyproject.toml`; there is no `requirements.txt`.
 
-There is no `requirements.txt`. Dependencies are declared in `pyproject.toml` and derived
-from the imports that actually appear under `src/quebra/`.
-
-### The optional R check
+### Optional: R, for check C3
 
 One check, C3 (`copula::serialIndepTest`), runs out of process through `Rscript`. Everything
-else is pure Python, and the package imports and runs without R: C3 reports `not computed`
-and the other five checks still answer.
-
-**There is no `pip install quebra[r]`, and there cannot be.** An extra installs Python
-distributions, and what C3 needs is an R interpreter plus a CRAN package, neither of which
-pip can provide. `rpy2` is pip-installable but does not ship R either: it links against an R
-you must already have, which is also why this project uses a subprocess rather than `rpy2`
-(see `analyzers/checks/c3_serial_copula.py`). An empty `[r]` extra used to sit in
-`pyproject.toml` and was removed, because a name you can type at pip that installs nothing
-reads as an install route.
-
-To enable C3, install R and the `copula` package yourself:
+else is pure Python; without R, C3 reports `not computed` and the other checks still answer.
+No pip extra can install R, so install it yourself:
 
 ```bash
-# Debian/Ubuntu: sudo apt install r-base    Fedora: sudo dnf install R    macOS: brew install r
+# Debian/Ubuntu: sudo apt install r-base   Fedora: sudo dnf install R   macOS: brew install r
 Rscript -e 'install.packages("copula", repos="https://cloud.r-project.org")'
-Rscript -e 'packageVersion("copula")'       # confirm it resolves
 ```
 
-`randtests`, `XICOR` and `energy` are not used by the pipeline, but `make test-r` DOES need
-them: one `r`-marked test checks the committed fixture's recorded versions against the local
-R, and it asks for all four. Install them too if you intend to run that gate:
+`make test-r` runs the tests marked `r`; they also need `randtests`, `XICOR` and `energy`, because
+one test compares the committed fixture's recorded package versions with the local R.
+
+## Usage
+
+### Without any private data
+
+A synthetic Ramsey record ships inside the package. This runs it through the real T2\* analyzer,
+and is the same snippet `scripts/acceptance.sh` runs from outside the repository:
+
+```python
+import quebra.analyzers.t2star as t2star
+from quebra._fixtures import fixture_path
+from quebra.core.dataset import Dataset
+from quebra.core.job import _load_dataset
+
+norm = _load_dataset(Dataset(path=fixture_path("ramsey_synthetic.csv"), qubit=1,
+                             extra={"run_start_unix_s": 1.7e9}))
+result = t2star.run(t2star.make_inputs_from_norm(norm))
+print(len(result.frame), "T2* points")
+```
+
+### Running jobs
 
 ```bash
-Rscript -e 'install.packages(c("randtests","XICOR","energy"), repos="https://cloud.r-project.org")'
+quebra inspect jobs/active/km_poster_6d2s.py   # print the step graph without computing
+quebra run jobs/active/t2star_q1_070423.py     # run one job
+quebra run --all                               # every job, except those declaring JOB_SWEEP = False
 ```
 
-They are otherwise needed only to regenerate the fixtures with
-`jobs/rscripts/reference_values.R`, which the test suite never runs.
+Runs are written to `./output/<job>_<identity>_<timestamp>/`, holding the figures, the materialized artifacts
+and the provenance record; `--output-root` sends them elsewhere. `make promote` copies one run's
+provenance (not its artifacts) into the committed tree, so a published figure stays auditable.
 
-Tests that need R carry the `r` marker and skip without it. `make test-r` runs them;
-`make test` excludes them, so the default gate stays green on a machine with no R. A
-container image would remove this step entirely and is recorded as a later option in
-`spec/quebraplan.md`, not as something this project ships today.
+The jobs under `jobs/active/` read embargoed records. Without them, a run stops with
+`DataUnavailable`, which names the file, every location tried, and whether the file is embargoed
+(listed in `data/real_private/MANIFEST.toml`) or the path is simply wrong.
 
-Running a job
+### Data layout
 
-```bash
-quebra run jobs/active/t2star_q1_070423.py   # run one job
-quebra run --all                             # every job except those opting out
-quebra inspect jobs/active/km_poster_6d2s.py # print the graph without running it
+| Directory | Contents | In git |
+|---|---|---|
+| `data/real_private/` | embargoed records | only `MANIFEST.toml` (filename, sha256, provenance) |
+| `data/real_public/` | records that may be redistributed | yes, if small |
+| `data/simulated/` | regenerated payloads | only seeds and manifests |
+
+The data root resolves from `--data-root`, then `QUEBRA_DATA_ROOT`, then `data_root` in a
+`quebra.toml` at or above the working directory, then a per-user data directory. A root named
+explicitly that does not exist is an error, never a silent fallback.
+
+## Documentation
+
+Reference documentation lives in [`docs/`](docs/); it is not published as a site yet.
+
+- [Writing a job](docs/WRITING_A_JOB.md): start here to run something
+- [Writing a schema](docs/WRITING_A_SCHEMA.md): point the tool at your own data
+- [Time semantics](docs/TIME_SEMANTICS.md), [panel contract](docs/PANEL_CONTRACT.md),
+  [figure standard](docs/FIGURE_STANDARD.md), [jobs](docs/JOBS.md),
+  [gold standard](docs/GOLD_STANDARD.md)
+- [The checks](docs/iid_checks/iid_checks_basics.md), one page per check, the
+  [bench](docs/iid_checks/BENCH.md) and their [limitations](docs/iid_checks/LIMITATIONS.md)
+
+## Contributing and support
+
+Feedback is welcome, particularly from anyone who runs long characterization campaigns and
+disagrees with how QUEBRA frames the problem. Open an
+[issue](https://github.com/seraconti/quebra/issues) for bugs, questions, and anything that is
+merely confusing. See [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[code of conduct](CODE_OF_CONDUCT.md).
+
+QUEBRA is developed with AI coding agents working from written specifications, with every change
+reviewed and committed by the author; the session transcripts are kept in `spec/ledger/`.
+
+## Citing
+
+[`CITATION.cff`](CITATION.cff) is the machine-readable form, behind GitHub's "Cite this
+repository" button.
+
+```bibtex
+@software{conti_quebra_2026,
+  author  = {Conti, Sera},
+  title   = {{QUEBRA}: Quantum Engineering Reliability Analysis},
+  version = {0.1.0},
+  year    = {2026},
+  url     = {https://github.com/seraconti/quebra}
+}
 ```
 
-`quebra` is installed by pip as a console script. It anchors on the working directory: run
-directories are written to `./output`, and `--all` discovers every job under `./jobs` and
-runs all of them except those declaring `JOB_SWEEP = False`, which is how the composites opt
-out. Pass `--output-root` to send them elsewhere.
+## Licence
 
-inspect is the fastest way to understand a job: it prints the step graph, including the
-keyword arguments that affect each result, without computing anything.
-
-Each run writes into a directory named by its content identity, holding the figures, the
-materialized artifacts, and the provenance record.
-
-### Documentation
-
-Reference documentation is in docs/. Start with WRITING_A_JOB.md to run something, then
-WRITING_A_SCHEMA.md to point the tool at your own data; the rest covers time and clock
-semantics, the panel contract, and the figure standard. It is not published as a site yet.
-
-Citing
-
-CITATION.cff carries the machine-readable form, which GitHub renders as a “Cite this
-repository” button.
-
-Licence
-
-GNU General Public License v3.0 or later. See LICENSE.
+GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
