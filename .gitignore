@@ -61,3 +61,6 @@ output_backup2/
 tests/_race_tmp/
 tests/test_zz_probe_tmp.py
 tests/test_zz_record_probe_tmp.py
+
+# Copyrighted source PDFs for the gold-standard check; never tracked.
+spec/sources/

@@ -5030,3 +5030,786 @@ skip vs the stated 599/2 is test_artifact_guard.py:319, which needs output/, exc
 the mirror). `pytest --collect-only -q`: 601. No planted files left in tests/ in either tree.
 
 ## Group B verdict: DO NOT SHIP (no CRITICAL; 5 IMPORTANT, all text or latent)
+
+---
+
+SCOPE: README.md, pyproject.toml, docs/iid_checks/C3_serial_copula.md, spec/quebraplan.md,
+src/quebra/analyzers/instrument_validation.py, tests/test_instrument_validation.py,
+jobs/bench/results/instrument_report.md  (CHECKPOINTS 7.5 + 7.7 slice)
+COMMIT: cf55810
+## Manifest
+- [ ] pyproject.toml (+0/-2)
+- [ ] README.md (+30/-0)
+- [ ] docs/iid_checks/C3_serial_copula.md (+30/-0)
+- [ ] src/quebra/analyzers/instrument_validation.py (+?/-?)
+- [ ] tests/test_instrument_validation.py (+14/-?)
+- [ ] jobs/bench/results/instrument_report.md (+1/-1)
+- [ ] spec/quebraplan.md (+85/-0)
+## Reviewed
+## Findings
+
+---
+
+# CHECKPOINT 7.4 review - slice: the two r-marker test files
+
+SCOPE: tests/test_r_cross_implementation.py, tests/test_checks_c3_bridge.py
+COMMIT: cf55810
+FREEZE: `git diff -- . ':(exclude).claude/review-findings.md' | md5sum` = 70349dcd1030b0194026ea0ad9c29567
+        at start. (Bare `git diff | md5sum` moved only because a CONCURRENT reviewer
+        appended 17 lines to this ledger. Source tree unmoved.)
+BASELINE in scratch mirror: `pytest -m r -q` 3 passed, 604 deselected => collect 607.
+
+## Manifest
+- [ ] tests/test_r_cross_implementation.py  (+97/-0)  DONE
+- [ ] tests/test_checks_c3_bridge.py        (+40/-0)  DONE
+
+## Reviewed
+
+## Findings
+
+---
+
+SCOPE: CHECKPOINT 7.6 slice - src/quebra/analyzers/check_ledger.py,
+src/quebra/analyzers/independence_survey.py, tests/test_check_ledger.py
+COMMIT: cf55810   TREE HASH AT START: 70349dcd1030b0194026ea0ad9c29567 (matches, frozen)
+
+## Manifest
+- [ ] src/quebra/analyzers/check_ledger.py  (+14/-0)
+- [ ] src/quebra/analyzers/independence_survey.py  (+0/-1)
+- [ ] tests/test_check_ledger.py  (+79/-0)
+
+## Reviewed
+
+## Findings
+
+### src/quebra/analyzers/independence_survey.py  (+0/-1)
+MINOR (verified clean) | independence_survey.py:305 | deleted `"c3_excluded": True`.
+`git grep -n c3_excluded -- src/ jobs/ tests/` exits 1; `grep -rn c3_excluded .` finds it
+only in spec/specrboundary07.md (the spec that ordered the deletion) and this ledger. No
+test asserted it. Shipped artifact meta now reads
+`{'alpha': 0.05, 'n_datasets': 34, 'n_instruments': 10}`. Correct and complete. | none
+
+IMPORTANT | independence_survey.py:148-157 `rejection_share_of_decided` | For any instrument
+whose `bench_accepted` is never True, `pass` is UNREACHABLE (`_verdict` sends every
+non-rejection to `underpowered`), so `fail/(pass+fail)` is identically 1.0 - a constant, not
+a measurement. MEASURED on the shipped artifact
+output/independence_survey_d6fe38_20260927_095456/independence_survey_grids.pkl:
+C3 in_spec pass=0 fail=46 share=1.000000; C3 calendar pass=0 fail=14 share=1.000000
+(46+14 = the 60 fails this checkpoint is about). Same degeneracy at C1-asymptotic in_spec
+(pass=0 fail=8 share=1.000000), where `bench_acceptance_at_n` returns bench_accepted=False
+at ALL SIX grid n. This number reaches a shipped caption:
+plots/independence_survey_plot.py:266-268 prints
+`f"{g.counts['fail']} of {g.counts['pass']+g.counts['fail']} decided cells reject"`, so the
+C3 figure states "46 of 46 decided cells reject". AGENTS.md section 4: that is a pooled/forced
+100%, not a measured rate. | Return NaN (or a distinct sentinel) when `pass` is structurally
+unreachable for the instrument, or drop the share for grids with no reachable `pass`.
+
+MINOR | independence_survey.py:309-326 `survey_summary` | No caller anywhere in src/, jobs/
+or plots/; the only reference is tests/test_independence_survey.py:382 asserting its row
+count. A public function whose sole consumer is a test. | Either wire it to the sink that
+needs it or note it as debug-only in the docstring.
+
+### src/quebra/analyzers/check_ledger.py  (+14/-0)
+VERDICT DECISION (weight 2): keeping `fail` is RIGHT. Demoting an uncalibrated rejection to
+`underpowered` would bucket "the statistic landed in the tail" with "we had no power and saw
+nothing", which is a strictly worse claim and hides a finding - against AGENTS.md section 5
+("a reader is better served by a band they are told not to trust than by a missing one").
+A sixth verdict is the principled answer but is not free: plots/theme.py:304-319
+`VERDICT_COLORS` has six fixed keys and `verdict_color` RAISES on an unknown verdict, and
+`independence_survey.VERDICT_ORDER` is a fixed 5-tuple keyed by `counts`, `_pivot_verdicts`
+and two legends. Out of scope for 7.6.
+
+IMPORTANT | check_ledger.py:301-307 vs panels/check_ledger.py:118 | FIX EVERY SITE OF THE
+CLASS (AGENTS.md section 4). The defect class is "`bench_accepted is None` handled unlike
+`is False`". The diff fixes it in `_verdict`'s note and leaves the live twin in the render
+layer: `hatch=MISCALIBRATED_HATCH if bench_ok is False else None`. A C3 cell (None) draws
+with NO hatch, pixel-identical to a calibrated cell, and the legend
+(panels/check_ledger.py:136-142) has only "bench: miscalibrated at this n" - no entry for
+"no bench cell". This is LIVE, not latent: `CheckLedgerInputs.include_c3` defaults to True
+(check_ledger.py:190), jobs/composite/check_ledger_q1.py:100-116 does not override it and
+draws `CheckLedgerPanel`, and panels/_check_ledger_render.py:21 carries an explicit
+`"c3_serial_copula": "C3 cop"` column abbreviation. The panel's own comment at
+check_ledger.py:113-117 makes the argument against this diff's chosen remedy: "The hatch says
+so at a glance; burying it in a notes column would not." | Hatch (differently) when
+`bench_ok is None` too, and add the legend entry. Note the docstring at
+_check_ledger_render.py:53-55 already promises None "is a different thing from False".
+
+MINOR | check_ledger.py:291-299 | The 9-line comment for a 5-line branch ends with change
+history: "An earlier version named only the miscalibrated case, so an UNBENCHED check's
+rejection was indistinguishable from a calibrated one." AGENTS.md section 10 bans exactly
+this shape in prose you write ("debugging history: they date on the first refactor"). It also
+restates the pre-existing 2-line comment above it. | Drop the last sentence and the
+restatement; keep the constraint ("no bench cell means no measured level").
+
+MINOR | check_ledger.py rejection branch reach | The new note reaches the materialized
+per-dataset ledger (`notes` is in LEDGER_COLUMNS:115, materialized at
+jobs/composite/check_ledger_q1.py:122) and `check_outcome.OutcomeGrid.notes`, but NOT the
+survey: `InstrumentGrid` carries verdicts/p_values/n_events only, no notes
+(independence_survey.py:135-141). The survey figures - the artifact that actually drew the
+60 red cells - are told only by the caption at independence_survey_plot.py:99-103 and
+:274-275. Those captions are accurate today, so this is reach, not error. | none required;
+noted so nobody reads the note as covering the survey.
+
+MINOR (latent, not live) | kaplan_meier.py:172-186 `check_summary()` | Tallies verdicts with
+no calibration distinction, so an uncalibrated `fail` would count as a plain `fail` in a
+band caption. Not reachable today: km_with_checks_6d2s.py:73 sets
+`RUN_SET = PERMUTATION_KEYS`, and check_outcome.py:64-67 filters on
+`key[1] == CALIB_PERMUTATION`, which excludes C3 (`r_copula`). | none now; will bite if a job
+puts C3 in a band's run-set.
+
+### tests/test_check_ledger.py  (+79/-0)
+
+GUARD IS REAL (weight 1). The derivation is not a re-type: `benched` comes from
+`pd.read_csv(size_table.csv)["check"].unique()`, `surveyed` from `SURVEY_KEYS`. MUTATIONS
+RUN in a scratch mirror (PYTHONPATH=mirror/src, real tree untouched):
+  M-A  append a c3_serial_copula row to size_table.csv -> RED
+       `assert {'c3_serial_copula'} == set()`
+  M-B  add ("c7_brand_new","permutation","") to SURVEY_KEYS -> RED
+       `assert {'c3_serial_copula'} == {'c3_serial_c...c7_brand_new'}`
+  M-C  delete the new `elif bench_accepted is None` branch -> RED, and ONLY the new test
+       (`1 failed, 19 passed` over the whole file)
+  M-D  add c3 to battery.ROW_KEYS unbenched -> RED (assert 3 fires)
+All four reverted; mirror diff-clean against the real tree.
+
+MINOR | tests/test_check_ledger.py:544 | `assert UNCALIBRATED_CHECKS <= {key[0] for key in
+SURVEY_KEYS}` CANNOT FAIL. If assert 1 passed then `UNCALIBRATED_CHECKS == surveyed - benched`,
+which is a subset of `surveyed` by construction. A dead assertion - the shape AGENTS.md
+section 7 names ("a test can cite a source and still be unable to fail"). | Delete it.
+
+MINOR | tests/test_check_ledger.py:545-547 | Assert 3 duplicates an existing test. M-D makes
+BOTH this and `tests/test_independence_survey.py:235-241
+::test_c3_is_not_in_the_row_schema_so_it_cannot_be_bench_scored` go red on the same mutation
+(measured, `2 failed`). Same oracle, same subject, two files - AGENTS.md section 7 says that
+is one file. The new test's unique contribution is assert 1 only, and its subject
+(SURVEY_KEYS vs the bench tables) is test_independence_survey.py's, not this file's stated
+subject ("the ledger's verdict rule", module docstring line 1). | Drop assert 3, or move the
+whole test next to its twin.
+
+MINOR | tests/test_check_ledger.py:533-542 | The guard's oracle is coarser than the property
+it claims. The ledger's real uncalibrated condition is "no match in `bench_acceptance_at_n`
+output on (check, calibration, variant, clock, n_target)" - that frame is FILTERED by
+null_arms, `censoring_target <= ENVELOPE_MAX_CENSORING` and `n_used >= MIN_SUPPORT_FRACTION *
+n_replicates` (calibration_summary.py:430-436). A check could have rows in size_table.csv that
+are all filtered out, or be benched at only some grid n, and the test would call it "benched"
+while every ledger cell still gets bench_accepted=None. I MEASURED the gap is empty today:
+all 9 ROW_KEYS x 2 clocks x 6 grid n = 108 cells have an acceptance row, 0 missing. | Derive
+`benched` from `bench_acceptance_at_n(size_table)` crossed with ROW_KEYS x clocks x grid
+instead of from the raw `check` column; it is the same 8 lines and pins the real condition.
+
+MINOR | tests/test_check_ledger.py:519 | `import pandas as pd` inside the test body shadows
+the module-level `import pandas as pd` at line 15. | Delete the local import.
+
+MINOR | tests/test_check_ledger.py:552 | Docstring says "Oracle: AGENTS.md section 5 - a
+non-rejection is not evidence". Section 5 does not contain that sentence; its nearest claim
+is "Empty means NOT ASSESSED ... a different claim from 'assessed and nothing rejected'",
+which is about an empty outcome, not a non-rejection. AGENTS.md section 10 bans inventing a
+locator. Also, section 7's oracle list is analytic value / reference implementation /
+simulation truth - a policy doc is none of the three (arguably fine here, since the assertion
+is on a note string, not a statistical result). | Cite the sentence that exists, or cite
+section 4 (fix every site of a class), which is what this test actually guards.
+
+## Reviewed
+- [x] src/quebra/analyzers/check_ledger.py
+- [x] src/quebra/analyzers/independence_survey.py
+- [x] tests/test_check_ledger.py
+
+
+### pyproject.toml - reviewed, no findings
+Deleting `r = []` breaks nothing measured: `python -m deptry .` -> "No dependency issues
+found"; `tomllib` parse leaves extras `['bench','dev']`; `.github/workflows/ci.yml:32`
+installs `.[dev]`, `scripts/acceptance.sh:63-64` installs the wheel plus pytest; no
+`quebra[r]` install route survives outside prose that denies it.
+
+### README.md
+IMPORTANT | README.md:142-143 | "`randtests`, `XICOR` and `energy` are needed only to
+  regenerate the committed reference fixtures ... which the test suite never runs" is false
+  for the `make test-r` route the next paragraph recommends.
+  `tests/test_r_cross_implementation.py:333-368` (`r`-marked) runs
+  `Rscript -e 'cat(... packageVersion("XICOR"), packageVersion("energy"),
+  packageVersion("randtests") ...)'` with `check=True`. Measured:
+  `Rscript -e 'packageVersion("definitelyNotInstalled")'` exits 1, so a missing package is a
+  CalledProcessError -> test FAILURE, not a skip. A reader who follows the README (R +
+  copula only) and runs `make test-r` gets a red gate. Makefile:62-63 carries the same wrong
+  sentence (out of this slice). | Say the three extra packages are required by `make test-r`
+  too, or make that one test skip on a missing package.
+MINOR | README.md:150-151 | The pre-existing "The copula serial-independence check
+  additionally needs R with the copula package. Without R that one check reports not
+  computed" now sits at the END of the new section and repeats its opening paragraph
+  verbatim in substance. | Delete the older paragraph.
+Verified true: C3 is the only R check and goes out of process
+  (`analyzers/checks/c3_serial_copula.py:43-46,208`); the rpy2 rationale matches that
+  module's docstring lines 8-11; the package imports with no Rscript
+  (`tests/test_checks_c3_bridge.py:113-147`); `jobs/rscripts/reference_values.R` is invoked
+  by nothing in the suite (grep: only docstring mentions); `r` tests skip on a missing
+  interpreter (`conftest.py:113-132`); `make test` excludes `r`, `make test-r` selects it.
+
+### docs/iid_checks/C3_serial_copula.md
+All four delegation claims verified against code, not prose:
+  1. statistic not reimplemented: `src/quebra/analyzers/checks/c3_serial_copula.R:44,50`
+     calls `copula::serialIndepTestSim` / `serialIndepTest`; the Python side only marshals.
+  2. subprocess + CSV, not rpy2: `c3_serial_copula.py:43-46`, `:202-236`; the fresh-interpreter
+     pin is `tests/test_checks_c3_bridge.py:113-147`, which hides `Rscript` in a subprocess.
+  3. `r`-marked fixture pin: `tests/test_r_cross_implementation.py:303-329` asserts BOTH
+     `serial_indep_global_statistic` and `serial_indep_global_p_value`;
+     `jobs/reference/r_reference_values.csv:42-46` carries seed 707, N 1000, lag.max 5, and
+     `jobs/rscripts/reference_values.R:163-164` matches (`set.seed(707)`, `N = 1000`,
+     `lag.max = 5`).
+  4. UNCALIBRATED: `battery.ROW_KEYS` has 9 entries, none C3 (`battery.py:63-79`);
+     `grep -ci c3` is 0 in both `jobs/bench/results/size_table.csv` and `power_table.csv`;
+     `check_ledger._verdict:300-306` writes the "UNCALIBRATED: no bench cell ..." note on
+     every rejection; `tests/test_check_ledger.py:518` exists under the cited name and reads
+     `size_table.csv`. No word in the section asserts calibration, power or level except as
+     a denial. No em dashes.
+MINOR | docs/iid_checks/C3_serial_copula.md:8-9 | "Porting it was considered and declined"
+  reproduces the reasoning of `spec/quebraplan.md` row 6.2 (line 278) but cites no locator,
+  in a repo whose rule is that a claim names its source. | Cite quebraplan 6.2.
+
+### src/quebra/analyzers/instrument_validation.py + jobs/bench/results/instrument_report.md
+IMPORTANT | src/quebra/analyzers/instrument_validation.py:566-575 | Tier 4's own definition
+  is "does it agree with an independent implementation OF THE SAME STATISTIC"
+  (instrument_validation.py:11, instrument_report.md:16). For C3 there is no second
+  implementation: the fixture was produced by `copula::serialIndepTest`
+  (`jobs/rscripts/reference_values.R:164-165`) and the bridge calls
+  `copula::serialIndepTest` (`checks/c3_serial_copula.R:50`). What the new evidence pins is
+  BRIDGE FIDELITY (argument order, CSV round trip), which is a real property but not tier
+  4's question. The row directly above it, C2, is `partial` for a strictly weaker version of
+  the same flaw ("tier-1 evidence wearing a tier-4 label") - C2 at least has a second
+  implementation. `pass` is the strongest token in the table and the honesty now lives only
+  in the detail string. | `TIER_PARTIAL` with the identical detail, or add one clause to the
+  tier-4 legend saying a delegated instrument's tier-4 cell means bridge fidelity.
+MINOR | src/quebra/analyzers/instrument_validation.py:571-575 | The detail names the CSV but
+  not the test. `tests/test_stale_references.py` walks `src/` for test-module citations, so
+  naming `tests/test_r_cross_implementation.py` in the detail would put this claim under an
+  existing guard for free. Today nothing anywhere names that test (grep: one hit, its own
+  `def`). | Add the module path to the detail string.
+Verified: the shipped `jobs/bench/results/instrument_report.md` is byte-identical to what
+  `python jobs/bench/instrument_report.py` produces from the current source (regenerated in
+  a scratch mirror and diffed; no output).
+
+### tests/test_instrument_validation.py - the guard that moved (mutations run)
+Scratch mirror at scratchpad/m1 (src+tests+jobs+conftest+pyproject, never the real tree).
+Baseline: `pytest tests/test_instrument_validation.py` 15 passed.
+  M-B (verdict `pass`, detail "the bridge agrees with the R reference on the statistic and
+  the p-value", no filename): RED at test_instrument_validation.py:253. The guard has teeth
+  in the direction its docstring claims.
+  M-A (verdict back to TIER_ABSENT with the exact removed text "circular as stated: 'it IS
+  the R implementation' compares R to itself"): GREEN. Acceptable in principle - an `absent`
+  cell claims no evidence - but the file's title property is
+  "no_tier_verdict_claims_evidence_that_does_not_exist", and the C3 half of it is now
+  conditional on one verdict token.
+IMPORTANT | tests/test_instrument_validation.py:251-257 | The tier-4 `pass` rests on an
+  `r`-marked test that the default gate never runs and that nothing names, so the claim can
+  outlive its evidence with every gate green. MEASURED: renaming
+  `test_the_bridge_reproduces_the_reference_serial_indep_values` and deleting its p-value
+  assertion (the half the tier row calls load-bearing: "Both are needed") produced an
+  IDENTICAL failure set to the unmutated mirror under
+  `-m "not slow and not heavy and not r and not real"` (diff of the two FAILED lists: empty).
+  `make test` excludes `r`; `make test-r` would still pass with the p-value half gone. | Name
+  the test module in the tier detail so `test_stale_references` resolves it, and assert in
+  this guard that the cited module exists.
+MINOR | tests/test_instrument_validation.py:253-257 | The assertion is a text match on the
+  detail string. It cannot distinguish "the artifact is named and the comparison was made"
+  from "the artifact is named". That is inherent to a report test; worth one line saying so
+  rather than leaving the docstring's "on real evidence" to carry it.
+
+### spec/quebraplan.md
+All measured numbers in 7B verified read-only against
+`output/independence_survey_d6fe38_20260927_095456/independence_survey.pkl`:
+  34 datasets (meta n_datasets=34); C3 grids 2 x (34 x 10) = 680 cells; 248 non-null
+  p-values (124 in_spec + 124 calendar); verdict `fail` 60 = 46 in_spec + 14 calendar. Exact.
+  `C3_N_NULL_SIM = 200` and `INCLUDE_C3 = True` at `jobs/composite/independence_survey.py:117-118`,
+  and the run's own provenance records `include_c3=True, c3_n_null_sim=200`. 30 minutes matches
+  the run dir (09:54:56) against its artifacts (10:24). `ROW_KEYS` nine entries, none C3: exact.
+  Cited defects all reproduce: `jobs/bench/runner.py:209` counts `seen` unconditionally while
+  `:210-211` guards `hits` on `p_value is not None`; `:169`, `:181`, `:200` catch only
+  `(ValueError, KeyError)`. Section-6 "Adopt-lite, later" is quebraplan:602, section-4 optional
+  image is :552, the ~30 min ACM/ICSE warning is :602, `r-lib/actions/setup-r` is
+  specrboundary07.md:168,512. No em dashes.
+IMPORTANT | spec/quebraplan.md:278 | Row 6.2 still PRESCRIBES "Keep `copula::serialIndepTest`
+  behind `pip install quebra[r]`" and justifies it with "`[PRACTICE]`: core/extras splits ...
+  are standard, and `rpy2` itself ships this pattern" - the two claims the new item 11 (:659)
+  says can never work and that this same commit acted on by deleting the extra. The doc now
+  contradicts itself, and item 11 lists its collisions with sections 6 and 4 while missing the
+  one row that names the deleted install route. `spec/specrboundary07.md:126` already marks it
+  "**Reshaped** by R7.4"; quebraplan does not. | One clause on row 6.2 pointing at 7.11.
+MINOR | spec/quebraplan.md:662,678 | The new item is numbered 11 and inserted ABOVE item 10,
+  so the source list reads 9, 11, 10. A renderer that renumbers will show the container item
+  as 10 and the KM-gate item as 11, swapping the identifiers. | Put it after item 10 and
+  renumber.
+MINOR | spec/quebraplan.md:684 | "`report.py:658-673`" - the shared-permutation-set assertion
+  is at `jobs/bench/report.py:666` (and again at :677); :658 is inside Criterion 3's prose
+  about Kvaloy & Lindqvist. | Cite :665-673, or :666.
+MINOR | spec/quebraplan.md:698-709 | 7B opens with an Implemented/Calibrated status table.
+  CLAUDE.md section 8 bans status tables in agent-facing docs because they go stale, and this
+  one duplicates CLAUDE.md's own "Implemented today / Not implemented" list, so there are now
+  two places to update when Nelson-Aalen or MCF lands. | Keep the C3 prose, drop the table or
+  make it a sentence.
+
+## Reviewed
+- [x] pyproject.toml
+- [x] README.md
+- [x] docs/iid_checks/C3_serial_copula.md
+- [x] src/quebra/analyzers/instrument_validation.py
+- [x] jobs/bench/results/instrument_report.md
+- [x] tests/test_instrument_validation.py
+- [x] spec/quebraplan.md
+
+### line-number corrections to the block above
+instrument_validation.py tier row: 567-575 (not 566-575).
+quebraplan item 11 begins at :662 (not :659); the status table is :700-712; the
+`report.py:658-673` citation is at quebraplan:748; the 9/11/10 ordering is item 11 at :662
+ahead of item 10 at :681.
+IMPORTANT | tests/test_r_cross_implementation.py:11 | module docstring still reads "**The
+  suite never runs R.**" while this same file now holds three tests that do. Measured:
+  `pytest -m r -q` runs 3 tests, all from this file, invoking /usr/bin/Rscript. The
+  changeset promoted the instrument_validation.py TierRow from TIER_ABSENT to TIER_PASS for
+  exactly this reason and missed the two in-file twins (AGENTS.md sec 4, fix every site of a
+  class). | Rewrite: the non-`r` tests read committed fixtures and never run R; the `r`
+  tier does. (The same paragraph carries a pre-existing garbled clause at :12-13, "which
+  was the may be the state of a reviewer's machine" - fix while there.)
+IMPORTANT | tests/test_r_cross_implementation.py:237 | test_the_c3_reference_is_pinned_with_
+  its_simulation_seed's docstring says "C3's own agreement with this reference is a separate
+  exercise: it needs R at test time, which this suite refuses to require." That exercise now
+  lives 67 lines below at :304. | Point the sentence at the new test.
+IMPORTANT | tests/test_r_cross_implementation.py:323 | test (a) drives the PRIVATE
+  `c3._invoke_rscript`, not the public `c3.run` that check_ledger.py:540 calls, so the
+  argument plumbing BETWEEN them is unpinned. MEASURED (mutation 11): change run()'s call to
+  `_invoke_rscript(x, max_lag, n_null_sim, timeout_s, seed)` and
+  test_r_cross_implementation + test_checks_c3_bridge + test_check_ledger are all GREEN
+  (53 passed, 1 skipped). The shipped row would then carry notes="lag.max=5 N=1000 seed=707"
+  beside a p-value R computed at seed 1000 / N 707. Same defect class as R7.4's own
+  MUTATION 1, one frame up, on the production path. | Drive the test through
+  `c3.run([Segment(x=x, tau=float(x.sum()))], max_lag=lag_max, seed=seed, n_null_sim=n_sim)`.
+  VERIFIED free: that call returns statistic 0.00739025142047825 and p 0.791708291708292,
+  matching the fixture exactly, and notes "lag.max=5 N=1000 seed=707".
+IMPORTANT | tests/test_checks_c3_bridge.py:113 | named "the package imports", covers 19 of
+  the 84 modules under src/quebra. MEASURED (mutation 10): an import-time
+  `if shutil.which("Rscript") is None: raise ImportError` planted in
+  src/quebra/analyzers/instrument_validation.py leaves the test GREEN. That module and
+  independence_survey.py are the two most R-adjacent in the tree, both modified by this same
+  checkpoint, and neither is reached. No other test imports with Rscript hidden. | Add both
+  modules to the `-c` string, or walk `pkgutil.walk_packages`.
+MINOR | tests/test_r_cross_implementation.py:378 | "the ledger passes no `timeout_s`, so its
+  branch is unreachable from a real timeout" - no `timeout_s` means the 900.0 DEFAULT.
+  c3_serial_copula.run's own docstring describes a row exceeding it becoming `not computed`,
+  and check_ledger.py:555 catches TimeoutExpired. Reachable in production, just not cheaply
+  in a test. | "cannot be driven from a test, because the ledger exposes no way to lower the
+  900 s default".
+MINOR | tests/test_r_cross_implementation.py:365 | non-strict `zip` over four package names
+  and `out[2:]`: a short probe answer silently asserts fewer packages. Demonstrated with a
+  two-version `out`: XICOR and energy asserted, randtests and copula silently skipped. Not
+  live (check=True plus packageVersion's own error), and ruff's select = ["E4","E7","E9","F"]
+  has no B905 to catch it. | `strict=True`.
+MINOR | tests/test_r_cross_implementation.py:334 | compares major and minor only, because
+  jobs/rscripts/reference_values.R:53-59 records only those. R7.4's three-way stop condition
+  asks the reader to run this FIRST to rule out "R or copula having moved under it", and a
+  `copula` PATCH bump is the likeliest cause of a p-value drift (the spec's own open question
+  3 says so). This cannot see it. | Record full version strings in the fixture, or say in the
+  docstring that patch drift is invisible here.
+MINOR | tests/test_r_cross_implementation.py:389 | `pytest.raises(subprocess.TimeoutExpired)`
+  does not pin WHICH subprocess timed out. `_invoke_rscript` first calls `r_library_paths()`,
+  whose own `timeout=60` raises the same type, so a stalled libPaths probe passes this test
+  for the wrong reason. | assert `excinfo.value.timeout == 0.5`.
+MINOR | tests/test_checks_c3_bridge.py:141 | the child inherits no HOME. Harmless today
+  (measured: platformdirs is not among the 19 modules imported) but quebra.core.paths uses
+  platformdirs, so the first import reaching it turns this red for a non-R reason. | add
+  `"HOME": os.environ.get("HOME", str(tmp_path))`.
+MINOR | tests/test_checks_c3_bridge.py:143 | does not assert WHICH quebra the child imported.
+  Measured: `'' in sys.path` is True in the pytest parent, so `":".join(sys.path)` carries an
+  empty PYTHONPATH element, and `-c` puts CWD at sys.path[0] regardless. Resolves correctly
+  today (child reported the tree under test). | have the child print quebra.__file__ and
+  compare against the parent's.
+MINOR | tests/test_r_cross_implementation.py:378 | "recorded as untested in the spec's Not
+  done" is a phase-artifact pointer in a permanent file (AGENTS.md sec 10 bans spec/phase
+  identifiers in docstrings). Softer than "SPEC 0008 R8.x" but it dates the same way. | state
+  the constraint, drop the pointer.
+INFO | tests/test_r_cross_implementation.py:304 | mutation 4 (write the input CSV at "%.6g"
+  instead of repr) stays GREEN: serialIndepTest is rank-based, so serialisation precision is
+  invisible to both assertions. Not a defect, but the bridge's write precision is unpinned
+  by anything.
+
+## MUTATIONS MEASURED BY THIS REVIEW (11), in a scratch mirror at scratchpad/rmir
+M1 swap n_sim/seed argv in _invoke_rscript -> RED on the P-VALUE only (statistic assertion
+   passed first). M1-counterfactual: a statistic-only copy of test (a) -> GREEN. R7.4's
+   stated reason for asserting both quantities REPRODUCES exactly.
+M2 delete env["R_LIBS"] -> RED ("the 'copula' package is required for C3"), and it fails
+   rather than skipping, which is the `requires_rscript` fixture's stated contract.
+M3 max_lag+1 on argv -> RED on the statistic.
+M4 input CSV at "%.6g" -> GREEN (rank statistic; see INFO above).
+M5 hardcode timeout=900 ignoring timeout_s -> RED (DID NOT RAISE).
+M6 run() swallows TimeoutExpired into a declined row -> RED (DID NOT RAISE).
+M7 fixture meta,copula_minor 1->9 -> RED for the new test (b); the pre-existing
+   test_the_fixture_records_which_r_produced_it stayed GREEN. R7.4(b)'s premise that the
+   `>= 0` rows are vacuous is confirmed, and keeping both is right.
+M8 module-level Rscript probe in c3_serial_copula -> RED.
+M9 module-level ImportError on missing R in check_ledger -> RED.
+M10 same, in instrument_validation.py -> GREEN. Coverage gap, see IMPORTANT above.
+M11 run() passes seed/n_null_sim swapped to _invoke_rscript -> GREEN. See IMPORTANT above.
+
+## ACCEPTANCE CHECKS (all measured, scratch mirror)
+`pytest -m r -q` with Rscript present: 3 passed, 604 deselected, exit 0.
+With Rscript hidden behind a symlink farm (python present, no Rscript): 3 skipped, 604
+  deselected, each naming the fixture's skip reason. The non-`r` import test still passes
+  there (test_checks_c3_bridge.py: 8 passed).
+With a MOCK Rscript on PATH (exit 0, writes nothing): all 3 FAILED. None passes with a mock.
+Markers: the three `r` tests carry {'r','statistical'} - exactly one tier plus the cost
+  marker. test_the_package_imports_with_no_rscript_on_path carries {'unit'} and NOT `r`, so
+  it runs in CI. Correct.
+Prose: no em or en dashes, no banned words in the added lines.
+Budget: +4 collected from these two files against R7.4's stated +3..+5.
+Collect restored to 607 in both the mirror and the real tree. Mirror diffed clean against
+  the repo (src, tests, jobs/reference). No files planted in the repo.
+FREEZE at end: `git diff -- . ':(exclude).claude/review-findings.md' | md5sum` =
+  70349dcd1030b0194026ea0ad9c29567. Unmoved.
+
+## Slice verdict: DO NOT SHIP (no CRITICAL; 4 IMPORTANT, 7 MINOR)
+
+### docs/iid_checks/C3_serial_copula.md - two more
+MINOR | docs/iid_checks/C3_serial_copula.md:5-6 | "the reference implementation of the
+  Genest-Remillard empirical-copula test" is an unsourced superlative; the doc carries no
+  year, DOI or section for Genest and Remillard anywhere (line 54 names them with no
+  locator either, pre-existing). | "the only maintained implementation" with the citation,
+  or drop "reference".
+MINOR | docs/iid_checks/C3_serial_copula.md:3-33 | The new preamble restates two things the
+  doc already said: claim 2 duplicates the "A bridge, not bindings" paragraph at :66-70
+  near-verbatim, and claim 4 duplicates :46-50 ("no size or power evidence, because the
+  bench never ran it and `battery.ROW_KEYS` has no C3 row"). The doc's own line 44 states
+  the principle being broken: "`analyzers/checks/c3_serial_copula.py` is the one place the
+  cost is quoted, so that a second copy cannot drift from it." | Make the lower sections
+  point up at the preamble rather than repeat it.
+
+## Slice verdict: DO NOT SHIP (no CRITICAL; 4 IMPORTANT, all text or drift-risk)
+Freeze re-verified at the end: `git diff -- . ':(exclude).claude/review-findings.md' |
+md5sum` = 70349dcd1030b0194026ea0ad9c29567, unchanged.
+
+================================================================================
+SCOPE: PHASE 7 COMMIT GROUP 1 (SPEC 0009 checkpoints 9.1/9.2/9.3) - paths:
+  src/quebra/plots/targets.py, src/quebra/plots/theme.py,
+  tests/test_style_baseline.py, spec/specpresentation09.md,
+  tests/test_figure_determinism.py (untracked new), tests/test_poster_font.py (untracked new)
+COMMIT: f134647
+FREEZE at start: git diff -- . ':(exclude).claude/review-findings.md' | md5sum =
+  8f12dc96c904ac918503953532f65632  (matches stated baseline)
+## Manifest
+- [ ] spec/specpresentation09.md  (+29/-?)
+- [ ] src/quebra/plots/targets.py  (+21/-?)
+- [ ] src/quebra/plots/theme.py  (+73/-?)
+- [ ] tests/test_style_baseline.py  (+23/-?)
+- [ ] tests/test_figure_determinism.py  (new, 113 lines)
+- [ ] tests/test_poster_font.py  (new, 65 lines)
+## Reviewed
+## Findings
+
+### MEASUREMENTS (all run by this review, mirrors under scratchpad/{mir,mirrepo})
+Ratchet counts, repo state as it ships (glob src/quebra/{panels,plots}/*.py minus theme.py):
+  bare-key `fontsize=`            -> 17     (claim verified)
+  numeric-literal, both spellings -> 15     (claim verified)
+  dict spelling with a literal    -> 0      ("adds none" verified)
+  hex 6-digit                     -> 0
+The TWO sites dropped by the narrowing are `fontsize="x-small"` at plots/allan_plot.py:123
+  and :132. They are NOT `fontsize=theme.X`. The only two theme-reference sites are the DICT
+  ones (check_outcome_plot.py:138, independence_survey_plot.py:144) and the bare-key pattern
+  never matched them.
+Planted-probe directions (mirrored repo root, real test file):
+  `fontsize=9` -> CAUGHT (16>15).  `**{"fontsize": 9}` -> CAUGHT.
+  `fontsize=theme.CAPTION["fontsize"]` -> not counted (correct).
+  `fontsize="x-small"` -> NOT caught.  `**{'fontsize': 9}` single quotes -> NOT caught.
+  `fontsize=_LOCAL_SIZE` -> not caught (pre-existing class).
+Metadata mutations (mirror src, real test files):
+  M1 drop metadata on static PDF   -> cross-process[static] RED, direct-property RED
+  M2 drop metadata on academic PDF -> cross-process[academic] GREEN, direct-property RED
+     repeated 6x under mutation: 5 RED / 1 GREEN. CreationDate is second-resolution, so the
+     cross-process PDF assertion only fires when the two renders straddle a second boundary.
+  M3 drop metadata on poster PNG   -> cross-process[poster] GREEN, direct-property RED
+  M4 unpin Creator/Producer        -> cross-process GREEN, direct-property RED (b"Matplotlib")
+Font-guard mutations:
+  P1 check_fonts body disabled          -> test_poster_font RED
+  P3 error message stops naming the face-> test_poster_font RED
+  P2 DELETE `check_fonts(target)` from style_context -> FULL fast suite
+     609 passed, 2 skipped, 3 deselected, exit 0. IDENTICAL to baseline. Nothing guards
+     the wiring.
+No-Roboto machine simulated (HOME redirected, fresh MPLCONFIGDIR, 132 families, Roboto absent):
+  `pytest tests/test_figure_determinism.py tests/test_poster_font.py` -> 2 FAILED, 5 passed.
+  Both failures are MissingFontError raised out of render_poster. They FAIL, they do not skip.
+
+## Reviewed
+- [x] spec/specpresentation09.md
+- [x] src/quebra/plots/targets.py
+- [x] src/quebra/plots/theme.py
+- [x] tests/test_style_baseline.py
+- [x] tests/test_figure_determinism.py
+- [x] tests/test_poster_font.py
+
+## Findings (Phase 7 commit group 1)
+CRITICAL | tests/test_figure_determinism.py:75-113 | on a machine without Roboto the poster
+  parametrisation and test_no_written_file_names_the_renderer_or_the_time FAIL, they do not
+  skip (measured: 2 failed / 5 passed with the user font dir hidden); .github/workflows/ci.yml
+  provisions no fonts and R9.2 itself says CI has no Roboto, so `make check` is red on CI, on
+  every collaborator machine, and through scripts/acceptance.sh:103 | skip the poster cases
+  when findfont(Roboto, fallback_to_default=False) raises, or land R9.2's vendor/declare/drop
+  decision first.
+CRITICAL | tests/test_style_baseline.py:13-14 and spec/specpresentation09.md:353-355 | the
+  stated reason for 17->15 is false as measured: the two dropped sites are
+  `fontsize="x-small"` at plots/allan_plot.py:123 and :132, NOT `fontsize=theme.X` (no such
+  site exists in the counted tree; the two theme references are the DICT sites, which the
+  bare-key pattern never matched). So the narrowing removed two genuine hardcoded sizes rather
+  than two false positives, and blinded the ratchet to the whole named-size class (planted
+  `fontsize="x-small"` measured NOT caught) without adding it to the :8-9 exclusion list |
+  either count them (`fontsize=\s*[\d"']`) or state the real reason (named sizes scale with
+  rcParams font.size) and list the exclusion.
+IMPORTANT | src/quebra/plots/theme.py:413 | nothing guards the wiring: deleting
+  `check_fonts(target)` from style_context leaves the full fast suite at 609 passed / 2
+  skipped / 3 deselected, exit 0, identical to baseline | one test that enters
+  style_context("poster") with a missing face patched in and asserts MissingFontError.
+IMPORTANT | src/quebra/plots/theme.py:194-196 | the guard silently returns whenever
+  font.family is not a list, so reverting the poster to its previous bare-string spelling
+  disables it with no signal, and test_a_target_with_no_font_stack_is_not_checked pins that
+  silence as correct | key on an explicit {target: required face} map, not on the value type.
+IMPORTANT | tests/test_poster_font.py:32-37 | _clear_font_cache is a no-op on matplotlib
+  3.10.8: font_manager has no module-level `_findfont_cached` (measured False; the lru_cache
+  is on FontManager, i.e. font_manager.fontManager._findfont_cached), and getattr(...,None)
+  swallows it while :16-17 claims the cache is cleared | clear fontManager._findfont_cached
+  and let AttributeError surface, or drop the helper and the claim.
+IMPORTANT | tests/test_poster_font.py | R9.2's acceptance "a test asserts the configured
+  poster family resolves to itself" is not met; only structure is asserted | see CRITICAL 1:
+  the positive test is what cannot ship until the font decision lands.
+IMPORTANT | tests/test_figure_determinism.py:76-83 | the cross-process test is a coin flip for
+  the PDF metadata (M2 measured 5 RED / 1 GREEN over six runs: CreationDate is second
+  resolution) and fully inert for the PNG and for the Creator/Producer pin (M3, M4 GREEN).
+  Every metadata mutation is caught only by the direct-property test. The docstring admits the
+  PNG blindness, not the PDF's | state it, or keep the parametrised test only for what it
+  uniquely guards.
+IMPORTANT | src/quebra/plots/targets.py:17 | pinning Creator/Producer to "quebra" deletes the
+  matplotlib version from the artifact, and provenance.py records no renderer version (grep:
+  none), so a hash change can no longer be attributed to an upgrade - which is the exact
+  payoff the test file's docstring claims | add the matplotlib version to build_prov_record.
+MINOR | spec/specpresentation09.md:367-369 | the untouched "Why" still reads "the widened
+  pattern gives 19 ... the true count", contradicted by the amendment above it, and cites
+  independence_survey_plot.py:143 where the site is :144.
+MINOR | tests/test_style_baseline.py:9 | "does not catch ... fontdict=" is now wrong
+  (`fontdict={"fontsize": 9}` IS caught); single-quoted `**{'fontsize': 9}` is not caught
+  (measured) and is not listed.
+MINOR | tests/test_poster_font.py:61-65 | assertion-free test; stays green when the guard body
+  is disabled (measured under P1).
+MINOR | src/quebra/plots/theme.py:138 | the deleted block took the poster's design rationale
+  with it ("everything scales up together ... same colours as the other targets"); the live
+  block carries no equivalent.
+MINOR | tests/test_poster_font.py:9-10 | "on the machine this was written on the font IS
+  present" is drafting history in a permanent docstring (AGENTS.md s10).
+MINOR | tests/test_figure_determinism.py | 9 subprocess interpreter starts, ~6s of a 47s fast
+  suite, no `slow` cost marker.
+MINOR | budget | the two files collect 7 (measured), against R9.1 +1..+2 and R9.2 +1..+2.
+  R9.1 landed +4 = exactly 2x its ceiling, R9.2 +3. No halt, but the banner must state it.
+MINOR | tests/test_poster_font.py:44 | the `is` identity pin forbids a future defensive copy.
+  Harmless today: measured, matplotlib's validator copies the list into rcParams and savefig
+  does not mutate the shared metadata dicts.
+
+## Verified clean
+Deleted 27 lines were genuinely the dead duplicate (its values differ from the live block:
+  27.4/24.0 vs 28.0/30.0); no executable line went with it. POSTER_FONT_STACK:100 precedes
+  RCPARAMS:105. No new module-level matplotlib import reaches a step (fidelity.py imports
+  theme inside a function; provenance.py:118 deliberately does not import it). ruff check,
+  ruff format --check, mypy (core), lint-imports all clean. Collect back to 614, nothing
+  planted in the repo. No em dashes or banned words in added lines. No new .md doc.
+`quebra run --all` isolates the failure (cli.py:188 catches per job); a single `quebra run`
+  aborts with the actionable message; both poster jobs declare targets=["poster"] only, so no
+  orphaned partial output today, but runner.py:589-591 is unguarded for a mixed-target sink.
+
+## Slice verdict: DO NOT SHIP (2 CRITICAL, 6 IMPORTANT, 8 MINOR)
+
+---
+
+# Phase 7 commit group 2 (CHECKPOINTS 9.4-9.6), merged from four parallel reviewers
+
+SCOPE: src/quebra/core/_artifact_guard.py src/quebra/core/runner.py src/quebra/panels/within_calibration.py src/quebra/panels/_across_calibration_compute.py tests/test_artifact_guard.py tests/test_within_calibration_builder.py tests/test_across_calibration_builder.py spec/specpresentation09.md .gitignore
+COMMIT: 4b433e4 (uncommitted tree, frozen for the review)
+Full ledgers: ~/.claude/projects/-home-sera-Desktop-polimi-thesis-code-912days-qre-tool/phase67/review_9_4_6/{A_9.4,B_9.5,C_9.6,D_cross}.md
+Per-ledger verdicts: A DO NOT SHIP (0/6/6), B SHIP (0/1/12), C SHIP (0/0/7), D DO NOT SHIP (0/4/11).
+
+## Findings (deduplicated)
+
+IMPORTANT | src/quebra/core/_artifact_guard.py:17-18 | "moved AND gained a field still reaches StaleArtifactGuard" holds only for guard subclasses. Re-measured by main agent: 24 cached KaplanMeierComparison pickles (km_poster_6d2s) now load missing assumption_id/checks_asked/checks_unanswered/check_verdicts and read NOT ASSESSED silently; 40 cached TLF dict pickles now load holding a TLFResult without fit_failed (tlf_plot.py:88 raises mid-render). All failed at load before 9.4. (A1, D1) | refuse incomplete dataclasses anywhere in the loaded graph, or narrow the claim
+IMPORTANT | src/quebra/core/_artifact_guard.py:53-57 | `except (ImportError, AttributeError): pass` hides an ImportError raised inside the moved module behind "No module named 'analyzers'", context lost. (A2, D minor) | catch only ModuleNotFoundError naming the moved module, re-raise the rest `from exc`
+IMPORTANT | src/quebra/core/_artifact_guard.py:30-32 | comment says a single-module rename is a new entry; lookup matches the head component only, so such a key never matches. (A3) | longest-prefix match, or fix the comment
+IMPORTANT | spec/specpresentation09.md:231-242, tests/test_artifact_guard.py:395-453 | "repairs 16" counts loads (12 complete, 4 incomplete of the 29-pickle set); "fixes the composite transport" is false because runner.py:243-254 reuses only same-commit clean-tree runs, which are written under quebra.* paths. The composite test builds an unreachable state and proves wiring only. (A4-A6, D2-D3) | restate the count and the transport claim; say "wiring only" in the test docstring
+IMPORTANT | spec/specpresentation09.md:288-289 | says the gaps could be rebuilt from the window/read tables; a gap while out of spec leaves no trace there, spans exist only in WindowsResult.diagnostics. (B1) | "take them from the WindowsResult"
+IMPORTANT | tests/test_across_calibration_builder.py:96-121 | R9.4b acceptance is "on the artifact"; the test calls private _binned_interval_stats, and a builder that strips NaN bins passes the whole suite (D M3). (D4) | assert through build_across_calibration_panel_data
+
+## Mutations that leave the WHOLE suite green (test gaps)
+
+- B M5: draw only the first stretch of each cumulative curve (drops every post-gap point).
+- B M3 / D M8: label every stretch (duplicate legend entries).
+- B M8: observed_slices honours only the first gap (fixture has one gap).
+- C M6: np.digitize(right=True) drops the FIRST event of every record (twin of the fixed last-edge drop).
+- C M7: delete the `len(edges) < 2` branch.
+- D M3: builder strips NaN bins (see IMPORTANT above).
+- B M9 (latent): comparing in seconds against hours makes the gap test vacuous; shipped test uses hours on both sides.
+
+## MINOR
+
+MINOR | _artifact_guard.py:48,57 | a renamed class raises "No module named 'panels'", reads as a packaging break. (A)
+MINOR | _artifact_guard.py:52 | getattr skips find_class's dotted-qualname handling and audit hook; use super().find_class(moved, name). (A)
+MINOR | tests/test_artifact_guard.py:265-269 | real-artifact test still uses pickle.load and its docstring contradicts the alias. (A, D)
+MINOR | tests/test_artifact_guard.py | nothing pins "moved and stale" for a guard subclass. (A)
+MINOR | tests/test_artifact_guard.py:399-402 | composite test docstring narrates history and calls the faked state "the real path". (A)
+MINOR | spec:64,143,247,475 | still say 27 pickles; the amendment says 29 (the 2 extra are independence_survey). spec:145 cites _artifact_guard.py:43-51, now :80-102. spec:240 cites pickle.load, now load_artifact. (A, D)
+MINOR | spec:325 | "2894 events" is the interval count; the log has 2895 events and the panel prints 2895. (C, D)
+MINOR | spec:328-331 | a first or last bin needs only one empty neighbour to render as a lone point; a lone bin's IQR fill draws a faint vertical line, not nothing. mtbf_q1 has neither. (C)
+MINOR | tests/test_within_calibration_builder.py:209 | cites AGENTS.md section 5 for the rule; it is docs/FIGURE_STANDARD.md:138. (B)
+MINOR | tests/test_within_calibration_builder.py:211-212 | "if the reference fails the test is broken" is false: slice-helper mutations turn the reference red. (B)
+MINOR | tests/test_within_calibration_builder.py:210-217, within_calibration.py:905-907,962-964 | history in docstring/comments ("already did this", "still drew"). (B)
+MINOR | tests/test_within_calibration_builder.py:240 | x.min()/x.max() are NaN on NaN xdata, which would pass silently. (B)
+MINOR | tests/test_within_calibration_builder.py:234-235 | for _draw_primary, "drew some line" is satisfied by the three threshold axhlines. (B)
+MINOR | within_calibration.py:908-911,965-968 | slicing silently truncates an arr longer than t where the old call raised; latent (_to_full_length). (B)
+MINOR | recipes.py:196,:380 (pre-existing, outside diff) | diagnostics.get("gap_spans_s") turns a missing key into no gaps; spec's "production is not affected" should mention it. (B)
+MINOR | tests/test_across_calibration_builder.py:110 | comment "bin 1 (days 14-28)"; edges start at 1.0, so days 15-29. (C)
+MINOR | tests/test_across_calibration_builder.py:1-5 | module docstring still claims array-equality with the pre-split values. (C, D)
+MINOR | _across_calibration_compute.py:31-33 | docstring names only the exact-multiple case; the clamp also catches the last edge rounding below t1 (up to 9.1e-13 d). (C)
+MINOR | budget | R9.3 and R9.4a each landed collect +3 against +1..+2: under the 2x stop, but a banner must say so. Group 613 -> 621. (B, D)
+MINOR | .gitignore:63 | fixes the HEAD commit's probe, belongs to no requirement here; path matches test_marker_discipline.py:134 and the probe is removed in finally. (C, D)
+
+## Verified clean (by at least one reviewer)
+runner.py:363 is the only pipeline read site of a pickled artifact; no aliasing of core_utils/plots2-style names; every scan-clock artist split or justified; clocks consistent (t_h = t_rel_s/3600); both production callers pass gaps; NaN safe for every binned_interval_stats consumer (provenance JSON holds no artifact values, no plotly target, no nan-poisoned limits); clamp safe over adversarial and 300k random edge constructions; mtbf_q1 numbers reproduced (65 bins, one empty at day 77, 64 identical, none isolated); no live reuse risk (0 AcrossCalibrationPanelData pickles in output/, composites include only t2star jobs); no em dashes, no spec ids in source; every new test names an oracle and carries one tier marker.
+
+## Group verdict: DO NOT SHIP (0 CRITICAL, 6 IMPORTANT after dedup, 20 MINOR, 7 whole-suite-green mutations)
+
+## Fix pass applied (group 2), on Sera's quiz answers: refuse incomplete / keep runner wiring / gap list required / mark lone bins
+All 6 IMPORTANT and the 7 whole-suite-green mutations addressed; MINORs applied except as noted in the checkpoint banner.
+Mutations re-run after the fix (each RED, file restored byte-identical): 9.4 S1-S5, C1-C4, M3; 9.5 M1, M3, M5, M8, M9, M10a, M10b, Q3a-Q3d; 9.6 D-M3, C-M6, C-M7, M1, M2, L1-L4.
+Not fixed, open: the same optional-gap-list pattern in analyzers/check_ledger.py:176,:231 and analyzers/checks/_multiprocess.py:160,:202 (bench calls it without gaps at jobs/bench/arms.py:314).
+Re-review: not yet run on the fixed tree.
+
+---
+
+# Phase 7 commit group 2, RE-REVIEW after the fix pass (four reviewers; D2 stopped by Sera after leads 1-4)
+
+Full ledgers: ~/.claude/projects/-home-sera-Desktop-polimi-thesis-code-912days-qre-tool/phase67/review_9_4_6_r2/{A2_9.4,B2_9.5,C2_9.6,D2_cross}.md
+Verdicts: A2 DO NOT SHIP (0/1/9), B2 SHIP (0/0/11), C2 SHIP (0/0/5), D2 partial (0/1/7; leads 5 test sweep and 6 cross-file NOT reviewed).
+Closure: every round-one IMPORTANT is FIXED; A6 (runner wiring unreachable) RECORDED; round-one MINORs FIXED or RECORDED, each verified by at least one reviewer.
+
+## Findings (deduplicated)
+
+IMPORTANT | tests/test_artifact_guard.py:355-395 | deleting the walk into dataclass FIELDS (_artifact_guard.py:149) leaves the whole suite green; no test nests a dataclass in a dataclass, and real artifacts do (IndependenceSurveyData.grids holds InstrumentGrid). (A2 MA1) | add an unguarded dataclass holding a stale one in a field
+IMPORTANT | spec/specpresentation09.md:247-250 | the 6->8 / 27->29 explanation is false: the previous latest independence_survey run is a21fd1_20260830_110425 and is EMPTY; the latest-run rule cut at 278a2fd reproduces 27/6/21, so the one new run explains both moves. (D2, A2) | restate
+
+## Mutations that leave the WHOLE suite green (round two)
+- 9.4: MA1 fields walk removed; MA2 walk lists only; MA13 dict keys skipped; MA4 dotted-prefix clause dropped; MA8 prefix matched without "."; MA5 exc.name None read as a rename. The moved-package-itself-missing case is never exercised.
+- 9.5: X1 y misaligned after the first stretch (test checks x only); X2 later thresholds draw only their first stretch (coverage is over the union of lines); X3 no labels at all (only duplicates checked); X4 t2star adapter forwards `gap_spans_s or []`; X5 length guard for the first threshold only.
+- 9.6: N1-N4 lone marker at the wrong height / size 0 / labelled / under the fill (test reads x only); N5-N7 median->mean, p90->p80, q1->p20: NO test pins a statistic's value, so a wrong number reaches the artifact; N8 single-bin centre moved.
+
+## MINOR
+MINOR | tests/test_artifact_guard.py:1-8 | module docstring still says the real-artifact test uses pickle.load. (A2)
+MINOR | _artifact_guard.py:100-119 | a non-slots field(default=X, init=False) is never in __dict__, so a FRESH artifact would be refused; none exists in src today. (A2)
+MINOR | _artifact_guard.py:83 | nested qualname "Outer.Missing" fails loudly but without the "renamed" wording. (A2)
+MINOR | spec:231-233 | 29 counts top-level pickles only; recursive gives 33 (compare job's subjobs_output adds 4). (A2)
+MINOR | spec:144-146 | R9.0.5 says StaleArtifactGuard raises whenever a dataclass gains a field; only for its subclasses. (A2)
+MINOR | within_calibration_compute.py:232,259,329,362 | four private helpers keep gap_spans_h=None with `or []` (same class as R9.4c; latent, reliability_band passes the list); SignalBand.gap_spans_h defaults []. (B2, D2)
+MINOR | within_calibration.py:902,963 | the length guard sits after the `len(arr) == 0` skip. (B2)
+MINOR | tests/test_within_calibration_builder.py:222 | "four ways" reads as exhaustive. (B2)
+MINOR | spec:356-357 | "0 to 16 h, gaps=1" describes the pre-fix fixture; shipped fixture with the list omitted: one line 0-20 h, gaps=2, cumulative time 20.0 vs 14.0 h, 3 us occupancy 0.2915 vs 0.4165. (B2)
+MINOR | spec R9.3/R9.4a/R9.4b Budget lines | measured +4 / +4 / +3 (files 3 / 2 / 4) against +1..+2; R9.3 and R9.4a are exactly at 2x. (A2, B2, C2, D2)
+MINOR | across_calibration.py:210-211 | "a bin with data never vanishes": only the median is marked; a lone bin's p90 still draws nothing. (C2)
+MINOR | spec:334 + lone-marker test docstring | "a record with no empty bin draws as before" is false for a one-bin record, which gains a marker. (D2)
+MINOR | spec:355 | "marks a gap only where one falls inside an in-spec window": a window never spans a gap; "where an in-spec read borders it". (D2)
+MINOR | quebraplan.md:780 | cite :225-231 (the getattr at :225). (D2)
+MINOR | quebraplan.md:782-785 | "folded into tau ... nothing says so" overstates: on the in-spec clock an interior censored window raises; only the calendar clock folds it; the out-of-spec-flanked merge is silent on both. (D2)
+
+## Verified clean in round two
+No current artifact is refused (all 8 plain-loading pickles complete; 131 fresh instances of 47 dataclasses round-tripped complete); guard and walk raise the same type and prefix, nothing catches one and not the other; every caller of the three strict functions updated; windows.run has one return and always sets gap_spans_s; gap_spans_s=[] true for every gap-free fixture; float-exact coverage check; lone mask is render-side like observed_slices; legend, axis limits and PDF bytes unchanged for mtbf_q1 (0 lone bins); spec 29/8/24/20/12/4/5 reproduced; no requirement over 2x.
+
+## Group verdict: DO NOT SHIP (0 CRITICAL, 2 IMPORTANT, ~20 MINOR, 20 whole-suite-green mutations); D2 leads 5-6 unreviewed
+
+## Round-two fix pass applied, on Sera's answers: helpers fixed / p90 marked too / init=False exempt / D2 leads 5-6 only
+Both IMPORTANTs fixed (nested-field, dict-key, set, tuple shapes in the stale test; 27->29 restated from a measurement cut at 278a2fd: 27/6/21, independence_survey a21fd1 empty).
+All 20 whole-suite-green mutations now RED, plus 6 for new guards (26 total, real tree, each restored byte-identical): MA1 MA2 MA13 MA4 MA8 MA5 IF1 NQ1 | X1 X2 X3 X4a X4b X5 LG1 H1 SB1 | N1 N2 N3 N4 P1 N5 N6 N7 N8.
+Scope additions: SignalBand.gap_spans_h made required (fifth site of the R9.4c class; tests/test_reuse_gate.py passes []); init=False exemption; nested-qualname walk; length guard moved before the empty skip; p90 lone marker.
+Collect unchanged at 625. Gates: ruff 0, format 0, mypy 0, arch 0, deptry 0, make test 0 (620 passed, 2 skipped), make check-ci 0.
+Harness note: scratchpad/mut.py was overwritten by reviewer C2's harness mid-session; mutation results above come from scratchpad/main_session_mutate.py, which targets the real tree.
+
+## D2 round two (leads 5-6) verdict DO NOT SHIP (0/1/5), fixes applied
+IMPORTANT fixed: new test_the_read_gaps_are_excluded_from_observed_time_and_timelines pins cumulative time at 4 us = observed 14 h (hand sum 5+4+5) and the two unobserved timeline holes; O21 (reliability band handed []), O22 (distinguish band handed []), O8 (_observed_dt_h stops zeroing) now RED.
+MINORs fixed: runner completeness check now tested (composite wiring test runs a stale seed; O6 runner-bypass RED, M3 RED); docs/PANEL_CONTRACT.md names gap_spans_h; StaleArtifactGuard exempts init=False and the walk skips absent fields (GI1, GI2 RED); "nine" causes; "one point too long".
+Collect 626 (+13 vs HEAD 613: R9.3 +4, R9.4a +4, R9.4b +3, R9.4c +2). Gates: ruff 0, format 0, mypy 0, arch 0, deptry 0, make test 0 (621 passed, 2 skipped), make check-ci 0.
+
+---
+
+# Phase 7 commit group 3 (CHECKPOINTS 9.7-9.10), three parallel reviewers
+Ledgers: ~/.claude/projects/-home-sera-Desktop-polimi-thesis-code-912days-qre-tool/phase67/review_9_7_10/{E1_9.7,E2_9.8,E3_9.9}.md
+Verdicts: E1 DO NOT SHIP (0/4/9), E2 DO NOT SHIP (0/5/14), E3 DO NOT SHIP (0/1/4).
+
+## IMPORTANT
+IMPORTANT | docs/FIGURE_STANDARD.md:8-13, spec R9.5 amendment | panels/check_ledger.py reports "no usable windows" in the panel and is omitted: five renderers, not four; the spec's :193 cite was that panel file. (E1; re-measured by main agent)
+IMPORTANT | docs/FIGURE_STANDARD.md:12-13 | "C3 excluded" is false: C3 is drawn and flagged uncalibrated (independence_survey_plot.py:99-104, :274-276). (E1; re-measured)
+IMPORTANT | tests/test_km_survival_plot.py:28-38 | fixture leaves n_windows_carved and n_unobserved_birth_dropped at 0, so n = (carved or n_windows) and n = n_windows + dropped both pass. (E1 K4, K5)
+IMPORTANT | spec R9.5 Not done | omits transforms/filter.py's per-stage count prints; "the one that printed a dropped-data count the panel did not carry" is false for kaplan_meier.py:365-371. (E1)
+IMPORTANT | analyzers/instrument_validation.py:633 | CvM "within 0.007 of nominal from n=35 up" is false: 0.0670 at n=35 shape 1.50 (0.017 off). (E2; re-measured)
+IMPORTANT | analyzers/instrument_validation.py:569 | C2 "other rows ... run to 0.176": C2's n=20 shape 0.75 rows span 0.0-0.4 (0.037-0.077 without n_used<=5); 0.176 is C1's max. (E2; re-measured)
+IMPORTANT | analyzers/instrument_validation.py:540 | tier-2 row hardcodes "4 of 7 ... 3 differ"; derivable from `published`. (E2)
+IMPORTANT | analyzers/instrument_validation.py:546-551, 566-569, 631-638, 827, 830 | remaining bench and tie-study numbers hardcoded from tables the report never loads (correct today, except the two above). (E2)
+IMPORTANT | core/runner.py:142-158 | _check_render_targets ignores includes: a composite's sub-job with a bad target fails partway, after the composite's run dir exists; at HEAD include(figures=False) completed. (E3)
+
+## Whole-suite-green mutations
+E1 W5 (only the [reliability_band] prefix is checked), K4, K5; E2-M1 (tau := gap sum in the builder: only the currency test catches), E2-M3 (the new residual<0 raise untested); E3 M4 (ghost target in the targets.py docstring), M9 (apply_common_style body unchanged, verified by reading only).
+
+## MINOR (selected; full lists in the ledgers)
+E1: mtbc_hist_plot records the same deviation as km_survival_plot; tlf_plot drops non-finite values silently; the "no curve" entry shows a line sample; survival legend runs past the figure edge (saved by bbox_inches="tight"); KM legend on the poster not re-rendered.
+E2: residual guard uses x.sum() and a hard < 0 against result.py's cumsum()[-1] / TAU_MARGIN convention; {tau_h:g} goes scientific past 6 digits; "time censored" wording when 0 gaps are censored; spec's equivalent-mutant reason is wrong (c1.statistic never reads n_censored_dropped); an old pickle passes load_artifact and KeyErrors mid-render; module docstring says four checks have bench cells, there are five.
+E3: spec "the one layer exception" should be "the one core-to-plots exception"; R9.7 carries two different 15s; apply_common_style now sits in theme, inside fidelity's compute closure (closure hash change); plotly has no real use left.
+
+## Group verdict: DO NOT SHIP (0 CRITICAL, 9 IMPORTANT, ~27 MINOR, 8 whole-suite-green mutations)
+
+## Group 3 fix pass applied, on Sera's decisions (composite check recurses; plotly recorded; report cites, not copies; hold the commit)
+All 9 IMPORTANTs addressed. E1: FIGURE_STANDARD names five renderers, C3 drawn-uncalibrated, mtbc/tlf listed; km fixture separates n from carved/dropped; spec counts and Not done corrected. E2: every report number computed (published rows, R reference values, tie study, own MC) or replaced by a pointer (tests by name, bench by size_table cell key); bench claims limited to what the bench audit (phase67/bench_audit) supports; a citation test resolves every pointer and checks the bench claim in the committed table; the report regenerated. E3: the target check recurses through includes; documented targets == registered set.
+MINORs applied: tau convention (last_event_time, TAU_MARGIN), non-scientific tau format, "observed to ... ending on a failure" wording, no line sample on "no curve" entries, spec wording (core-to-plots exception, two 15s, equivalent-mutant reason), module docstring (five benched checks).
+Mutations (real tree, each restored byte-identical), all RED: K2 K4 K5, W5, NC1, T1 T4 T5 T6, E2-M1 E2-M3, CW1 CW2, RD1-RD6.
+Not addressed (recorded): plotly (Sera: later); the bench's own defects (bench spec, after Sera's information); gold-standard values await Sera's web check.
+Gates: ruff 0, format 0, mypy 0, arch 0, deptry 0, make test 0 (626 passed, 2 skipped), make check-ci 0, collect 631.
+
+## Small review of the group-3 fix layer (F1 report: DO NOT SHIP 0/4/11; F2 rest: SHIP 0/1/6), fixes applied
+F1: C5 tier 4 cited a test that never calls C5, whose lag autocorrelation differs from R's by construction (measured 0.062395 vs 0.062654): regraded partial -> absent, guarded in the audit test. C3's "iid smoke test" now cites the bridge test that runs c3.run. "max |difference|" broke the markdown table: now "max abs difference". The citation test parses the full cell key, checks the permutation half against the promotion report's envelope verdict and the envelope's definition, and unit-tests _span. Bench wording "point estimates above nominal". Tie paragraph lines split. Caption test docstring states the property.
+F2: FIGURE_STANDARD names allan_plot's silent drop; nested-include errors carry an "included by" breadcrumb; the all-censored case asserts a legend exists; spec citations fixed (lines at 278a2fd, kaplan_meier :366-372), the numeric-only ADOPTED bullet marked superseded.
+Mutations (real tree, restored byte-identical), all RED on a specific test: F1-M1, F1-M2, F1-M4, C5-1, BC1. Equivalent on today's data, not caught: the xi/dcor case counts typed in.
+Gates: ruff 0, format 0, mypy 0, arch 0, deptry 0, make test 0 (626 passed, 2 skipped), make check-ci 0, collect 631.
+
+---
+
+SCOPE: bench grid extension to n=1000 (uncommitted): jobs/bench/grid.py, jobs/bench/report.py, jobs/bench/runner.py, src/quebra/analyzers/calibration_summary.py, jobs/bench/results/{size_table.csv,power_table.csv,promotion_report.md,runtime.txt}, docs/iid_checks/{BENCH,LIMITATIONS,C1_lewis_robinson,C2_anderson_darling,C5_rank_autocorr,C6_exchangeability,iid_checks_basics}.md
+COMMIT: 2bd30dc
+## Manifest
+## Reviewed
+- [x] stale-355 sweep (docs/, src/, jobs/bench/*.py, tests/)
+- [x] docs/iid_checks/iid_checks_basics.md  (16)
+- [x] docs/iid_checks/LIMITATIONS.md  (8)
+- [x] docs/iid_checks/C6_exchangeability.md  (10)
+- [x] docs/iid_checks/C5_rank_autocorr.md  (7)
+- [x] docs/iid_checks/C2_anderson_darling.md  (2)
+- [x] docs/iid_checks/C1_lewis_robinson.md  (17)
+- [x] docs/iid_checks/BENCH.md  (69)
+- [x] jobs/bench/results/promotion_report.md, runtime.txt
+- [x] jobs/bench/results/size_table.csv, power_table.csv (pandas)
+- [x] src/quebra/analyzers/calibration_summary.py  (+3/-3)
+- [x] jobs/bench/runner.py  (+2/-2)
+- [x] jobs/bench/report.py  (+4/-4)
+- [x] jobs/bench/grid.py  (+6/-6)
+## Findings
+MINOR | jobs/bench/report.py:17 | edited line keeps "a flat tolerance rejected all seven rows" (first-draft history at the old grid) beside the new 86-144; the table has nine rows, and at this grid a flat 0.01 band rejects all nine | state the property: "a flat tolerance rejects every row, because the max of 86-144 deviations is ~3 SE by chance"
+(grid.py seed claim VERIFIED: 1122 size rows at n<=355 identical to HEAD in key order and every value; n is the outer loop of size_cells. REAL_DATA_NOTES 935 / 28 VERIFIED from output/check_ledger_6d2s_q*/check_ledger_q*_*.pkl n_events. report.py:423 0.195-1.000 VERIFIED from 8 D-arm cells. calibration_summary.py:370-372 VERIFIED via bench_acceptance_at_n: C5-unstud n=20 in_spec z=-2.971 vs 2.955; C2-asym in_spec accepted at 50..1000. 86-144 matches the envelope n_cells.)
+IMPORTANT | jobs/bench/report.py:681 (-> promotion_report.md "Two findings" item 1) and jobs/bench/arms.py:20 | "never positive" is now false: the regenerated report prints "every cell between -0.089 and +0.001 - never positive"; four Arm C cells have positive mean_induced_lag1 (max +0.00134 at calendar n=500 rho=0.3; also n=700 rho=0.05, n=1000 rho=0.1, size n=1000 rho=0). At HEAD max was -0.00074 | replace with a computed bound ("never above +0.002", or "within 0.09 of zero and centred below it") in both sites
+(runtime.txt VERIFIED: 216 size x 2000 + 288 power x 1000 = 720000 replicates, 504 cells. Wall-clock line is a generated artifact, not prose.)
+IMPORTANT | docs/iid_checks/BENCH.md:108-111 (old item 4 deleted) | half of the deleted limitation is still literally true: 100 and 355 are still adjacent, so 228-354 events are still judged at 355 (and 851-999 at 1000, 601-699 at 700); on the 28 6D2S ledgers 372 of 560 record/threshold/clock rows are judged at a LARGER n than they have, 231 of them below 20 (judged at 20), 68 in 228-354 | restore the item minus the "above 355" clause: nearest-n rounds up between grid points and below 20; keep the proposal
+MINOR | docs/iid_checks/BENCH.md:66-68 | "On other data, check the event counts against N_GRID first: a record outside 20-1000 ..." implies 6D2S is inside the grid; 231 of its 560 rows have < 20 events | drop "On other data" or say the 6D2S records include counts below 20
+MINOR | docs/iid_checks/BENCH.md:24, 131 | reflowed lines run to 105 and 131 chars (factors paragraph; item 7 citation) | rewrap
+(VERIFIED: 216/288 cells; 504/720,000; 935; item 5 36%/34% = 0.357/0.341; item 7 162 groups, ~8 expected, three flagged permutation rows exactly as named; item 9 18 cells at c=0.25, nine inside at n=20/35, three size + six power, 1-3 replicates; groups 2/8/14/16 and +/-0.011/0.013/0.014/0.014 unchanged and correct. Numbering 1-14 contiguous; continuation indent 3 sp for 1-9, 4 sp for 10-14, consistent. No file in docs/, spec/, src/, tests/, jobs/ cites a BENCH.md item by number.)
+MINOR | docs/iid_checks/C1_lewis_robinson.md:66-67 | unchanged "a quantised Arm A cell with 819 usable replicates of 2000 reaches 0.973" was the extreme of the poorly supported cells at the old grid; now poorly supported quantised Arm A cells reach 0.9983 (n=500, 587 usable) and 1.0 (n=700, 330 usable) | name the n (355) or quote the new extreme
+(VERIFIED C1: 0.9625 Arm D shape 1.5 n=1000; perm 0.0405-0.0645 on supported c=0.25 cells; 128 cells, z -2.15 vs 3.55, power 0.603, range 0.195-1.000; 0.103 at 355 and 0.2045 at 1000 for A/1.5/q/c=0.03; size growth with n holds for every c=0.03 multi-segment cell (A, D; quantised or not), flat at c=0. Unchanged "within 0.009 from 35 on" still holds at 500-1000 (max dev 0.0090). C2: 2.67 vs 3.55, 0.621 verified.)
+IMPORTANT | docs/iid_checks/C5_rank_autocorr.md:64-65 | not updated: "mean absolute difference of 0.016 across 192 shared cells"; regenerated check_agreement gives C5 studentized vs C6 0.018 over 288 cells (unstudentized 0.017), and C6_exchangeability.md:37 already says 0.017-0.018 / 288, so the two pages now disagree | 0.018 across 288 shared cells (or 0.017-0.018 for both variants)
+IMPORTANT | docs/iid_checks/C6_exchangeability.md:47-48 | not updated and now false: "Its worst null cell in the bench came from Arm D at b = 1"; the regenerated envelope table puts C6's worst cell at A_iid_weibull/in_spec n=700 q=False c=0.0 (0.0365, z=-2.77). At HEAD it was D_trp_power_law n=100. The "cross-check that the TRP generator is sound" conclusion hangs on it | drop the paragraph or restate from the current worst cell
+(VERIFIED: C5 0.106/0.236/0.357/0.626/0.804, z -3.18 vs 3.58, 0.357; C6 0.087/0.208/0.332/0.599/0.788, below studentized C5 at every n, z -2.77 vs 3.58, 0.332, 0.017-0.018 / 288 / max 0.17; LIMITATIONS table all 18 values; "below n=100 only rho=0.5 exceeds 0.5" holds; unchanged section 5 censoring ranges 0.147-0.174 / 0.171-0.195 still hold.)
+(iid_checks_basics.md CLEAN: 504/720,000; 128 cells, 0.60/0.62; z 31.7 and 5.4; 144 cells z 2.56; 4.41 over 86; 0.33-0.36; 21-24% / 33-36% / 60-63% / 79-80% over C5 stud, C5 unstud, C6 all recomputed from power_table.csv.)
+IMPORTANT | docs/iid_checks/iid_checks_basics.md:40-41 | not updated: "C5 ... 0.014-0.016 ... over 192 shared power cells, while C1/C2 differ from it by 0.18-0.19 over the 156 they share"; regenerated check_agreement: C5 0.017-0.018 over 288, C1/C2 0.256-0.267 over 234 | 0.017-0.018 over 288; 0.26-0.27 over 234
+MINOR | src/quebra/analyzers/calibration_summary.py:470 | nearest_bracketing_n docstring "The bench measured six event counts"; N_GRID has nine | "nine event counts", or drop the count
+MINOR | jobs/bench/grid.py:8-9, jobs/bench/report.py:44 | "levels are set from what the real data shows, measured before the bench was written" / "measured before the bench was built" now cover event counts that were taken from the 6D2S ledgers after it (BENCH.md:31-33 already separates the two) | scope the "measured before" clause to censoring and quantisation
+MINOR | jobs/bench/grid.py:16-18 | "Every power cell is re-seeded, because power cells follow all the size cells" is history of this change in a module docstring (AGENTS.md section 10) | state the constraint: "extend N_GRID only at the end; doing so re-seeds every power cell"
+(Sweep CLEAN otherwise: no other "20-355", "largest grid n", "judged at 355", grid-length or 144/192/336 count in docs/, src/, jobs/bench/*.py, tests/. Remaining 355 mentions are C3/permutation-gather cost, record examples (check_ledger.py:4,85; checks/__init__.py:6; C5 doc:48), validation_curve's own n_values, xi_ties' own grid, and instrument_validation tests at 35/355, all fine. No em dashes, spec ids or wall-clock claims in added lines; runner.py's ~16x was removed. Gates run: ruff check 0, ruff format --check 0 on the four .py files; pytest on the four table-reading test files + test_bench_isolation: 84 passed, exit 0.)
+
+## Verdict: DO NOT SHIP (0 CRITICAL, 5 IMPORTANT, 7 MINOR). All five IMPORTANTs are one-line text fixes.

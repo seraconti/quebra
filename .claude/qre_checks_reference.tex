@@ -186,8 +186,11 @@ a choice the implementation makes that the paper does not. Three routes exist:
 \item \textbf{ELR at $m>1$.} Closed form by linearity, and ELR is directed at
 non-monotonic trend. Cost: $a$ must be prespecified (Section~\ref{sec:missing}).
 \item \textbf{CvM at $m>1$.} Sum of per-process statistics with a normal approximation,
-which the authors report works fairly well. This is the paper's own recommendation for
-the regime, and it is the strongest argument for implementing CvM.
+which the authors report works fairly well (\S 4.2, p.~106). The paper also keeps CvM and
+drops AD at $m>1$ because CvM \enquote{had better level properties in this case} (\S 6,
+p.~106). This is the strongest argument for implementing CvM. The paper does not study
+non-monotonic trend at $m>1$: its several-process simulations (\S 6.3, p.~108) use
+power-law trend only.
 \item \textbf{AD at $m>1$ by permutation.} The route this implementation takes. The
 statistic is the unweighted sum of per-segment eq.~(7) values, calibrated by
 within-segment permutation. \emph{This sidesteps the paper's problem rather than solving
@@ -256,7 +259,8 @@ the unknown parameters by the coefficient of variation alone:
 \qquad\text{as } \tau \to \infty .
 \label{eq:corollary1}
 \end{equation}
-\PROVED{} (Kvaløy and Lindqvist, arXiv:1802.08339, eq.~(3) and Corollary 1.)
+\PROVED{} (Kvaløy and Lindqvist 2020, \emph{Technometrics} 62(1), eq.~(3) and Corollary 1,
+p.~102.)
 
 \subsection{What this buys}
 
@@ -297,7 +301,8 @@ Lewis and Robinson (1974). \PROVED
 
 \subsection{Estimating \texorpdfstring{$\gamma$}{gamma}}
 
-Three estimators are given in the paper's \S 3.6 and justified in its Appendix 1.
+Three estimators are given in the paper's \S 3.6 (p.~104) and justified in its Appendix A
+(pp.~113--114).
 
 \begin{enumerate}[leftmargin=1.6em,itemsep=2pt]
 \item Sample mean and standard deviation of the \emph{completely observed} gaps,
@@ -350,16 +355,24 @@ two-sided here.
 power against deviations from an RP caused by monotonic trends.} \ASSERTED
 
 \paragraph{Multi-process form, and why it is the one implemented.} With $m$ independent
-processes, weights $A_j \propto \gh_j \tau_j \sqrt{N_j(\tau_j)}$ (their eq.~(14),
-justified by the limit in eq.~(15)) inserted into eq.~(13) give
+processes, the Technometrics weights $A_j \propto \sqrt{N_j(\tau_j)/\gh_j^2}$ (their
+eq.~(14), p.~105, argued optimal against certain alternatives through their Section~7.1.2;
+eq.~(15) gives the limit of the weights) inserted into eq.~(13) give
 %
 \begin{equation}
 \mathrm{LR}^m \;=\;
-\frac{\sqrt{12}}{\sqrt{\sum_{k=1}^{m}\gh_k^2\,\tau_k^2\,N_k(\tau_k)}}
-\sum_{j=1}^{m}\left[\sum_{i=1}^{N_j(\tau_j)} T_{ij} - \frac{N_j(\tau_j)}{2}\,\tau_j\right].
+\frac{\sqrt{12}}{\sqrt{\sum_{k=1}^{m}N_k(\tau_k)/\gh_k^2}}
+\sum_{j=1}^{m}\frac{1}{\gh_j^2}\left[\sum_{i=1}^{N_j(\tau_j)} \frac{T_{ij}}{\tau_j}
+- \frac{N_j(\tau_j)}{2}\right].
 \label{eq:lrm}
 \end{equation}
-\PROVED{} (their eq.~(16)).
+\PROVED{} (their eq.~(16), Technometrics 62(1) 2020, p.~105). The preprint
+arXiv:1802.08339v1 (p.~8) prints DIFFERENT weights, $A_j \propto \gh_j \tau_j
+\sqrt{N_j(\tau_j)}$, giving $\sqrt{12}\sum_j[\sum_i T_{ij} - N_j\tau_j/2] /
+\sqrt{\sum_k \gh_k^2\tau_k^2 N_k}$. Both are asymptotically $N(0,1)$; only the journal
+form reproduces the journal's $m = 6$ example (Section 8.2, Table 4, LR $p = 0.019$;
+the preprint form gives $0.0073$). Both ship, selected by \texttt{weights=}, journal
+by default. \MEASURED
 
 Setting $m = 1$ in \eqref{eq:lrm} gives
 $\sqrt{12}\,\bigl[\textstyle\sum T_i - N\tau/2\bigr] \big/ \sqrt{\gh^2\tau^2 N}
@@ -391,14 +404,16 @@ Lemma 1, \S\S 3.1 and 4.1; Billingsley 1999, Theorems 14.6 and 3.1.)
 claims, with separate provenance:
 
 \begin{enumerate}[leftmargin=1.6em,itemsep=2pt]
-\item \emph{The authors sanction it.} Their \S 7: the asymptotic critical values
-\enquote{are hence only approximate when used in small and medium sized samples}, and
-\enquote{in such cases an alternative procedure would be to simulate the null
+\item \emph{The authors sanction it.} Their \S 9, p.~113: the asymptotic critical values
+\enquote{are hence only approximate when used in small and medium sized samples}, the
+simulations show \enquote{satisfactory performance of the tests, with some exceptions in
+cases with very small samples}, and \enquote{in such cases an alternative procedure would
+be to simulate the null
 distribution of the test statistic by a permutation approach, permuting the order of the
 completely observed interevent times}. They cite Lawless, Çiğşar and Cook
 (\emph{Technometrics} 54:147--158, 2012) for its validity under \emph{time} censoring,
-which is the non-obvious part, and confirm it in unreported simulations.
-\ASSERTED{} by the authors, \SIMULATED{} by Lawless et al.
+which is the non-obvious part, and report confirming it \enquote{in simulations not reported
+here}. \ASSERTED{} by the authors; how Lawless et al.\ establish it was not read.
 \item \emph{It is exact here, not merely valid.} Under the renewal null the gaps within a
 segment are exchangeable, so the randomisation hypothesis holds and a permutation test
 has exact level $\alpha$ (Lehmann and Romano, \emph{Testing Statistical Hypotheses},
@@ -452,15 +467,17 @@ on the beginning and end of the observation interval.
 integrand is squared, deviation in either direction contributes. This is why the paper
 recommends it as the general-purpose single-process test: \enquote{the Anderson-Darling
 test turns out to have attractive properties when used as a test for general
-alternatives, both monotonic and non-monotonic trends.} \ASSERTED
+alternatives, both monotonic and nonmonotonic trends} (\S 9, p.~113). \ASSERTED
 
 \paragraph{On the critical value $2.492$.}
 The rejection rule \enquote{reject at $\alpha = 0.05$ when $\mathrm{AD} > 2.492$} is
 correct and is the classical asymptotic Anderson-Darling critical value. Nothing is
 being rederived. The implementation evaluates the same limiting law as a continuous
 cumulative distribution function, using the \texttt{adinf} approximation of Marsaglia
-and Marsaglia (\emph{Journal of Statistical Software} 9(2), 2004), quoted to
-$|\text{error}| < 2\times 10^{-6}$, and it returns $0.05001$ at $z = 2.492$ and
+and Marsaglia (\emph{Journal of Statistical Software} 9(2), 2004), which the paper quotes
+to $|\text{error}| < 2\times 10^{-6}$ below $z = 2$. Measured against the exact limit, the
+largest error is $1.95\times 10^{-5}$, at $z = 0.97$
+(\texttt{scripts/verify\_gold\_standard.py}). It returns $0.05001$ at $z = 2.492$ and
 $0.10001$ at $z = 1.933$. Two reasons for the CDF rather than the table:
 \begin{enumerate}[leftmargin=1.6em,itemsep=1pt]
 \item A $p$-value is strictly more informative than a binary verdict, and the ledger
@@ -475,25 +492,25 @@ $\gh^2$, so the finite-$N$ null here is not the finite-$N$ Anderson-Darling null
 Applying that correction would be a precision claim the derivation does not support.
 
 \paragraph{Where the recalibration mandate comes from.}
-It is the authors', in their \S 7:
+It is the authors', in their \S 9, p.~113:
 \enquote{The derived test statistics are based on asymptotic results for renewal
 processes. The calculated critical values are hence only approximate when used in small
 and medium sized samples.} They then name the fallback:
 \enquote{simulate the null distribution of the test statistic by a permutation approach,
 permuting the order of the completely observed interevent times}, citing Lawless,
 Çiğşar and Cook (\emph{Technometrics} 54, 2012) for its validity under time censoring
-and confirming it in unreported simulations. \ASSERTED{} by the authors,
-\SIMULATED{} by Lawless et al.
+and confirming it \enquote{in simulations not reported here}. \ASSERTED{} by the authors;
+how Lawless et al.\ establish it was not read.
 
 So the permutation calibration in the implementation is not an invention. It is the
-paper's own prescription for the regime this project sits in.
+alternative the paper itself names for very small samples, the regime this project sits in.
 
 \paragraph{Multi-process.} See Section~\ref{sec:mgt1} for the full picture. In short:
 there is no asymptotic calibration for $m > 1$, and the implementation raises rather than
 approximating. The paper's \S 4.2 states the normal
 approximation to a weighted sum \enquote{works fairly well for the Cramér-von Mises
 test, but less well for the Anderson-Darling test due to the very skew distribution of
-the Anderson-Darling statistic}, and its \S 5 drops Anderson-Darling for $m > 1$ in
+the Anderson-Darling statistic}, and its \S 6 (p.~106) drops Anderson-Darling for $m > 1$ in
 favour of Cramér-von Mises. The multi-process statistic implemented is the unweighted
 sum of per-segment values, calibrated by within-segment permutation, which needs no
 asymptotic distribution and is exact under independent and identically distributed
@@ -533,8 +550,9 @@ scaled statistic is their eq.~(9),
 \end{equation}
 \PROVED
 
-\paragraph{What Appendix 2 actually proves, and its cost.}
-Appendix 2 derives \eqref{eq:elr9} from \eqref{eq:elr8} by integrating the indicator
+\paragraph{What Appendix B actually proves, and its cost.}
+Their Appendix B (pp.~114--115) derives \eqref{eq:elr9} from \eqref{eq:elr8} by
+integrating the indicator
 representation $N(t) = \sum_i I_{[T_i,\tau)}(t)$ over $[0,a\tau]$ and $[a\tau,\tau]$
 separately and subtracting, and then proves the null law. Writing
 $U = \int_0^a \Wbridge$ and $V = \int_a^1 \Wbridge$, and using
@@ -549,14 +567,14 @@ Three costs follow, all of them stated by the authors or immediate from the alge
 
 \begin{enumerate}[leftmargin=1.6em,itemsep=3pt]
 \item \textbf{$a$ must be fixed in advance.} \enquote{A disadvantage of the above test
-is that the value of $a$ has to be given. One possibility would of course be to allow an
-adaptive choice of $a$. This will, however, destroy the above distributional properties,
+is that the value of $a$ has to be given. \dots{} Another possibility would of course be to
+allow an adaptive choice of $a$. This will, however, destroy the above distributional properties,
 and we will therefore not pursue this approach here.} \ASSERTED{} This is the binding
 constraint. Choosing $a$ by looking at the data invalidates \eqref{eq:elr9}.
 
 \item \textbf{At $a = 1/2$ it is tuned to a symmetric bathtub.} The variance falls from
 $1/12$ to $1/12 - 1/16 = 1/48$, and the authors note the test is
-\enquote{particularly well suited for picking up non-monotonic trends which are
+\enquote{particularly well suited for picking up nonmonotonic trends which are
 symmetric around the mid-point of the observation interval}. A non-monotonic trend whose
 turning point is not near $\tau/2$ is not what this test is aimed at.
 
@@ -582,13 +600,14 @@ bootstrap.
 \begin{split}
 \mathrm{CvM} = \frac{1}{\gh^2}\frac{1}{\Ntau}
 \Biggl\{&\sum_{i=0}^{\Ntau-1}\left[i^2\frac{X_{i+1}}{\tau}
-- i\,\Ntau\,\frac{T_{i+1}^2 - T_i^2}{\tau}\right]\\
+- i\,\Ntau\,\frac{T_{i+1}^2 - T_i^2}{\tau^2}\right]\\
 &+ \Ntau^2\left[\frac{T_{\Ntau}^2}{\tau^2} - \frac{T_{\Ntau}}{\tau}
 + \frac{1}{3}\right]\Biggr\}.
 \end{split}
 \label{eq:cvm}
 \end{equation}
-\PROVED
+\PROVED{} (their eq.~(6), p.~103, which prints the middle term over $\tau$. Integrating
+the definition gives $\tau^2$, and the authors' \texttt{CvMtestobs} divides by $\tau^2$.)
 
 Same null, same sensitivity to monotone and non-monotone trend as Anderson-Darling,
 differing only in the weight function. For a single process the paper drops it, since
@@ -600,24 +619,25 @@ several processes we do not include the Anderson-Darling test as the Cramér-von
 test had better level properties in this case}. \SIMULATED
 
 Since $m > 1$ is the gap case and gaps are routine in this data, Cramér-von Mises is the
-paper's own recommendation for a regime the battery actually operates in. It is
+test the paper keeps, in place of Anderson-Darling, for a regime the battery actually
+operates in (\S 6, p.~106). It is
 approximately thirty lines from \eqref{eq:cvm}, uses the same $\gh$ machinery and the
 same permutation harness already built, and closes a gap the source paper names
 explicitly. \textbf{Recommendation: implement.}
 
 \subsection{Kolmogorov-Smirnov, eq.~(5)}
 
-Dominated and correctly dropped. The paper: \enquote{The Kolmogorov-Smirnov test is less
-powerful than the other tests}, and it is \enquote{too conservative in the overdispersed
-case}. \SIMULATED{} Overdispersion is the expected regime for threshold-excursion
+Dominated and correctly dropped. The paper: \enquote{The Kolmogorov-Smirnov and linear rank
+tests have substantially lower power than the other tests} (\S 6.2, p.~107), and it is
+\enquote{too conservative in the overdispersed case} (\S 6.1, p.~107). \SIMULATED{} Overdispersion is the expected regime for threshold-excursion
 durations, so the specific failure mode is the one that would bite. No action.
 
 \subsection{On rank tests in reliability}
 
 A note on the concern that rank statistics are a time-series import with no standing in
-recurrent-event analysis. They have standing. Kvaløy and Lindqvist cite Mann (1945),
-\emph{Nonparametric tests against trend}, \emph{Econometrica} 13:245--259, as the first
-nonparametric test under the renewal null, and it operates on reverse arrangements of
+recurrent-event analysis. They have standing. Kvaløy and Lindqvist (2020, p.~101) name
+Mann (1945), \emph{Nonparametric tests against trend}, \emph{Econometrica} 13:245--259,
+first among the tests built on the renewal null. It operates on reverse arrangements of
 the gap sequence. Rank-based inference on interevent times is native to the field.
 
 The distinction that matters is the \emph{alternative}, not the machinery. Mann's rank
@@ -776,8 +796,9 @@ burden falls on the other check.
 \paragraph{Why $m_h$ weighting rather than uniform.} The number of within-segment pairs
 available at lag $h$ falls as $h$ grows, and falls fastest when segments are short.
 Weighting each squared autocorrelation by its pair count $m_h$ allocates the statistic's
-attention in proportion to the evidence behind each term, which is the same principle
-behind the $(n-h)$ weighting in Ljung-Box. Without it, a high-variance estimate from a
+attention in proportion to the evidence behind each term. Ljung-Box also scales each
+squared autocorrelation by a lag-dependent factor, $n(n+2)/(n-h)$, to match its null
+variance; the two share that principle, not the direction of the weight. Without it, a high-variance estimate from a
 lag with ten pairs enters on equal terms with a stable one from forty.
 
 \paragraph{Direction.} $Q$ is a sum of squares, therefore one-sided by construction, and
@@ -893,7 +914,8 @@ with $Y_j \ge Y_{(i)}$. Then
 \label{eq:xi}
 \end{equation}
 %
-which in the tie-free case reduces to
+(Chatterjee 2021; the repository calls it the tie-corrected form), which in the
+tie-free case reduces to
 $1 - 3\sum_{i=1}^{n-1}|r_{i+1}-r_i| / (n^2-1)$.
 Properties: $\xi \to 0$ if and only if $X$ and $Y$ are independent, and $\xi \to 1$ if
 and only if $Y$ is almost surely a measurable function of $X$. \PROVED
@@ -910,8 +932,8 @@ column.
 
 \item \textbf{Small-sample convergence is contested.} Chatterjee states the normal
 approximation is \enquote{roughly valid even for $n$ as small as 20}. \ASSERTED{}
-Independent practitioner commentary suggests $n$ of several hundred before the
-approximation is comfortable. With window counts from about 35 to 355 this project sits
+Independent practitioner commentary (no source located) suggests $n$ of several hundred
+before the approximation is comfortable. With window counts from about 35 to 355 this project sits
 squarely in the disputed range, so $\xi$'s $p$-value should be permutation-calibrated in
 the bench regardless of the closed form.
 
@@ -927,7 +949,8 @@ $\xi$ well above its null means structure exists and is not monotone.
 Székely, Rizzo and Bakirov (2007), \emph{Annals of Statistics} 35(6):2769--2794.
 $\mathcal{R} = 0$ if and only if the variables are independent, for arbitrary dependence.
 Symmetric, so it does not answer the directional question, but it is a legitimate
-omnibus and it is what the Qubit Health Analytics work uses, which makes it the
+omnibus and it is what the Qubit Health Analytics work (no source located) uses, which
+makes it the
 comparable statistic when placing this framework against that one. It is already computed
 in the shape statistics and should stay.
 
@@ -1004,43 +1027,43 @@ published targets are
 \textbf{Quantity} & \textbf{Paper} & \textbf{This code} & \textbf{Status}\\
 \midrule
 $\hat\mu$ (complete gaps) & 54.72 & 54.72 & exact\\
-$\hat\sigma$ (complete gaps) & 48.61 & 47.93 & \textbf{differs, see below}\\
-$\gh$ (complete gaps) & 0.888 & 0.876 & \textbf{differs, see below}\\
+$\hat\sigma$ (complete gaps) & 48.61 & 48.61 & exact\\
+$\gh$ (complete gaps) & 0.888 & 0.888 & exact\\
 $\tilde\mu$ (eq.~10) & 55.56 & 55.56 & exact\\
 $\tilde\sigma$ (eq.~10) & 47.23 & 47.23 & exact\\
 $\tilde\gamma$ (eq.~10) & 0.850 & 0.850 & exact\\
 $\sigma^{*}$ (eq.~11) & 42.77 & 42.77 & exact\\
 Laplace statistic & 0.605 & 0.605 & exact\\
 LR with $\sigma^{*}$ & 0.774, $p=0.44$ & 0.774, $p=0.44$ & exact\\
-LR with $\gh$ & 0.681, $p=0.50$ & 0.691, $p=0.49$ & follows from the above\\
+LR with $\gh$ & 0.681, $p=0.50$ & 0.681, $p=0.50$ & exact\\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\paragraph{The one discrepancy, and it is the paper's, not the code's.}
-The paper's Appendix 1 defines the estimator with the population divisor,
-$\hat\sigma^2 = N^{-1}\sum(X_i - \hat\mu)^2$, and proves consistency in that form. Its
-Table 2 reports $48.61$, which is the \emph{unbiased} $1/(N-1)$ value:
-$47.93 \times \sqrt{36/35} = 48.61$ to two decimals, and
-$48.61/54.72 = 0.888$, giving $0.605/0.888 = 0.681$ as printed. So the paper's text and
-its table use different divisors. \MEASURED
+\paragraph{The divisor.}
+Section~3.6 (p.~104) defines $\gh$ from the \enquote{sample standard deviation} of the
+complete gaps, and Table~2's $48.61$ is that value, with divisor $1/(N-1)$:
+$48.61/54.72 = 0.888$, giving $0.605/0.888 = 0.681$ as printed. The authors' R code
+computes the same. Only the consistency argument of Appendix~A.2 (p.~114) writes
+$\hat\sigma^2 = N^{-1}\sum(X_i - \hat\mu)^2$, where the divisor is asymptotically
+irrelevant. \MEASURED
 
-The implementation follows the \emph{text}, with the stated reason that matching
-eq.~(10)'s divisor makes the two $\gamma$ estimators differ only by the residual term.
-That is a defensible choice and the resulting $1.4\%$ shift in $\gh$ moves no verdict.
-But it must be recorded, because a golden test that pins $0.888$ would fail against
-correct code, and a golden test that pins $0.876$ without explanation looks like a
-transcription error to a reviewer holding the paper.
+The implementation's default is the sample form, \texttt{GAMMA\_COMPLETE\_SAMPLE}, so it
+reproduces every printed number. The population form, \texttt{GAMMA\_COMPLETE}, stays
+available: it matches eq.~(10)'s divisor, so that it and $\tilde\gamma$ differ only by the
+residual term, and on this record it gives $\hat\sigma = 47.93$, $\gh = 0.876$ and
+LR $= 0.691$ ($p = 0.49$).
 
 \paragraph{Small bowel motility data.} Aalen and Husebye (1991), 19 persons, 80 complete
-periods, one censored period each. This is an $m=19$ example and therefore the only
-published exercise of eq.~(16) in its multi-process form. Published targets:
+periods, one censored period each: an $m=19$ example, in arXiv v1 Section~6.2 only.
+Published targets:
 $\hat\mu = 98.76$, $\hat\sigma = 52.62$, $\gh = 0.533$; Weibull fit
 $\tilde\mu = 104.49$, $\tilde\sigma = 52.45$, $\tilde\gamma = 0.502$; Laplace $=1.95$;
 $\mathrm{LR}^m = 1.95/0.533 = 3.67$ with $p = 0.00024$, against $p = 0.051$ for the
-corresponding HPP null. The data are in Aalen and Husebye (1991), not in the paper, so
-this fixture requires obtaining that dataset. It is worth the effort: nothing else
-validates the $m>1$ path against a published number.
+corresponding HPP null. The data are Aalen and Husebye's Table~I, and the fixture carries
+them. The paper pools one $\gh$ over all subjects and uses the preprint eq.~(16), a stronger
+null than the per-segment C1 ships, so the shipped $m>1$ path is validated instead against
+the Technometrics hydraulic example (Section~8.2, Table~4, $m=6$).
 
 \subsection{Tier 2 for the checks that have no published example}
 
@@ -1122,12 +1145,11 @@ rather than a default.
 \midrule
 Kvaløy and Lindqvist (2020), \emph{Technometrics} 62(1) &
 C1, C2, and CvM, ELR, KS if added &
-\textbf{On request.} Their \S 7 closing line: \enquote{R-code for the tests can be
-obtained from the authors.} No CRAN, PyPI or public repository located. &
-\textbf{Write to the authors.} Correspondence address on the Technometrics record is
-\texttt{jan.t.kvaloy@uis.no} (University of Stavanger); Bo Henry Lindqvist is at NTNU
-Trondheim. Ask for the code behind Table 3, which would also supply reference values for
-AD, CvM, KS and ELR on the load-haul-dump data.\\[3pt]
+\textbf{Public.} Their \S 9 (p.~113): \enquote{R code for the tests is available at
+\url{https://github.com/jtkgithub/trendtests}.} The arXiv v1 preprint (\S 7) says instead
+that it \enquote{can be obtained from the authors}. No CRAN or PyPI package located. &
+Nothing to request. The authors' example scripts supply reference values for AD, CvM, KS
+and ELR on the load-haul-dump data.\\[3pt]
 
 Lindqvist and Kvaløy (2024), \emph{ASMB}, doi:10.1002/asmb.2848 &
 integrated and supremum variants, a possible future extension &
@@ -1178,11 +1200,8 @@ Nothing to request until a regression is fitted.\\
 
 \medskip
 \noindent
-Only one row requires a message, and it is the row that matters most: the two tests the
-battery leans on hardest are the two with no public implementation in any language. A
-short, specific request naming the paper, the table, and the intended use is more likely
-to succeed than a general one, and reference values for Table 3 would upgrade C2 from
-Tier 1 to Tier 2 in a single reply.
+No row requires a message. The two tests the battery leans on hardest have one located public
+implementation, the authors' R code (\S 9, p.~113), and no CRAN or PyPI package.
 
 % ==============================================================
 \section{Implementation provenance}
@@ -1201,7 +1220,8 @@ comes from.
 C1 & transcribed, pure Python; \texttt{scipy.stats.norm.sf} for the normal tail &
 Kvaløy-Lindqvist eq.~(16), collapsing to eq.~(4) at $m=1$ &
 No CRAN or PyPI package implements the time-censored form. The paper's own closing line:
-\enquote{R-code for the tests can be obtained from the authors.}\\[3pt]
+\enquote{R code for the tests is available at \url{https://github.com/jtkgithub/trendtests}}
+(\S 9, p.~113).\\[3pt]
 C2 & transcribed, pure Python; Marsaglia-Marsaglia \texttt{adinf} for the limiting CDF &
 Kvaløy-Lindqvist eq.~(7); Marsaglia and Marsaglia, \emph{JSS} 9(2), 2004 &
 Same. \texttt{scipy.stats.anderson} is a goodness-of-fit test for named distributions and
@@ -1226,9 +1246,9 @@ no fitted regression for them to check.\\
 \end{center}
 
 \paragraph{Summary of the audit.} Of five implemented checks, one imports a library and
-four transcribe published equations. The four are not reinvention: no package implements
-the time-censored Kvaløy-Lindqvist class in any language, and the authors distribute code
-on request rather than through a repository. For C5 and C6 the statistic is elementary and
+four transcribe published equations. The four are not reinvention: no CRAN or PyPI
+package implements the time-censored Kvaløy-Lindqvist class, and the authors distribute it
+as R scripts in a public repository (\S 9, p.~113), not as a package. For C5 and C6 the statistic is elementary and
 the difficulty is entirely in the segmented permutation harness, which no package
 provides because no package knows about read gaps.
 
@@ -1303,12 +1323,12 @@ copula process. \emph{Annals of the Institute of Statistical Mathematics}
 63(2):347--373.
 \item Kumar, U., Klefsjö, B. and Granholm, S. (1989). Reliability investigation for a
 fleet of load haul dump machines in a Swedish mine. \emph{Reliability Engineering and
-System Safety} 24:341--361.
+System Safety} 26:341--361.
 \item Kvaløy, J.~T. and Lindqvist, B.~H. (1998). TTT-based tests for trend in repairable
 systems data. \emph{Reliability Engineering and System Safety} 60:13--28.
 \item Kvaløy, J.~T. and Lindqvist, B.~H. (2020). A class of tests for trend in time
-censored recurrent event data. \emph{Technometrics} 62(1):101--115.
-Preprint arXiv:1802.08339.
+censored recurrent event data.
+\emph{Technometrics} 62(1):101--115; preprint arXiv:1802.08339.
 \item Lawless, J.~F., Çiğşar, C. and Cook, R.~J. (2012). Testing for monotone trend in
 recurrent event processes. \emph{Technometrics} 54:147--158.
 \item Lewis, P.~A.~W. and Robinson, D.~W. (1974). Testing for a monotone trend in a

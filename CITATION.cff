@@ -21,6 +21,5 @@ keywords:
   - repairable systems
   - quantum characterisation
   - reproducibility
-# Add on the first tag:
-# version: "0.1.0"
-# date-released: "2026-09-01"
+version: "0.1.0"
+date-released: "2026-10-02"
