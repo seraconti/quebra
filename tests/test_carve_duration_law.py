@@ -80,7 +80,7 @@ def _complete_run_lengths(seed: int) -> np.ndarray:
             dataset_id="carve-law",
         )
     )
-    w = carved.windows
+    w = carved.windows_in_spec
     complete = w[
         (w["birth_type"] == "up_crossing") & (w["death_type"] == "down_crossing")
     ]

@@ -20,7 +20,7 @@ another: a class that was renamed or restructured is a different object, and pre
 otherwise would load old field values into a new shape. Those stay unreadable, with an error
 that says so. A class that was moved AND gained a field loads, and is then refused as stale.
 
-The pipeline reads artifacts in one place, the runner's composite transport, and its reuse gate
+The pipeline reads artifacts in one place, the runner's composite transport, and its reuse rule
 admits only runs at the current commit on a clean tree, which are written under current paths.
 So the alias serves artifacts opened by hand; the runner uses the same loader so that every read
 gets the same completeness check.

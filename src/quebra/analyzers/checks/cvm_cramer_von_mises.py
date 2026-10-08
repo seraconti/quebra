@@ -52,8 +52,11 @@ the envelope's worst cells do differ.
 
 Its PERMUTATION row runs even when `include_tau_checks` is False, which is the reason it was
 promoted: `tau == T_N` on the in-spec clock of a carved record silences C1 and C2, and this
-integrand carries no `1/(s(1-s))` weight. Its ASYMPTOTIC row stays inside that gate, because
-a limiting null still needs a truncation time chosen independently of the events.
+integrand carries no `1/(s(1-s))` weight. Its ASYMPTOTIC row runs only when the battery's
+`include_tau_checks` is True and the record has one segment (`run` raises on more than
+one), because a limiting null still needs a truncation time chosen independently of the
+events. This module never refuses `tau == T_N`; the battery caller's `include_tau_checks`
+decides whether that case reaches this row.
 """
 
 from __future__ import annotations

@@ -117,9 +117,10 @@ class Assumption:
 A1_RENEWAL_DURATIONS = Assumption(
     id="a1_renewal_durations",
     statement=(
-        "The in-spec window durations behave like a renewal process: independent, "
-        "identically distributed, no trend. Occupancy, survival and mean time between "
-        "failures all rest on it."
+        "The window durations on the declared side behave like a renewal process: "
+        "independent, identically distributed, no trend. Reading a survival curve as the "
+        "law of a window's duration rests on it, as do its intervals and any reading of "
+        "occupancy or mean time between failures beyond this record."
     ),
     diagnostic=(
         "The six checks in `analyzers/checks/`, scored into verdicts by "

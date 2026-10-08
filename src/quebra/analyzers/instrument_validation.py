@@ -147,8 +147,9 @@ def measure_asymptotic_size(
 
     The null simulated here has to be the one the theory assumes: the truncation time is
     chosen without reference to the events, which `checks/result` states as a requirement.
-    Nothing downstream can check it for you - `checks/battery` gates the asymptotic rows on
-    `tau == T_N`, which an event-derived `T_N(1 + 1/n)` clears.
+    Nothing downstream can check it for you: `checks/result.validate_segment` refuses a
+    tau below `T_N` and, under `require_strict_tau` (C2), one within `TAU_MARGIN` of it,
+    and an event-derived `T_N(1 + 1/n)` passes both.
 
     Deriving tau from the draw as `g.sum() + g.mean()` gives exactly that, so `T_N/tau` is
     pinned at `n/(n+1)` where the null has it Beta(n, 1), and the count is fixed where it
@@ -210,9 +211,6 @@ def measure_band_coverage(
 
     Pure compute: seeded generator in, float out, no disk and no matplotlib.
     """
-    import contextlib
-    import io
-
     import numpy as _np
 
     from quebra.analyzers import kaplan_meier as _km
@@ -221,20 +219,17 @@ def measure_band_coverage(
     truth = float(_np.exp(-eval_at))
     at = _np.array([eval_at])
     covered = 0
-    # `kaplan_meier.run` logs one line per call by design; 5000 of them would bury the job's
-    # own output. Suppressed here rather than made conditional in the estimator.
-    with contextlib.redirect_stdout(io.StringIO()):
-        for _ in range(replicates):
-            draw = rng.exponential(size=n)
-            curve = _km.run(
-                _km.KaplanMeierInputs(
-                    duration_min=_np.minimum(draw, censor_at),
-                    death_observed=draw <= censor_at,
-                )
+    for _ in range(replicates):
+        draw = rng.exponential(size=n)
+        curve = _km.run(
+            _km.KaplanMeierInputs(
+                duration_min=_np.minimum(draw, censor_at),
+                death_observed=draw <= censor_at,
             )
-            lo = _km._step_eval(curve.time_min, curve.band_lower, at)[0]
-            hi = _km._step_eval(curve.time_min, curve.band_upper, at)[0]
-            covered += int(_np.isfinite(lo) and _np.isfinite(hi) and lo <= truth <= hi)
+        )
+        lo = _km._step_eval(curve.time_min, curve.band_lower, at)[0]
+        hi = _km._step_eval(curve.time_min, curve.band_upper, at)[0]
+        covered += int(_np.isfinite(lo) and _np.isfinite(hi) and lo <= truth <= hi)
     return covered / replicates
 
 

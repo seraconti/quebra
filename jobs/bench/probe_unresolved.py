@@ -101,14 +101,15 @@ def _probe_one(name: str, norm: dict[str, object]) -> tuple[list[dict], dict]:
         )
     )
     reads = carved.reads
-    windows_df = carved.windows
+    windows_df = carved.windows_in_spec
 
     rows: list[dict] = []
     for k in K_VALUES:
-        for label, thr_s, _bvg in T2STAR_DEFAULT_LADDER:
+        for label, thr_s, bvg in T2STAR_DEFAULT_LADDER:
             unresolved = np.zeros(n_reads, dtype=bool)
             unresolved[sigma_known] = (
-                np.abs(v_f[sigma_known] - thr_s) < k * sig_f[sigma_known]
+                np.abs(windows.margin(v_f[sigma_known], thr_s, bvg))
+                < k * sig_f[sigma_known]
             )
 
             sub = reads[(reads["threshold_label"] == label) & reads["in_spec"]]

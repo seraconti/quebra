@@ -51,15 +51,33 @@ x-axis and vertically aligned. If they look the same, resolvability costs nothin
 they differ, that difference is the finding.
 
 **`estimator` is a field.** The reliability band declares which estimator produced its
-survival curve and the axis label is derived from it, so the label cannot go stale.
-`cumulative_hazard`, `band_lower` and `band_upper` are reserved and are `None` here. The
-estimator exists - `analyzers/kaplan_meier.py` - but this panel does not consume it; wiring
-it in changes only that band.
+survival curve and the title is derived from it, so the label cannot go stale. The curves
+come from the job's one Kaplan-Meier node (`kaplan_meier.KaplanMeierSet`, both sides of every
+threshold, log-log band); the panel-data step takes that node as an input and never computes
+survival itself. The panel draws the in-spec side with its band on a linear axis. Each line
+and band runs to the curve's longest observed window (`max_observed_min`), not its last
+death, and the band fills every segment whose two bounds are finite. One line states the
+set's check outcome. Nothing populates `KaplanMeierSet.checks` today: `kaplan_meier_set`
+leaves it empty and the recipe passes the set on as built, so that line reads NOT ASSESSED
+in every job, ledger or not.
+
+**Carve, Kaplan-Meier set and panel must describe one carve, or the build raises.** With
+two or more finite reads, the builder raises unless the panel's series and every rung's
+margin equal the carve's times one positive display scale
+(`within_calibration_compute._require_one_ladder`). The
+reliability band raises unless the read and window tables name one record, every curve in
+the set names it too, every panel label is on the set's ladder, and each in-spec curve
+counts as many carved windows as the in-spec table holds under its label
+(`reliability_band._require_same_carve`). The reliability and distinguish bands both refuse
+a window table holding any side but in spec.
 
 **Occupancy is fraction of OBSERVED time**, gap intervals excluded. There is one
 definition: `reliability.occupancy` and the renderer's >=5% timeline cull read the same
 number, and `_cumulative_time_out_of_spec` uses the same denominator. Counting gap time
-credited unobserved hours to whichever state held at the left edge.
+credited unobserved hours to whichever state held at the left edge. Occupancy is NaN where
+there is no observed time to divide by (fewer than two finite reads, or every interval a
+gap or of zero length): not measured. The cull drops it, and the timeline title counts it
+as not measured, apart from the thresholds measured below 5%.
 
 **Not drawn**: the detail/zoom view and the 30-minute median/IQR/p90 view, with
 `binned_stats_per_trace` and `adaptive_ylim`. Extra `traces` are now overlaid on the
@@ -104,9 +122,10 @@ field list here, which is what went stale.
 ## Panel-internal computations
 
 The following are computed by `build_within_calibration_panel_data` from
-`(t_h, values, thresholds, damage_fn)`, polarity per threshold, plus the window and read
-tables. They are NOT separate metric modules. No analyzer module should reimplement
-them.
+`(t_h, values, thresholds, damage_fn)` and the window and read tables. Which reads are in
+spec is never decided here: every classification is the carve's `in_spec` column, so the
+panel cannot disagree with the windows. They are NOT separate metric modules. No analyzer
+module should reimplement them.
 
 **Window carving is not one of them.** It lives in `analyzers/windows.py` and reaches
 the builder as two required DataFrames, so the gap policy, censoring and per-read state
@@ -116,12 +135,11 @@ raises rather than carving a second time.
 | Computation | Method | Integration rule | Notes |
 |---|---|---|---|
 | Threshold compliance timeline | `distinguish_band._timeline_segments` | - | Gantt bars over per-read `state`; 2 or 4 states depending on `use_uncertainty` |
-| Window survival | `_window_survival` | - | Empirical survival, **censored windows dropped** |
-| CV, initial value, range | `_draw_summary` | - | Summary text |
-| Per-threshold window stats | `_analyze_threshold_windows` + `_carve_counts` | - | Above/below counts, mean, p90, plus `n_windows`, `n_censored`, `n_endurance_bags`, `n_gaps` |
+| Window survival | `kaplan_meier.KaplanMeierSet`, an input | - | Kaplan-Meier with log-log band, both sides; the in-spec side is drawn |
+| Caption: dataset, mean ± std | `signal_band.run` (`value_mean`, `value_std`) | - | One line above the figure; population std over finite reads, display units |
 | **Cumulative time out of spec** | `_cumulative_time_out_of_spec` | Left-Riemann | Step-function indicator; result in hours |
 | **Cumulative damage** | `_cumulative_damage` | Trapezoidal | Continuous damage_rate; result in primary_unit · h |
-| **TTF (first crossing time)** | `_ttf` | - | Scalar per threshold; shown in summary text |
+| **TTF (first crossing time)** | `_ttf` | - | Scalar per threshold; opt-in (`include_ttf`), written beside band 3's compliance timeline for the thresholds it draws. A threshold the >=5% cull drops has its TTF in the artifact only |
 
 ### Why left-Riemann for time out of spec, trapezoidal for damage
 
@@ -138,17 +156,13 @@ is second-order accurate and appropriate for continuous integrands.
 
 Each threshold tuple carries a `big_values_good: bool` as its third element.
 Polarity is per-threshold - different thresholds in the same panel can have
-different polarities.
+different polarities. The one definition is `analyzers/windows.margin`:
+`value - threshold` when big values are good, `threshold - value` otherwise.
 
-For `big_values_good=False` (e.g. infidelity - lower is better):
-  - `out_of_spec[i] = values[i] > threshold_value`
-  - `excess[i] = max(values[i] - threshold_value, 0)`
-  - TTF: first `i` where `values[i] > threshold_value`
-
-For `big_values_good=True` (e.g. T2* - higher is better):
-  - `out_of_spec[i] = values[i] < threshold_value`
-  - `excess[i] = max(threshold_value - values[i], 0)`
-  - TTF: first `i` where `values[i] < threshold_value`
+  - in spec: `margin >= 0`, so a read exactly at the threshold is in spec either way;
+    the panel reads it from the carve's `in_spec` column
+  - `excess[i] = max(-margin[i], 0)`
+  - TTF: the first read the carve classified out of spec
 
 ### Default damage_fn
 
@@ -165,22 +179,14 @@ and axis turned off. The panel never crashes on empty thresholds.
 
 ---
 
-## Window statistics: two definitions on one panel
+## Window statistics
 
-The summary block's above/below stats (`_analyze_threshold_windows`) and the survival
-curve (the window table) answer different questions and do not have to agree:
+Every window statistic on the panel comes from the window table that `analyzers/windows.py`
+produced. There is no second carve.
 
-- **above/below** is direction-agnostic run-length bookkeeping on the raw series. It has
-  no gap policy and no censoring; a run spanning a read gap is one run.
-- **the window table** applies the gap policy, labels births and deaths, and marks
-  censored windows. The survival curve uses only uncensored windows.
-
-Both are correct for what they measure. Do not read the summary `count` as the number of
-windows in the window table.
-
-`ReliabilityBand.survival_curve_min` is an empirical survival function over **uncensored**
-window lengths only: `S(x) = #{w >= x} / n`. `analyzers/kaplan_meier.py` uses the censored
-windows rather than discarding them; this field does not, and the two are not interchangeable.
+`ReliabilityBand.kaplan_meier` holds Kaplan-Meier curves for both sides of every threshold:
+censored windows are kept, windows whose birth was not observed are left out and counted,
+and the legend states both counts.
 
 ---
 
@@ -214,9 +220,9 @@ Built in `panels/within_calibration.py`'s `build_matplotlib` from a row list, so
 depends on the include flags and the height is dynamic. Fixed width 16 inches.
 
 Rows, in order: `signal`, `distinguish_timeline`, `distinguish_detail`,
-`reliability_timeline`, `survival`, `cumulative` (flagged), `summary`. Band 1's row subdivides
-into primary plus value / sigma / relative-error histograms; band 2's detail row is a shape
-heatmap with xi and rho sub-panels.
+`reliability_timeline`, `survival`, `cumulative` (flagged). A one-line caption sits above
+them. Band 1's row subdivides into primary plus value / sigma / relative-error histograms;
+band 2's detail row is a shape heatmap with xi and rho sub-panels.
 
 No diagram is reproduced here. The row list and its height ratios are one literal in
 `build_matplotlib`; a copy in this file goes stale silently, and the previous copy did.
@@ -287,7 +293,7 @@ change any public API and can be done at any time.
 
 `docs/iid_checks/iid_checks_basics.md` said the durable half of that page folds here once the
 licence wiring was decided. SPEC 0008 decided it, and the decision was that there is no licence
-and no gate: a verdict ANNOTATES a figure and never suppresses one.
+and no veto on drawing: a verdict ANNOTATES a figure and never suppresses one.
 
 The path, and where each decision is made:
 
@@ -300,7 +306,7 @@ The path, and where each decision is made:
 
 Four rules a panel author has to keep.
 
-**A verdict never gates a draw.** The estimate is always computed and always drawn. A `fail`
+**A figure is drawn whatever the verdict.** The estimate is always computed and always drawn. A `fail`
 changes a cell's colour and the caption; it does not remove a band, a curve or a panel. Control
 flow that branches on what the data said is unpredictable, and a reader is better served by an
 estimate they are told not to trust than by a missing one.

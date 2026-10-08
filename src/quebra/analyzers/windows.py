@@ -1,4 +1,4 @@
-"""In-spec window carving: gap policy, censoring, window identity, per-read table.
+"""Window carving on both sides of a threshold: gap policy, censoring, per-read table.
 
 Ported from `monoliths/v13fig/v13_shape.py::spacing/carve`, with two deliberate
 differences from that reference:
@@ -16,10 +16,16 @@ differences from that reference:
 Everything else - the gap threshold, the strict `>` test, the positive-only median, the
 birth/death taxonomy, gap-wins-ties - is the monolith's, verbatim.
 
+`margin` is the one definition of in spec for the whole package: in spec means
+`margin >= 0`, so a read exactly at the threshold is in spec in both directions. Every
+consumer classifies through `in_spec_mask` or reads the carve's `in_spec` column; none
+compares a metric with a threshold itself.
+
 Uncertainty is an ANNOTATION and never moves a window boundary. The carve is crisp
-(`value >= threshold`), so `k` and `use_uncertainty` change the per-read `state` column
-and nothing else. Deciding whether an uncertain read should break a window is a question
-`scripts/probe_unresolved.py` exists to answer; it must not be answered by assumption here.
+(`margin >= 0`), so `k` and `use_uncertainty` change the per-read `state` column and
+nothing else. Deciding whether an uncertain read should break a window is a question
+`jobs/bench/probe_unresolved.py` exists to answer; it must not be answered by assumption
+here.
 
 All times are SI seconds (`_s` suffixes). Values and thresholds share whatever unit the
 caller supplies; only their comparison matters.
@@ -27,6 +33,7 @@ caller supplies; only their comparison matters.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -35,14 +42,19 @@ import pandas as pd
 
 DEFAULT_GAP_MULT = 10.0
 
-# Birth types. A window is an "endurance bag" when its birth was not observed, i.e.
-# birth_type != BIRTH_UP_CROSSING. Tagged here; never dropped here.
+# Crossings are named relative to spec: an up_crossing enters spec, a down_crossing leaves
+# it. An in-spec window is born by an up_crossing and dies by a down_crossing; an
+# out-of-spec window the other way round. A birth or death that is not a crossing was not
+# observed. The window tables carry that as two booleans, `birth_observed` and `censored`,
+# and consumers read the booleans rather than comparing names. `n_endurance_bags` is the
+# legacy name for the count of windows whose birth was not observed.
 BIRTH_UP_CROSSING = "up_crossing"
+BIRTH_DOWN_CROSSING = "down_crossing"
 BIRTH_SCAN_START = "scan_start"
 BIRTH_GAP_RESUME = "gap_resume"
 
-# Death types. censored == (death_type != DEATH_DOWN_CROSSING).
 DEATH_DOWN_CROSSING = "down_crossing"
+DEATH_UP_CROSSING = "up_crossing"
 DEATH_GAP_START = "gap_start"
 DEATH_SCAN_END = "scan_end"
 
@@ -57,21 +69,43 @@ STATE_OUT_OF_SPEC_UNCERTAIN = "out_of_spec_uncertain"
 # stay comparable read for read.
 STATE_UNOBSERVED = "unobserved"
 
+# The two sides of a threshold. The strings are the read states, so a side and the state of
+# the reads in it cannot be spelled two ways.
+SIDE_IN_SPEC = STATE_IN_SPEC
+SIDE_OUT_OF_SPEC = STATE_OUT_OF_SPEC
+
+# t_birth_s is the window's first read and t_last_s its last. An observed death is at the
+# first read past the crossing (t_death_s); a censored window dies at t_last_s. The
+# intervals are closed: an observed birth lies in [t_before_birth_s, t_birth_s] and an
+# observed death in [t_last_s, t_death_s], so with both observed the length lies in
+# [t_last_s - t_birth_s, t_death_s - t_before_birth_s]. A duplicate timestamp at a
+# crossing makes its interval a single point, an exact value. t_before_birth_s is NaN
+# when the birth was not observed.
+# extreme_margin is the smallest margin over the window's reads: the closest approach to
+# the threshold in spec, minus the depth out of spec.
 WINDOW_COLUMNS = [
     "dataset_id",
     "threshold_label",
     "threshold_value",
     "big_values_good",
+    "side",
     "window_index",
+    "t_before_birth_s",
     "t_birth_s",
+    "t_last_s",
     "t_death_s",
     "duration_s",
     "birth_type",
     "death_type",
+    "birth_observed",
     "censored",
     "n_reads",
+    "extreme_margin",
 ]
 
+# window_index, window_age_s and forward_time_s refer to windows_in_spec only and are
+# null on an out-of-spec read. Both window tables number from 0, so joining
+# window_index onto windows_out_of_spec pairs reads with the wrong windows.
 READ_COLUMNS = [
     "dataset_id",
     "threshold_label",
@@ -102,7 +136,8 @@ class WindowsInputs:
 
 @dataclass(slots=True)
 class WindowsResult:
-    windows: pd.DataFrame
+    windows_in_spec: pd.DataFrame
+    windows_out_of_spec: pd.DataFrame
     reads: pd.DataFrame
     meta: dict[str, object]
     diagnostics: dict[str, object] = field(default_factory=dict)
@@ -155,14 +190,16 @@ def carve(
     in_spec: np.ndarray,
     is_gap: np.ndarray,
 ) -> list[dict[str, object]]:
-    """Segment a boolean in-spec mask into windows with birth and death types.
+    """Segment a boolean mask into runs of True, with birth and death types.
 
     Returns dicts of {s, e, birth_type, death_type} where `s` is the index of the first
-    in-spec read and `e` is one past the last in-spec read - so for a down_crossing `e`
-    indexes the first out-of-spec read, which is the death timestamp.
+    True read and `e` is one past the last - so for a down_crossing `e` indexes the first
+    False read, which is the death timestamp. The crossing names describe the MASK turning
+    on (up) and off (down); `_side_windows` renames them relative to spec for the
+    out-of-spec side.
 
-    The gap check runs BEFORE the in-spec check, so a read that is both post-gap and
-    out-of-spec produces gap_start, not down_crossing. Gap wins ties.
+    The gap check runs BEFORE the mask check, so a read that is both post-gap and False
+    produces gap_start, not down_crossing. Gap wins ties.
     """
     n = len(in_spec)
     windows: list[dict[str, object]] = []
@@ -239,25 +276,143 @@ def mark_gaps_in_segments(
     return sorted(out)
 
 
+def margin(
+    values: np.ndarray, threshold_value: float, big_values_good: bool
+) -> np.ndarray:
+    """Signed distance from the threshold, positive on the good side.
+
+    `values - threshold_value` when big values are good (T2*), `threshold_value - values`
+    when small values are good (infidelity). In the caller's units.
+
+    Raises ValueError on a non-finite threshold or value: neither has a side, and a NaN
+    compared with zero would read as out of spec. `run` drops non-finite reads first.
+    """
+    values = np.asarray(values, dtype=float)
+    threshold_value = float(threshold_value)
+    if not math.isfinite(threshold_value):
+        raise ValueError(f"threshold_value must be finite; got {threshold_value!r}")
+    if not np.all(np.isfinite(values)):
+        raise ValueError(
+            f"margin needs finite values; {int(np.sum(~np.isfinite(values)))} of "
+            f"{values.size} are not. Drop non-finite reads before classifying them."
+        )
+    if big_values_good:
+        return values - threshold_value
+    return threshold_value - values
+
+
 def in_spec_mask(
     values: np.ndarray, threshold_value: float, big_values_good: bool
 ) -> np.ndarray:
-    """In-spec test, matching the pre-existing panel carve exactly.
+    """In spec means `margin >= 0`: a read exactly at the threshold is in spec, either way.
 
-    Note the asymmetry - `>=` above, `<` below - it is inherited, not a typo.
-
-    KNOWN DIVERGENCE, preserved deliberately: at exact equality with
-    `big_values_good=False`, this calls `value == threshold` OUT of spec, while
-    `analyzers/within_calibration_compute._out_of_spec_mask` (`value > threshold`) calls it
-    IN spec. Both predate this module and both are load-bearing - one drives the
-    windows, the other drives cumulative time, TTF and in-spec fraction. Reconciling
-    them changes published numbers, so it is a decision to take deliberately rather
-    than a typo to fix in passing. Measure-zero in float; fidelity (`big_values_good=False`)
-    is the direction where it is reachable at all.
+    Raises, through `margin`, on a non-finite threshold or value.
     """
-    if big_values_good:
-        return values >= threshold_value
-    return values < threshold_value
+    return margin(values, threshold_value, big_values_good) >= 0.0
+
+
+# The crossing that bears and the one that kills a window on each side, in spec terms.
+_SIDE_CROSSINGS = {
+    SIDE_IN_SPEC: (BIRTH_UP_CROSSING, DEATH_DOWN_CROSSING),
+    SIDE_OUT_OF_SPEC: (BIRTH_DOWN_CROSSING, DEATH_UP_CROSSING),
+}
+
+
+def _side_windows(
+    t: np.ndarray,
+    on_side: np.ndarray,
+    is_gap: np.ndarray,
+    margin_v: np.ndarray,
+    side: str,
+    base: dict[str, object],
+) -> list[dict[str, object]]:
+    """Window rows for one side. `_s` and `_e` carry the read indices for the checks."""
+    born_by, dies_by = _SIDE_CROSSINGS[side]
+    rows: list[dict[str, object]] = []
+    for index, w in enumerate(carve(t, on_side, is_gap)):
+        s, e = int(w["s"]), int(w["e"])
+        birth_observed = w["birth_type"] == BIRTH_UP_CROSSING
+        death_observed = w["death_type"] == DEATH_DOWN_CROSSING
+        t_birth_s = float(t[s])
+        t_last_s = float(t[e - 1])
+        # An observed death is at the first read past the crossing (index e). A censored
+        # window has no such read, so it dies at its last read (index e-1).
+        t_death_s = float(t[e]) if death_observed else t_last_s
+        rows.append(
+            {
+                **base,
+                "side": side,
+                "window_index": index,
+                "t_before_birth_s": float(t[s - 1]) if birth_observed else np.nan,
+                "t_birth_s": t_birth_s,
+                "t_last_s": t_last_s,
+                "t_death_s": t_death_s,
+                "duration_s": t_death_s - t_birth_s,
+                "birth_type": born_by if birth_observed else str(w["birth_type"]),
+                "death_type": dies_by if death_observed else str(w["death_type"]),
+                "birth_observed": bool(birth_observed),
+                "censored": not death_observed,
+                "n_reads": e - s,
+                "extreme_margin": float(np.min(margin_v[s:e])),
+                "_s": s,
+                "_e": e,
+            }
+        )
+    return rows
+
+
+def _check_tiling_and_accounting(
+    t: np.ndarray,
+    is_gap: np.ndarray,
+    ins: np.ndarray,
+    rows: list[dict[str, object]],
+    label: str,
+) -> None:
+    """Raise unless both sides' windows and the gaps tile the record, and each side's
+    durations add up to the observed time its reads were on that side.
+
+    Tiling is checked by float equality of shared endpoints, in read-index order, so it
+    involves no summation. Accounting compares two computations that share nothing: the
+    windows' durations, and the observed spacing charged to each read by its own state
+    (a gap interval charged to nobody). On one side, n_windows times the mean duration
+    must equal that side's fraction times the observed time.
+    """
+
+    def fail(what: str) -> RuntimeError:
+        return RuntimeError(f"carve invariant violated at threshold {label!r}: {what}")
+
+    next_index, next_time = 0, float(t[0])
+    for row in sorted(rows, key=lambda r: int(r["_s"])):
+        s, e = int(row["_s"]), int(row["_e"])
+        if s != next_index or row["t_birth_s"] != next_time:
+            raise fail(f"a window starts at read {s}, expected read {next_index}")
+        if not row["censored"]:
+            if e >= len(t) or is_gap[e] or row["t_death_s"] != t[e]:
+                raise fail(f"an observed death at read {e} is not the next read")
+            next_time = float(t[e])
+        elif row["death_type"] == DEATH_GAP_START:
+            if e >= len(t) or not is_gap[e] or row["t_death_s"] != t[e - 1]:
+                raise fail(f"a gap death at read {e} does not meet a gap")
+            next_time = float(t[e])
+        elif e != len(t) or row["t_death_s"] != t[-1]:
+            raise fail("a scan-end death is not at the last read")
+        next_index = e
+    if next_index != len(t):
+        raise fail(f"the windows cover {next_index} of {len(t)} reads")
+
+    observed = ~is_gap[1:]
+    dt = np.diff(t)
+    total = math.fsum(dt[observed])
+    for side, on_side in ((SIDE_IN_SPEC, ins), (SIDE_OUT_OF_SPEC, ~ins)):
+        from_reads = math.fsum(dt[observed & on_side[:-1]])
+        from_windows = math.fsum(r["duration_s"] for r in rows if r["side"] == side)
+        if not math.isclose(
+            from_reads, from_windows, rel_tol=1e-12, abs_tol=1e-12 * total
+        ):
+            raise fail(
+                f"{side} windows last {from_windows!r} s but its reads were observed for "
+                f"{from_reads!r} s"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -340,8 +495,29 @@ def make_inputs_from_norm(
 # ---------------------------------------------------------------------------
 
 
+def _window_frame(rows: list[dict[str, object]]) -> pd.DataFrame:
+    frame = pd.DataFrame(rows, columns=WINDOW_COLUMNS)
+    if len(frame):
+        frame = frame.astype(
+            {
+                "window_index": "int64",
+                "n_reads": "int64",
+                "birth_observed": bool,
+                "censored": bool,
+            }
+        )
+    return frame
+
+
 def run(inputs: WindowsInputs) -> WindowsResult:
-    """Carve every threshold on the ladder and emit the window and read tables."""
+    """Carve every threshold on the ladder and emit the window and read tables.
+
+    Non-finite (time, value) pairs are dropped before carving and counted in
+    `diagnostics`. Raises ValueError on mismatched lengths (values or sigma),
+    `use_uncertainty` without sigma, time that steps backwards, no positive step between
+    reads (`spacing`), a repeated threshold label or a non-finite threshold value; and
+    RuntimeError when the windows fail the tiling or accounting check.
+    """
     t_all = np.asarray(inputs.t_rel_s, dtype=float)
     v_all = np.asarray(inputs.values, dtype=float)
     if len(t_all) != len(v_all):
@@ -363,6 +539,18 @@ def run(inputs: WindowsInputs) -> WindowsResult:
             "column is legal, but then use_uncertainty must be False - the uncertain "
             "states cannot be silently inferred."
         )
+    # Every table and `per_threshold` key a threshold by its label. Finiteness is also
+    # checked in `margin`, which a record of fewer than two reads never reaches.
+    labels = [label for label, _, _ in inputs.thresholds]
+    repeated = sorted({label for label in labels if labels.count(label) > 1})
+    if repeated:
+        raise ValueError(
+            f"threshold labels must be unique; {repeated} appear more than once, and "
+            f"their windows would merge under one label."
+        )
+    for label, thr_value, _ in inputs.thresholds:
+        if not math.isfinite(float(thr_value)):
+            raise ValueError(f"threshold {label!r} has non-finite value {thr_value!r}")
 
     # ORDER IS LOAD-BEARING: drop non-finite (t, value) pairs BEFORE measuring spacing,
     # so a run of failed fits widens the interval into a real gap. Doing it the other
@@ -390,6 +578,7 @@ def run(inputs: WindowsInputs) -> WindowsResult:
     )
 
     window_rows: list[dict[str, object]] = []
+    out_window_rows: list[dict[str, object]] = []
     read_rows: list[dict[str, object]] = []
     per_threshold: dict[str, dict[str, object]] = {}
 
@@ -399,53 +588,39 @@ def run(inputs: WindowsInputs) -> WindowsResult:
                 "n_windows": 0,
                 "n_censored": 0,
                 "n_endurance_bags": 0,
+                "n_windows_out_of_spec": 0,
+                "n_censored_out_of_spec": 0,
             }
             continue
 
         ins = in_spec_mask(v, thr_value, big_values_good)
-        windows = carve(t, ins, is_gap)
+        margin_v = margin(v, thr_value, big_values_good)
+        base = {
+            "dataset_id": inputs.dataset_id,
+            "threshold_label": label,
+            "threshold_value": float(thr_value),
+            "big_values_good": bool(big_values_good),
+        }
+        in_rows = _side_windows(t, ins, is_gap, margin_v, SIDE_IN_SPEC, base)
+        out_rows = _side_windows(t, ~ins, is_gap, margin_v, SIDE_OUT_OF_SPEC, base)
+        _check_tiling_and_accounting(t, is_gap, ins, in_rows + out_rows, label)
+        window_rows.extend(in_rows)
+        out_window_rows.extend(out_rows)
 
         window_of_read = np.full(len(t), -1, dtype=int)
         birth_of_read = np.full(len(t), np.nan, dtype=float)
         death_of_read = np.full(len(t), np.nan, dtype=float)
+        for row in in_rows:
+            s, e = int(row["_s"]), int(row["_e"])
+            window_of_read[s:e] = int(row["window_index"])
+            birth_of_read[s:e] = row["t_birth_s"]
+            death_of_read[s:e] = row["t_death_s"]
 
-        for index, w in enumerate(windows):
-            s = int(w["s"])
-            e = int(w["e"])
-            death_type = str(w["death_type"])
-            t_birth_s = float(t[s])
-            # A down_crossing dies at the first OUT-OF-SPEC read (index e). A censored
-            # window has no such read, so it dies at its last in-spec read (index e-1).
-            if death_type == DEATH_DOWN_CROSSING:
-                t_death_s = float(t[e])
-            else:
-                t_death_s = float(t[e - 1])
-            window_rows.append(
-                {
-                    "dataset_id": inputs.dataset_id,
-                    "threshold_label": label,
-                    "threshold_value": float(thr_value),
-                    "big_values_good": bool(big_values_good),
-                    "window_index": index,
-                    "t_birth_s": t_birth_s,
-                    "t_death_s": t_death_s,
-                    "duration_s": t_death_s - t_birth_s,
-                    "birth_type": str(w["birth_type"]),
-                    "death_type": death_type,
-                    "censored": death_type != DEATH_DOWN_CROSSING,
-                    "n_reads": e - s,
-                }
-            )
-            window_of_read[s:e] = index
-            birth_of_read[s:e] = t_birth_s
-            death_of_read[s:e] = t_death_s
-
-        margin = (v - thr_value) if big_values_good else (thr_value - v)
         state = np.where(ins, STATE_IN_SPEC, STATE_OUT_OF_SPEC).astype(object)
         if inputs.use_uncertainty:
             uncertain = np.zeros(len(t), dtype=bool)
             uncertain[sigma_known] = (
-                np.abs(v[sigma_known] - thr_value) < inputs.k * sigma[sigma_known]
+                np.abs(margin_v[sigma_known]) < inputs.k * sigma[sigma_known]
             )
             state[uncertain & ins] = STATE_IN_SPEC_UNCERTAIN
             state[uncertain & ~ins] = STATE_OUT_OF_SPEC_UNCERTAIN
@@ -459,7 +634,7 @@ def run(inputs: WindowsInputs) -> WindowsResult:
                     "window_index": int(window_of_read[i]) if has_window else None,
                     "t_read_s": float(t[i]),
                     "value": float(v[i]),
-                    "margin": float(margin[i]),
+                    "margin": float(margin_v[i]),
                     "window_age_s": float(t[i] - birth_of_read[i])
                     if has_window
                     else None,
@@ -473,20 +648,19 @@ def run(inputs: WindowsInputs) -> WindowsResult:
                 }
             )
 
-        n_censored = sum(1 for w in windows if w["death_type"] != DEATH_DOWN_CROSSING)
-        n_endurance = sum(1 for w in windows if w["birth_type"] != BIRTH_UP_CROSSING)
         per_threshold[label] = {
             # n_censored and n_endurance_bags OVERLAP (a scan_start + scan_end window is
-            # both). Never sum them.
-            "n_windows": len(windows),
-            "n_censored": n_censored,
-            "n_endurance_bags": n_endurance,
+            # both). Never sum them. The unsuffixed counts are the in-spec side.
+            "n_windows": len(in_rows),
+            "n_censored": sum(1 for r in in_rows if r["censored"]),
+            "n_endurance_bags": sum(1 for r in in_rows if not r["birth_observed"]),
+            "n_windows_out_of_spec": len(out_rows),
+            "n_censored_out_of_spec": sum(1 for r in out_rows if r["censored"]),
         }
 
-    windows_df = pd.DataFrame(window_rows, columns=WINDOW_COLUMNS)
+    windows_df = _window_frame(window_rows)
+    out_windows_df = _window_frame(out_window_rows)
     reads_df = pd.DataFrame(read_rows, columns=READ_COLUMNS)
-    if len(windows_df):
-        windows_df = windows_df.astype({"window_index": "int64", "n_reads": "int64"})
     if len(reads_df):
         reads_df["window_index"] = reads_df["window_index"].astype("Int64")
 
@@ -517,7 +691,8 @@ def run(inputs: WindowsInputs) -> WindowsResult:
         flush=True,
     )
     return WindowsResult(
-        windows=windows_df,
+        windows_in_spec=windows_df,
+        windows_out_of_spec=out_windows_df,
         reads=reads_df,
         meta={
             "dataset_id": inputs.dataset_id,

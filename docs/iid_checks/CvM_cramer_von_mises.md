@@ -60,10 +60,11 @@ so its statistic stays finite there.
 ## Its rows
 
 Two of the nine in `battery.ROW_KEYS`: one asymptotic, one permutation-calibrated. The
-asymptotic row is gated with C1's and C2's - `include_tau_checks` and a single segment -
-because its limiting null still assumes a truncation time chosen independently of the events,
-and an event-determined `tau` breaks the tied-down bridge for CvM exactly as it does for the
-other two. Only the permutation row is entitled to that case.
+asymptotic row runs only when `include_tau_checks` is True and the record has one segment,
+as C2's asymptotic row does; C1's needs only the flag. Its limiting null still assumes a
+truncation time chosen independently of the events, and an event-determined `tau` breaks
+the tied-down bridge for CvM exactly as it does for the other two. Only the permutation row
+is entitled to that case.
 
 `ROW_KEYS` is the schema of the bench tables, so registering a check without re-running the
 bench makes `bench_acceptance_at_n` return None and every ledger row read

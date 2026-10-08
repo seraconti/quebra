@@ -18,8 +18,8 @@ import numpy as np
 import pandas as pd
 
 from quebra.analyzers.windows import (
-    BIRTH_UP_CROSSING,
     mark_gaps_in_segments,
+    SIDE_IN_SPEC,
     STATE_IN_SPEC,
     STATE_IN_SPEC_UNCERTAIN,
     STATE_OUT_OF_SPEC,
@@ -218,6 +218,14 @@ def run(inputs: DistinguishBandInputs) -> DistinguishBand:
     from quebra.analyzers import shape_stats
 
     reads, windows = inputs.reads, inputs.windows
+    # The shape statistics and window counts describe the in-spec side; the out-of-spec
+    # table has the same schema and would be read without complaint.
+    sides = sorted(set(windows["side"].unique()) - {SIDE_IN_SPEC})
+    if sides:
+        raise ValueError(
+            f"expected the in-spec window table; got windows on side(s) {sides}. "
+            f"Pass WindowsResult.windows_in_spec."
+        )
     sigma_display = inputs.sigma_display
     finite_sigma = (
         sigma_display[np.isfinite(sigma_display)]
@@ -297,13 +305,9 @@ def run(inputs: DistinguishBandInputs) -> DistinguishBand:
         )
 
         # Shape statistics: complete windows only, then shape_min_reads.
-        complete = (
-            w[(w["birth_type"] == BIRTH_UP_CROSSING) & (~w["censored"])]
-            if len(w)
-            else w
-        )
+        complete = w[w["birth_observed"] & ~w["censored"]] if len(w) else w
         band.n_excluded_endurance[label] = (
-            int((w["birth_type"] != BIRTH_UP_CROSSING).sum()) if len(w) else 0
+            int((~w["birth_observed"]).sum()) if len(w) else 0
         )
         band.n_excluded_censored[label] = int(w["censored"].sum()) if len(w) else 0
         eligible = (

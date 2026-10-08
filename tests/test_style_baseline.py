@@ -37,11 +37,11 @@ PATTERNS = {
     "fontsize": re.compile(r"""fontsize\s*=\s*["'\d]|["']fontsize["']\s*:\s*["'\d]"""),
 }
 
-# It ratchets DOWN only. 15 is the current floor. The pattern keys on any literal VALUE, so
+# It ratchets DOWN only. 14 is the current floor. The pattern keys on any literal VALUE, so
 # a named size such as `fontsize="x-small"` counts as the hardcoded size it is, and it reaches
 # the dict spelling `"fontsize": 9` as well as the keyword; a size read from `theme` does not
 # count.
-BASELINE = 15
+BASELINE = 14
 
 
 def _counts() -> dict[str, int]:

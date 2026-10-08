@@ -135,10 +135,10 @@ def run_battery(
     perm = resolve_perm(sizes, perm, n_perm, rng)
 
     # The two shared intermediates. Everything below is an aggregation of one of these.
-    # The gap gather is skipped when C1/C2 are off, since nothing else reads it.
+    # The gaps are gathered whatever the flags say: C5, C6 and the CvM row read them too.
     gaps = concatenated_gaps(segments)
     # CvM wants the permuted matrix as well, and unlike C1/C2 it runs even when
-    # `include_tau_checks` is False - so this is not gated on that flag alone.
+    # `include_tau_checks` is False - so this is computed whatever that flag says.
     permuted = perm.apply(gaps)
     layout = lag_layout(sizes, max_lag)
     ranks = global_ranks(gaps)
@@ -175,11 +175,12 @@ def run_battery(
                     gamma_estimator=gamma_estimator,
                 )
             )
-        # CvM's ASYMPTOTIC row belongs inside this gate with C1 and C2. Its STATISTIC is
-        # finite when `tau == T_N` - there is no `1/(s(1-s))` weight to blow up - but its
-        # limiting null still assumes a truncation time chosen INDEPENDENTLY of the events,
-        # and an event-determined `tau` breaks the tied-down bridge for CvM exactly as it
-        # does for the other two. Only the permutation row below is entitled to that case.
+        # CvM's ASYMPTOTIC row runs inside this `include_tau_checks` branch with C1's and
+        # C2's, and like C2's only for a single segment. Its STATISTIC is finite when
+        # `tau == T_N` - there is no `1/(s(1-s))` weight to blow up - but its limiting null
+        # still assumes a truncation time chosen INDEPENDENTLY of the events, and an
+        # event-determined `tau` breaks the tied-down bridge for CvM exactly as it does for
+        # the other two. Only the permutation row below is entitled to that case.
         if len(segments) == 1:
             results.append(
                 cvm.run(

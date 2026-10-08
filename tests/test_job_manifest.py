@@ -78,10 +78,10 @@ def test_regenerating_is_idempotent():
     assert build() == build()
 
 
-def test_the_gate_fires_when_a_JOB_changes_not_only_when_the_file_is_edited(
+def test_staleness_fires_when_a_JOB_changes_not_only_when_the_file_is_edited(
     tmp_path, monkeypatch
 ):
-    """The gate has to notice a job changing, which is the case it exists for.
+    """The staleness test has to notice a job changing, which is the case it exists for.
 
     Under the old allowlist this could not have been written: editing a seed left `build()`
     byte-identical, because the seed was not in `INTERESTING`.

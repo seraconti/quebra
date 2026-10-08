@@ -1,4 +1,4 @@
-"""Regression gate for the AcrossCalibration panel split (builder vs renderer).
+"""Regression test for the AcrossCalibration panel split (builder vs renderer).
 
 The output-builder must produce a COMPLETE typed artifact and the renderer must be a
 pure function of it. Elapsed days, hours and the histogram are the pre-split arithmetic;

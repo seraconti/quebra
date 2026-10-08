@@ -30,21 +30,21 @@ Response is best effort, be kind <3
 1. Open an issue first for anything larger than a typo. It is cheaper to disagree about an
    approach in an issue than in a pull request.
 2. Fork, branch from `main`, and keep the branch focused on one change.
-3. Run the gates before you push:
+3. Run these before you push:
 
    ```bash
    make check     # lint, types, import contract, tests, using your installed tools
    make deps      # dependency declarations
-   make check-ci  # the same gate against a clean resolve, which is what CI installs
+   make check-ci  # the same steps against a clean resolve, which is what CI installs
    ```
 
    `check` and `check-ci` run the same steps against different inputs. CI installs the
    newest version every `>=` admits into a fresh non-editable environment, so `check`
    passing is not by itself evidence that CI will.
 
-   `make cov` reports coverage and is not a gate. Nothing has a threshold and nothing
-   fails on the number. Read it for one thing: a module executing code that no test
-   checks. A high percentage beside no oracle is the signal, not a low one.
+   `make cov` reports coverage. Nothing has a threshold and nothing fails on the number.
+   Read it for one thing: a module executing code that no test checks. A high percentage
+   beside no oracle is the signal, not a low one.
 
 4. Open a pull request describing what changed and what you ran.
 

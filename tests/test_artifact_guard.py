@@ -21,7 +21,7 @@ import pytest
 
 matplotlib.use("Agg")
 
-from quebra.analyzers import windows
+from quebra.analyzers import event_table, kaplan_meier, windows
 from quebra.analyzers.within_calibration_compute import (
     build_within_calibration_panel_data,
 )
@@ -52,7 +52,7 @@ def _carved(t_h, series, thresholds):
             dataset_id="unit",
         )
     )
-    return result.windows, result.reads
+    return result.windows_in_spec, result.reads
 
 
 _GUARD_THRESHOLDS = [("1e-4", 1e-4, False)]
@@ -67,10 +67,22 @@ def _valid_within_calibration() -> WithinCalibrationPanelData:
         primary_series=series,
         primary_label="Infidelity",
         thresholds=_GUARD_THRESHOLDS,
-        meta={"qubit": "1"},
+        meta={"qubit": "1", "dataset": "unit"},
         windows=_carved(t_h, series, _GUARD_THRESHOLDS)[0],
         reads=_carved(t_h, series, _GUARD_THRESHOLDS)[1],
         gap_spans_s=[],  # uniform spacing: the carve records no gap
+        kaplan_meier=kaplan_meier.kaplan_meier_set(
+            event_table.event_tables_from_carve(
+                windows.run(
+                    windows.WindowsInputs(
+                        t_rel_s=t_h * 3600.0,
+                        values=series,
+                        thresholds=_GUARD_THRESHOLDS,
+                        dataset_id="unit",
+                    )
+                )
+            )
+        ),
     )
 
 
@@ -186,10 +198,10 @@ def _import_job_module(job_py: Path):
 def test_composite_reuse_of_reuse_eligible_stale_artifact_aborts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Defense-in-depth: even a cached sub-job artifact that PASSES the reuse gate
+    """Defense-in-depth: even a cached sub-job artifact that PASSES the reuse rule
     (matching identity + commit, clean tree) must abort at load if its pickle is
     schema-stale - the guard, not a mid-render crash. Requires seeding the cache
-    dir by the sub-job's IDENTITY and forcing a clean tree so the gate admits it."""
+    dir by the sub-job's IDENTITY and forcing a clean tree so the reuse rule accepts it."""
     from quebra.core.dataset import Dataset  # noqa: F401  (sub-job module imports it)
     from quebra.core.job import Job
     from quebra.core import runner
@@ -208,20 +220,21 @@ def test_composite_reuse_of_reuse_eligible_stale_artifact_aborts(
 
     # chdir BEFORE seeding: both git helpers are anchored on the working directory, so
     # seeding from the repository and running from tmp_path would record two different
-    # commits, the gate would reject the artifact, and the stale pickle would never be
+    # commits, the reuse rule would reject the artifact, and the stale pickle would never be
     # loaded - leaving the guard this test exists for unexercised.
     monkeypatch.chdir(tmp_path)
 
-    # Both halves of the gate are forced, because tmp_path is not a repository: `git status`
-    # there fails (→ dirty) and `rev-parse HEAD` fails (→ "nogit"), and "nogit" is not a
-    # commit match even against itself. A fixed stand-in commit is what lets the gate ADMIT
-    # the artifact, which is the precondition for testing what happens at load.
+    # Both git conditions of the reuse rule are forced, because tmp_path is not a repository:
+    # `git status` there fails (→ dirty) and `rev-parse HEAD` fails (→ "nogit"), and "nogit"
+    # is not a commit match even against itself. A fixed stand-in commit is what lets the
+    # reuse rule ACCEPT the artifact, which is the precondition for testing what happens at
+    # load.
     fake_commit = "cafe123"
     monkeypatch.setattr(runner, "get_git_commit", lambda: fake_commit)
     monkeypatch.setattr(runner, "is_tree_clean", lambda: True)
 
     # the sub-job's real identity names its cache dir; seed a prov record whose
-    # identity + commit MATCH this run so the gate admits it, plus a stale pickle
+    # identity + commit MATCH this run so the reuse rule accepts it, plus a stale pickle
     sub_identity = _import_job_module(sub_py).build_identity(tmp_path).digest
     cached = out / f"tiny_sub_{sub_identity[:6]}_20200101_000000"
     (cached / "provenance").mkdir(parents=True)
@@ -577,7 +590,7 @@ def test_a_composite_reuses_a_sub_job_artifact_written_before_its_package_moved(
     Proves the WIRING only: the runner's composite transport, the pipeline's one artifact read,
     goes through `load_artifact`, both halves of it. The alias resolves an old path, and the
     completeness check refuses a stale artifact at that read. The state built here cannot arise
-    in production. The reuse gate admits only a run at the current commit on a clean tree, and
+    in production. The reuse rule accepts only a run at the current commit on a clean tree, and
     such a run is written under current paths, so this test fakes a provenance record claiming
     the current commit over an old-path pickle, set up as
     `test_composite_reuse_of_reuse_eligible_stale_artifact_aborts` sets up a stale one.

@@ -11,7 +11,7 @@ INDEPENDENT of the implementation:
   Marsaglia's limiting AD distribution over 6000 replicates.
 
 Both force `gamma = 1`, so both pin the TRANSCRIPTION and neither pins the shipped path,
-which divides by an estimated `gamma_hat`. The distinction matters: reading the gate as
+which divides by an estimated `gamma_hat`. The distinction matters: reading these two tests as
 proof of the whole implementation hides that the shipped asymptotic path is measurably
 oversized at n = 20. `test_shipped_c2_asymptotic_size_matches_its_measurement` holds the
 shipped size to a coarse band around its measured value, and
@@ -463,7 +463,7 @@ def _carve_windows(t, in_spec):
             thresholds=[("thr", 0.0, True)],
         )
     )
-    return result.windows, result.diagnostics.get("gap_spans_s")
+    return result.windows_in_spec, result.diagnostics.get("gap_spans_s")
 
 
 def _gapped_record():
@@ -546,6 +546,45 @@ def test_omitting_gap_spans_keeps_the_old_behaviour():
         assert np.array_equal(a.x, b.x) and a.tau == b.tau
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "mangle, error, match",
+    [
+        (lambda r: r.windows_out_of_spec, ValueError, "in-spec window table"),
+        (
+            lambda r: r.windows_in_spec.drop(columns="censored"),
+            KeyError,
+            r"needs columns \['censored'\]",
+        ),
+    ],
+    ids=["out_of_spec_table", "no_censored_column"],
+)
+@pytest.mark.parametrize("clock", [CLOCK_IN_SPEC, CLOCK_CALENDAR])
+def test_a_table_segments_cannot_be_read_from_is_refused(mangle, error, match, clock):
+    """Oracle: specification, the `segments_from_windows` contract.
+
+    Both clocks take their events from the in-spec table: a death by down_crossing on the
+    in-spec clock, a window birth on the calendar clock. An out-of-spec table would put
+    every event at the opposite crossing. Both refusals are types `check_ledger` reports
+    as a row. The in-spec table of the same carve is the control: a guard refusing every
+    table would fail it.
+    """
+    rng = np.random.default_rng(3)
+    in_spec = rng.random(40) > 0.4
+    carved = windows.run(
+        windows.WindowsInputs(
+            t_rel_s=np.arange(40, dtype=float),
+            values=np.where(in_spec, 1.0, -1.0),
+            thresholds=[("thr", 0.0, True)],
+        )
+    )
+    assert segments_from_windows(carved.windows_in_spec, clock=clock)[0]
+    table = mangle(carved)
+    assert len(table), "the guard must be handed rows to refuse"
+    with pytest.raises(error, match=match):
+        segments_from_windows(table, clock=clock)
+
+
 # -------------------- calendar-clock truncation (R8.1)
 
 
@@ -563,7 +602,7 @@ def _carve_unit_series(in_spec: list[int]):
             thresholds=[("thr", 0.0, True)],
         )
     )
-    return result.windows, result.diagnostics
+    return result.windows_in_spec, result.diagnostics
 
 
 def _record_ending_on_one_in_spec_read() -> list[int]:
@@ -671,7 +710,7 @@ def test_an_interior_block_ending_in_a_zero_duration_window_is_not_reachable_by_
             thresholds=[("thr", 0.0, True)],
         )
     )
-    frame = result.windows
+    frame = result.windows_in_spec
     gaps = result.diagnostics.get("gap_spans_s")
     assert gaps, "the fixture must contain a detected read gap"
 

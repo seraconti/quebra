@@ -2,7 +2,7 @@
 
 A composite may include a composite to any depth. Cycles fail loudly at import
 time; artifact reuse is depth-complete (the locator searches one shared pool
-recursively) under the unchanged gate (identity + commit + clean tree). These
+recursively) under the unchanged reuse rule (identity + commit + clean tree). These
 build nested composites as tmp job files and run them through run_job.
 """
 

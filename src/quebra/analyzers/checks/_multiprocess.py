@@ -30,7 +30,7 @@ import pandas as pd
 from quebra.analyzers.windows import (
     BIRTH_GAP_RESUME,
     BIRTH_SCAN_START,
-    DEATH_DOWN_CROSSING,
+    SIDE_IN_SPEC,
 )
 from quebra.analyzers.checks.result import (
     CLOCK_CALENDAR,
@@ -235,7 +235,10 @@ def segments_from_windows(
     observation_end_s: float | None = None,
     gap_spans_s: list[tuple[float, float]] | None = None,
 ) -> tuple[list[Segment], int]:
-    """Split one threshold's window table into time-censored renewal segments.
+    """Split one threshold's in-spec window table into time-censored renewal segments.
+
+    A `side` column with any value other than `SIDE_IN_SPEC` raises ValueError; a table
+    without one (the bench carve) is taken as in-spec.
 
     Returns `(segments, n_segments_dropped)`. A segment with fewer than `min_events`
     complete gaps is dropped rather than padded - it carries no information about
@@ -273,10 +276,18 @@ def segments_from_windows(
         raise ValueError(
             f"unknown clock {clock!r}; known: {CLOCK_IN_SPEC!r}, {CLOCK_CALENDAR!r}"
         )
-    required = {"birth_type", "death_type", "duration_s", "t_birth_s", "t_death_s"}
+    required = {"birth_type", "censored", "duration_s", "t_birth_s", "t_death_s"}
     missing = required - set(windows.columns)
     if missing:
         raise KeyError(f"segments_from_windows needs columns {sorted(missing)}")
+    if "side" in windows.columns and (windows["side"] != SIDE_IN_SPEC).any():
+        other = sorted({str(v) for v in windows["side"]} - {SIDE_IN_SPEC})
+        raise ValueError(
+            "segments_from_windows takes the in-spec window table; got rows with side "
+            f"{other}. Both clocks take their events from the in-spec table (a death by "
+            "down_crossing on the in-spec clock, a birth on the calendar clock), and an "
+            "out-of-spec table would put every event at the opposite crossing."
+        )
     if not len(windows):
         return [], 0
 
@@ -286,7 +297,7 @@ def segments_from_windows(
     if np.any(np.diff(t_birth_all) < 0.0):
         raise ValueError(
             "window births are not monotone, so this is not ONE threshold's window table. "
-            "`WindowsResult.windows` concatenates every threshold; select one with "
+            "`WindowsResult.windows_in_spec` concatenates every threshold; select one with "
             "`windows[windows['threshold_label'] == label]` first. Passing the whole table "
             "silently produces segments split at the wrong places."
         )
@@ -303,7 +314,7 @@ def segments_from_windows(
         if not len(block):
             continue
         is_final_block = position == n_blocks - 1
-        complete = (block["death_type"] == DEATH_DOWN_CROSSING).to_numpy()
+        complete = ~block["censored"].to_numpy(dtype=bool)
         t_birth = block["t_birth_s"].to_numpy(dtype=float)
         t_death = block["t_death_s"].to_numpy(dtype=float)
         # When observation of THIS block stopped. For an interior block that is the start

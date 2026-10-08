@@ -49,7 +49,7 @@ duration-level lag-1 the cell actually induced (`runner.py` module docstring).
 
 ## 3. How the numbers are consumed
 
-**The ledger's gate, `analyzers/calibration_summary.py:bench_acceptance_at_n`.**
+**The ledger's acceptance rule, `analyzers/calibration_summary.py:bench_acceptance_at_n`.**
 - It groups size rows by (check, calibration, variant, clock, n).
 - It keeps only null-arm cells inside the censoring envelope, `ENVELOPE_MAX_CENSORING` =
   0.03, that rest on at least half their replicates (`MIN_SUPPORT_FRACTION`).
@@ -137,7 +137,7 @@ None of these fixes is implemented. Each is a proposal.
    Three exact permutation rows are flagged today: C5 studentized, in-spec, n = 700; C5
    unstudentized, in-spec, n = 20; and CvM permutation, calendar, n = 100
    (`bench_acceptance_at_n` computed from `size_table.csv`).
-   *Proposal:* correct across groups, or exempt permutation rows from the size gate.
+   *Proposal:* correct across groups, or exempt permutation rows from the size criterion.
 9. **Ties are under-counted on quantised data.** `_permutation.permutation_p_value` counts
    ties with a float-exact `>=`. On a read grid, shuffles that tie the observed statistic
    exactly can differ in the last bits and are missed, so p is slightly low. *Proposal:* a

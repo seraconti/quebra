@@ -6,6 +6,8 @@ from collections.abc import Mapping
 import numpy as np
 import pandas as pd
 
+from quebra.analyzers.kaplan_meier import KaplanMeierSet
+
 
 @dataclass(slots=True)
 class FidelityResult:
@@ -22,6 +24,7 @@ class FidelityInputs:
     profile: str
     raw_frequency_hz: np.ndarray | None = None
     use_angular_frequency: bool = False
+    dataset_id: str = ""
 
 
 def make_inputs_from_norm(
@@ -42,6 +45,12 @@ def make_inputs_from_norm(
     if not isinstance(fidelity_cfg, Mapping):
         raise TypeError("config['fidelity'] must be a mapping")
     meta = norm.get("meta", {}) if isinstance(norm.get("meta", {}), Mapping) else {}
+    dataset_id = str(meta.get("dataset_id") or "").strip()
+    if not dataset_id:
+        raise KeyError(
+            "Fidelity requires a non-empty meta['dataset_id'] in the normalized mapping: "
+            "the panel caption names the record it draws."
+        )
     profile = str(meta.get("profile", config.get("dataset_profile", "")))
     raw_frequency_hz = (
         np.asarray(norm["raw_frequency_hz"], dtype=float)
@@ -55,6 +64,7 @@ def make_inputs_from_norm(
         profile=profile,
         raw_frequency_hz=raw_frequency_hz,
         use_angular_frequency=bool(fidelity_cfg.get("use_angular_frequency", False)),
+        dataset_id=dataset_id,
     )
 
 
@@ -149,7 +159,11 @@ def run(inputs: FidelityInputs) -> FidelityResult:
         )
         return FidelityResult(
             frame=frame,
-            meta={"profile": inputs.profile, "rabi_base_hz": rabi_base_hz},
+            meta={
+                "profile": inputs.profile,
+                "rabi_base_hz": rabi_base_hz,
+                "dataset_id": inputs.dataset_id,
+            },
             diagnostics=diag,
         )
 
@@ -178,7 +192,11 @@ def run(inputs: FidelityInputs) -> FidelityResult:
     )
     return FidelityResult(
         frame=frame,
-        meta={"profile": inputs.profile, "rabi_base_hz": rabi_base_hz},
+        meta={
+            "profile": inputs.profile,
+            "rabi_base_hz": rabi_base_hz,
+            "dataset_id": inputs.dataset_id,
+        },
         diagnostics=diag,
     )
 
@@ -224,13 +242,16 @@ def make_panel_data(
     windows: pd.DataFrame,
     reads: pd.DataFrame,
     gap_spans_s: list[tuple[float, float]],
+    kaplan_meier: KaplanMeierSet,
     shape_min_reads: int = 5,
     xi_seed: int = 0,
     k: float = 1.0,
     use_uncertainty: bool = False,
-    dataset_id: str = "",
 ):
-    """Convert FidelityResult + the window tables to WithinCalibrationPanelData."""
+    """Convert FidelityResult + the window tables to WithinCalibrationPanelData.
+
+    The caption's dataset is `result.meta["dataset_id"]`, set by `run` from the norm.
+    """
     from quebra.analyzers.within_calibration_compute import (
         build_within_calibration_panel_data,
     )
@@ -250,6 +271,7 @@ def make_panel_data(
             ),
         ]
 
+    dataset_id = str(result.meta["dataset_id"])
     meta: dict[str, object] = {"dataset": dataset_id}
     rabi_base_hz = result.meta.get("rabi_base_hz")
     if rabi_base_hz is not None:
@@ -273,6 +295,7 @@ def make_panel_data(
         windows=windows,
         reads=reads,
         gap_spans_s=gap_spans_s,
+        kaplan_meier=kaplan_meier,
         shape_min_reads=shape_min_reads,
         xi_seed=xi_seed,
         k=k,

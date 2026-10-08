@@ -89,7 +89,7 @@ def _reference_windows(t: np.ndarray, values: np.ndarray) -> pd.DataFrame:
             thresholds=[("thr", THRESHOLD, True)],
         )
     )
-    frame = result.windows.reset_index(drop=True)
+    frame = result.windows_in_spec.reset_index(drop=True)
     return frame[BENCH_WINDOW_COLUMNS] if len(frame) else frame
 
 
@@ -191,3 +191,18 @@ def test_bench_carve_matches_windows_run_on_hostile_input(kind):
         _reference_windows(t, values).reset_index(drop=True)[BENCH_WINDOW_COLUMNS],
         check_dtype=False,
     )
+
+
+@pytest.mark.parametrize("threshold", [float("nan"), float("inf")])
+def test_bench_carve_refuses_a_non_finite_threshold_on_a_one_read_record(threshold):
+    """Oracle: `windows.run`, which checks the ladder before its two-read early return.
+    The bench claims identical output, so it must refuse the same input."""
+    t, values = np.zeros(1), np.ones(1)
+    with pytest.raises(ValueError, match="non-finite"):
+        windows.run(
+            windows.WindowsInputs(
+                t_rel_s=t, values=values, thresholds=[("thr", threshold, True)]
+            )
+        )
+    with pytest.raises(ValueError, match="non-finite"):
+        carve_windows(t, values, threshold, big_values_good=True)

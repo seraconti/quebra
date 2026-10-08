@@ -1,4 +1,4 @@
-"""The output-builder reshapes a ledger into grids, and never gates on a result.
+"""The output-builder reshapes a ledger into grids, and never branches on a result.
 
 Oracle: the ledger's own column contract (`check_ledger.LEDGER_COLUMNS`) and its verdict
 vocabulary. These are reshape tests, not statistical ones - the builder computes no statistic,
@@ -444,7 +444,7 @@ def test_the_battery_switches_are_derived_from_the_run_set_and_reach_the_ledger(
     from quebra.analyzers import check_ledger
 
     class _W:
-        windows = None
+        windows_in_spec = None
         meta: dict = {}
         diagnostics: dict = {}
 

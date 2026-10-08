@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the gate against a clean dependency resolve, the way the workflow does.
+# Run `make check` against a clean dependency resolve, the way the workflow does.
 #
 # `make check` runs whatever is installed in the working environment. The workflow installs
 # the newest version every ">=" admits, into a fresh non-editable environment with no

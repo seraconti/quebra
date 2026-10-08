@@ -13,3 +13,7 @@ from pathlib import Path
 _REFERENCE_DIR = Path(__file__).resolve().parents[2] / "jobs" / "reference"
 R_REFERENCE_INPUTS = _REFERENCE_DIR / "r_reference_inputs.csv"
 R_REFERENCE_VALUES = _REFERENCE_DIR / "r_reference_values.csv"
+# Written by `rscripts/survival_reference.R`, read by `tests/test_survival_r_reference.py`.
+R_SURVIVAL_INPUTS = _REFERENCE_DIR / "r_survival_inputs.csv"
+R_SURVIVAL_VALUES = _REFERENCE_DIR / "r_survival_values.csv"
+R_TURNBULL_INPUTS = _REFERENCE_DIR / "r_turnbull_inputs.csv"

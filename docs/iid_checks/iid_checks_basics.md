@@ -10,7 +10,7 @@ equation numbers and the per-check limitations that a reader checking a transcri
 Deleting them would move that material nowhere.
 
 The decision itself, so this page does not have to be read for it: there is no licence and no
-gate. A verdict annotates a figure and never suppresses one.
+veto on drawing. A verdict annotates a figure and never suppresses one.
 
 This is the first directory in `docs/` to carry citations. That is deliberate: these are
 implementations of published statistics and the equation numbers are load-bearing - a
