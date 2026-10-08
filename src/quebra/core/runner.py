@@ -219,7 +219,7 @@ def _expected_sink_pkls(job: Job) -> set[str]:
 
     The sink loop writes these one at a time, so a run that raised on its third sink still
     holds a perfectly readable provenance record from its first. Identity, commit and
-    tree-clean all match on that record, so without this test the gate reads a half-written
+    tree-clean all match on that record, so without this test the reuse rule accepts a half-written
     run as reusable and every later invocation skips the job - leaving the missing sinks
     permanently unproduced. `run --all` makes it likely, because it catches per job and
     carries on, so the partial directory survives the batch.
@@ -256,7 +256,7 @@ def _read_prov_reuse_fields(
 def _reuse_eligible_dir(
     candidates: list[Path], identity: str, git_commit: str, tree_clean: bool
 ) -> Path | None:
-    """The newest candidate run reusable under the gate, else None (→ re-run fresh).
+    """The newest candidate run reusable under the reuse rule, else None (→ re-run fresh).
 
     Reuse requires ALL of: matching content identity, matching git commit, the
     consumer's tree clean NOW, and the artifact PRODUCED on a clean tree. Commit +
@@ -270,7 +270,7 @@ def _reuse_eligible_dir(
     read", and two runs that both failed to read a commit are not two runs at the same commit.
     The pair `("nogit", tree_clean=True)` is reachable - a repository with no commits answers
     `status --porcelain` cleanly while `rev-parse HEAD` fails - and admitting it would reduce
-    the gate to an identity match alone. That matters because commit-plus-clean-tree is the
+    the reuse rule to an identity match alone. That matters because commit-plus-clean-tree is the
     stand-in for the code the identity does not cover: a plot class reaches a run through
     `job.figure`, not through a step function, so it is absent from the closure and an edit to
     it changes every rendered figure without moving the digest.
@@ -330,7 +330,7 @@ def _locate_artifact(ref: ArtifactRef, context: ResolutionContext) -> LocatedArt
         # already-FINISHED artifact (written earlier in the same top invocation,
         # under an ancestor composite) is a valid candidate - resolution is
         # sequential (no partial-write race) and the identity+commit+clean-tree
-        # gate still applies, so that is content-correct diamond dedup, not a leak.
+        # reuse rule still applies, so that is content-correct diamond dedup, not a leak.
         candidates = pool_root.glob(f"**/{dir_glob}")
         return sorted(
             (
@@ -539,7 +539,7 @@ def run_job(
     identity = job.build_identity(dataset_root).digest
     identity_short = identity[:6]
 
-    # Reuse gate (standalone jobs; composites always run fresh). Skip only when a
+    # Reuse rule (standalone jobs; composites always run fresh). Skip only when a
     # prior run has the SAME identity AND the SAME commit AND the tree is clean -
     # any mismatch (edited shared code → commit differs; dirty tree) re-runs fresh.
     #

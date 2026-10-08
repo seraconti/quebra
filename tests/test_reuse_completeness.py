@@ -1,4 +1,4 @@
-"""The reuse gate, exercised against real git and real run directories.
+"""The reuse rule, exercised against real git and real run directories.
 
 Reuse requires ALL of: a matching content identity, a matching commit, a clean tree at both
 ends, and a run that actually finished. Every other reuse test in the suite monkeypatches
@@ -8,9 +8,9 @@ itself.
 Two properties carry most of the weight:
 
 - **Both git helpers must describe the CWD's repository**, not the one this module is
-  installed into, because they are two halves of one gate and a gate whose halves describe
-  different trees asserts nothing. `"nogit"` therefore never satisfies the commit half, not
-  even against itself.
+  installed into, because they answer the commit and clean-tree conditions of one rule, and
+  two conditions read off different trees assert nothing. `"nogit"` therefore never
+  satisfies the commit condition, not even against itself.
 
 - **A candidate run must be complete.** The sink loop writes artifacts one at a time, so a run
   that raises partway through still leaves a readable provenance record whose identity, commit
@@ -94,7 +94,7 @@ def test_a_dirty_tracked_file_makes_the_tree_dirty(tiny_repo, monkeypatch):
 def test_an_untracked_file_does_not_make_the_tree_dirty(tiny_repo, monkeypatch):
     """`--untracked-files=no`: a scratch file must not disable artifact reuse.
 
-    The claim the gate makes is only "no uncommitted TRACKED changes", because an untracked
+    The claim the reuse rule makes is only "no uncommitted TRACKED changes", because an untracked
     file cannot have contributed to a result that was produced from committed code.
     """
     monkeypatch.chdir(tiny_repo)
@@ -153,12 +153,12 @@ def test_expected_sink_pkls_uses_the_source_node_for_a_figure(tmp_path):
     assert _expected_sink_pkls(job) == {"shaped.pkl"}
 
 
-# --- "nogit" never satisfies the commit half of the gate --------------------
+# --- "nogit" never satisfies the commit condition of the reuse rule ---------
 
 
 def test_nogit_is_not_reuse_eligible_even_against_itself(tmp_path):
     """A repository with no commits answers `status` cleanly while `rev-parse HEAD` fails, so
-    the pair ("nogit", clean) is reachable. Admitting it would reduce the gate to an identity
+    the pair ("nogit", clean) is reachable. Admitting it would reduce the reuse rule to an identity
     match, and identity does not cover a plot class - those reach a run through `job.figure`
     rather than through a step function, so they are absent from the import closure.
     """

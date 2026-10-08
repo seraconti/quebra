@@ -6,10 +6,12 @@ statistics to them. Correctness, reproducibility and provenance come first. Pyth
 
 The pipeline is a lazy DAG: nothing runs until a sink (figure or materialize) resolves.
 
-**Implemented today:** Kaplan-Meier, MTBF and MTBC, window carving with an explicit gap policy,
-an independence check battery, and the metric analyzers.
-**Not implemented:** Nelson-Aalen, log-rank, RMST, MCF. `grep -rli` finds no module for any of
-them. Do not describe them as shipping.
+**Implemented today:** Kaplan-Meier, the Nelson-Aalen cumulative hazard, curve quantiles and
+the restricted mean (RMST), Turnbull's estimate, the placement bracket, MTBF and MTBC, window
+carving on both sides of a threshold with an explicit gap policy, an independence check
+battery, and the metric analyzers.
+**Not implemented:** log-rank, MCF, a smoothed hazard h(t). `grep -rli` finds no module for any
+of them. Do not describe them as shipping.
 
 This is the only agent-facing file, and `CLAUDE.md` is a symlink to it so it loads every
 session. Read `spec/quebraplan.md` only when told which phase to work on.
@@ -147,7 +149,7 @@ and INVENTED 36 pairings.
 
 **State the aggregation and the multiplicity before reading a verdict off it.** Max-over-grid
 flattered power by 7x; a flat +/-0.01 size band rejected all seven rows because the max of 44-90
-deviations is roughly 3 SE by chance. Say which aggregate gates, and correct for how many cells
+deviations is roughly 3 SE by chance. Say which aggregate decides, and correct for how many cells
 it saw.
 
 **When a claim cannot be cheaply verified, write it as the open question it is.** "I have not
@@ -159,8 +161,11 @@ measured this" is cheaper than the review that finds it false.
 
 Violating these is a scientific error, not a style problem. None of them fails a test.
 
-**In-spec means the metric is at or above the threshold.** For T2\*, in-spec is
-`T2* >= threshold`. Never invert this.
+**In spec means the margin is non-negative.** The margin is `value - threshold` when big
+values are good (T2\*: in spec is `T2* >= threshold`) and `threshold - value` when small
+values are good (infidelity). A read exactly at the threshold is in spec in both directions.
+`analyzers/windows.margin` is the one definition; nothing else compares a metric with a
+threshold. Never invert this.
 
 **Never resample a metric time series onto a uniform grid.** Resampling destroys and invents
 threshold crossings; measured loss is roughly 25 to 45 percent of real crossings at working
@@ -180,8 +185,8 @@ from "assessed and nothing rejected". A grid of `not computed` cells satisfies t
 
 The band is ALWAYS computed and ALWAYS drawn. A failed check annotates it and never suppresses
 it: control flow that depends on what the data happened to say is unpredictable, and a reader is
-better served by a band they are told not to trust than by a missing one. Promoting a check to an
-actual gate is an open question (`spec/quebraplan.md` section 7), not current behaviour.
+better served by a band they are told not to trust than by a missing one. Letting a check stop a
+computation is an open question (`spec/quebraplan.md` section 7), not current behaviour.
 
 **Locked vocabulary.** These are not synonyms and must never be substituted.
 
@@ -219,7 +224,12 @@ loaders/registry.py            built-ins: .csv  .yaml/.yml  .h5/.hdf5  .pkl/.pic
 schemas/     base.py, track912.py (912-day Ramsey), calibration_log.py
 transforms/  filter.py, interpolate.py, lookup_prior.py (public check_unix_s lives here)
 analyzers/   allan.py, fidelity.py, t2star.py, tlf.py, mtbf.py, psd.py (stub)
-             windows.py  in-spec window carving: gap policy, censoring, read table
+             windows.py  window carving on both sides of a threshold: the one in-spec
+             definition (margin), gap policy, censoring, read table
+             event_table.py  the event table every survival estimator reads
+             survival.py  Nelson-Aalen, curve summaries, Turnbull, placement bracket
+             check_attachment.py  standings and check-outcome fields; a leaf, imports
+             nothing from quebra
              signal_band.py, distinguish_band.py, reliability_band.py  the three nested
              band contracts of the within-calibration panel; shape_stats.py
              calibration_summary.py  reshapes the bench tables into the four typed
@@ -341,7 +351,7 @@ and leaves neither able to show which one is the evidence.
 
 **Deleting a test.** Volume of deletion is the wrong metric: a deleted test that was catching
 something is an undetectable regression, and it is the one operation whose damage is invisible to
-every gate here. Before removing one, all three must hold.
+every test and lint step here. Before removing one, all three must hold.
 
 1. **Name the property it asserts, and name the test that still asserts it.** If no other test
    does, it is not redundant - it is the only evidence.
@@ -360,7 +370,8 @@ Tests requiring R **skip** when `Rscript` is absent. They never pass with mocked
 
 This repo has drifted here before. Hold the line.
 
-- `docs/` holds reference docs: `TIME_SEMANTICS`, `PANEL_CONTRACT`, `FIGURE_STANDARD`, `JOBS`,
+- `docs/` holds reference docs: `TIME_SEMANTICS`, `WINDOW_SEMANTICS` (in spec, sides, windows,
+  the event table), `PANEL_CONTRACT`, `FIGURE_STANDARD`, `JOBS`,
   `WRITING_A_JOB`, `WRITING_A_SCHEMA`, `GOLD_STANDARD` (every published number the checks
   reproduce, with its locator), and `iid_checks/` (one page per check plus limitations).
   Architecture rationale lives there, not in this file. Refresh docs; do not narrate evolving
@@ -388,7 +399,7 @@ exactly this, then wait:
 CHECKPOINT <n.n> - <one line: what this checkpoint achieved>
 
   Changed:      <paths>  (<count> files)
-  Gates run:    ruff <exit> | pytest <exit> (<n> passed) | <other> <exit>
+  Commands run: ruff <exit> | pytest <exit> (<n> passed) | <other> <exit>
   Budget:       collect +<actual> of +<low>..+<high> stated | files +<actual> of +<stated>
   Not done:     <what a reader might assume was done but was not>
   Known risk:   <what could break, especially cached identities>
@@ -408,10 +419,11 @@ per-requirement envelopes summed to +19 to +34; the phase landed at +99, every e
 went unenforced. A budget nothing halts on is a budget that is not being kept.
 
 **Never review a tree that is being edited.** Freeze it, run the review once, apply the findings,
-then re-review if you must. A reviewer measuring a moving tree reports gate results that describe
-no state that ever existed, and it will keep finding defects indefinitely because it is reading the
-previous round's fixes. Measured: one review watched the tree change four times underneath it, and
-two of its findings were about tests the previous round had added an hour earlier.
+then re-review if you must. A reviewer measuring a moving tree reports test and lint results that
+describe no state that ever existed, and it will keep finding defects indefinitely because it is
+reading the previous round's fixes. Measured: one review watched the tree change four times
+underneath it, and two of its findings were about tests the previous round had added an hour
+earlier.
 
 `Not done` and `Known risk` are mandatory and must not read "none" unless that is literally true.
 They are what makes the diff review fast. Do not proceed past a checkpoint on your own
@@ -434,6 +446,14 @@ These apply to every docstring, comment, spec, ADR and doc page you write.
   And analytic values, counts and versions are reproducible; they belong in prose with their recipe.
 - No "surfacing", "brings into view", "data-driven", "delve", "leverage" as a verb, "firstly" as
   an orphaned ordinal, or "excellent" as hyperbole.
+- No "gate" in any form, except the physics term (gate fidelity, gate infidelity, gate error,
+  quantum gate, single- or two-qubit gate, and their plurals; "gated" and "gating" are never
+  exempt). The word reads a check as something that stops or licenses a computation, and no
+  check here does. Say **reuse rule** for the condition under which a run's output is reused;
+  **test**, **step** or **enforced** for the suite and CI; **condition** for a check row that
+  runs only under one; **decides**, **stops** or **changes** for a statistic.
+  `tests/test_vocabulary_baseline.py` holds the count in `src/` and `tests/` at zero; `spec/`
+  keeps its older wording as history.
 - No overclaiming. "To our knowledge" is used deliberately and sparingly, not as a hedge.
 - Short declarative paragraphs. Colon expansions over dense subordinate clauses.
 - Never invent a section number, equation number, figure number, or citation. If you do not know

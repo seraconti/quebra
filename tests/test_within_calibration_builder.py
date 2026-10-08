@@ -1,4 +1,4 @@
-"""Regression gate for the WithinCalibration panel split (builder vs renderer).
+"""Regression test for the WithinCalibration panel split (builder vs renderer).
 
 The output-builder must produce a COMPLETE typed artifact (all derived fields
 populated) and the renderer must be a pure function of it. These tests pin the
@@ -15,7 +15,7 @@ import pytest
 
 matplotlib.use("Agg")
 
-from quebra.analyzers import windows
+from quebra.analyzers import event_table, kaplan_meier, windows
 from quebra.analyzers.within_calibration_compute import (
     _threshold_in_spec_frac,
     build_within_calibration_panel_data,
@@ -42,7 +42,25 @@ def _carved(t_h, series, thresholds):
             dataset_id="unit",
         )
     )
-    return result.windows, result.reads
+    return result.windows_in_spec, result.reads
+
+
+def _km_of(carved):
+    """The job's one Kaplan-Meier node, built the way the recipe builds it."""
+    return kaplan_meier.kaplan_meier_set(event_table.event_tables_from_carve(carved))
+
+
+def _km_for(t_h, series, thresholds):
+    return _km_of(
+        windows.run(
+            windows.WindowsInputs(
+                t_rel_s=np.asarray(t_h, dtype=float) * 3600.0,
+                values=np.asarray(series, dtype=float),
+                thresholds=thresholds,
+                dataset_id="unit",
+            )
+        )
+    )
 
 
 _THRESHOLDS = [("2 µs", 2.0, True), ("3 µs", 3.0, True), ("4 µs", 4.0, True)]
@@ -60,6 +78,7 @@ def _t2star_like() -> WithinCalibrationPanelData:
         windows=_carved(t_h, s, _THRESHOLDS)[0],
         reads=_carved(t_h, s, _THRESHOLDS)[1],
         gap_spans_s=[],  # uniform spacing: the carve records no gap
+        kaplan_meier=_km_for(t_h, s, _THRESHOLDS),
     )
 
 
@@ -69,10 +88,11 @@ def test_builder_populates_all_derived_fields() -> None:
     assert set(d.reliability.cumulative_time_per_threshold) == labels
     assert set(d.reliability.cumulative_damage_per_threshold) == labels
     assert set(d.reliability.ttf_per_threshold) == labels
-    assert set(d.reliability.threshold_window_stats) == labels
-    assert set(d.reliability.survival_curve_min) == labels
+    assert {key for key in d.reliability.kaplan_meier.curves} == {
+        (label, side) for label in labels for side in event_table.SIDES
+    }
     assert set(d.reliability.occupancy) == labels
-    assert set(d.reliability.threshold_summary) == labels
+    assert all(0.0 <= d.reliability.occupancy[label] <= 1.0 for label in labels)
     assert np.isfinite(d.signal.cv)
     # band 2 and band 3 each carry a per-threshold entry for every rung
     assert set(d.distinguish.state_series_per_threshold) == labels
@@ -99,30 +119,16 @@ def test_occupancy_equals_a_hand_computed_fraction_of_observed_time() -> None:
     and fourth, giving 2 of 4 observed hours and an occupancy of exactly 0.5.
 
     The reading of exactly 5.0 is the point of the case. `AGENTS.md` section 5 fixes
-    in-spec as `T2* >= threshold`, so a value AT the threshold is in spec and must not be
-    charged. Flipping `_out_of_spec_mask`'s `<` to `<=` moves this to 0.25, which is the
-    boundary convention that no other test in the suite pins.
+    in spec as `T2* >= threshold`, and `windows.in_spec_mask` applies it as
+    `margin >= 0`, so a value AT the threshold is in spec and must not be charged.
+    Flipping `windows.in_spec_mask`'s `>=` to `>` moves this to 0.25.
     """
     t_h = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
     series = np.array([10.0, 5.0, 1.0, 1.0, 10.0])
-    frac = _threshold_in_spec_frac(t_h, series, [("5", 5.0, True)], [])
+    thresholds = [("5", 5.0, True)]
+    _, reads = _carved(t_h, series, thresholds)
+    frac = _threshold_in_spec_frac(t_h, series, reads, thresholds, [])
     assert frac["5"] == pytest.approx(0.5, abs=1e-12)
-
-
-def test_in_spec_frac_matches_summary() -> None:
-    """Consistency between two consumers of one convention, NOT an oracle for it.
-
-    Both sides descend from `_out_of_spec_mask`, so a mutation to that helper moves them
-    together and this identity still holds. The oracle for the convention itself is the
-    hand-computed case above; this test guards only that the summary and the band do not
-    drift apart.
-    """
-    d = _t2star_like()
-    for label, summ in d.reliability.threshold_summary.items():
-        assert summ is not None  # dense synthetic series
-        expected_frac_oos = 100.0 * (1.0 - d.reliability.occupancy[label])
-        assert abs(summ["frac_oos_pct"] - expected_frac_oos) < 1e-9
-        assert 0.0 <= d.reliability.occupancy[label] <= 1.0
 
 
 def test_default_damage_is_excess_integral_not_noop() -> None:
@@ -137,20 +143,22 @@ def test_default_damage_is_excess_integral_not_noop() -> None:
         primary_series=s,
         primary_label="T2* (µs)",
         thresholds=thr,
-        meta={},
+        meta={"dataset": "unit-test"},
         windows=win,
         reads=rd,
         gap_spans_s=[],
+        kaplan_meier=_km_for(t_h, s, thr),
     )
     squared = build_within_calibration_panel_data(
         t_h=t_h,
         primary_series=s,
         primary_label="T2* (µs)",
         thresholds=thr,
-        meta={},
+        meta={"dataset": "unit-test"},
         windows=win,
         reads=rd,
         gap_spans_s=[],
+        kaplan_meier=_km_for(t_h, s, thr),
         damage_fn=lambda x: x**2,
     )
     d_default = default.reliability.cumulative_damage_per_threshold["3 µs"]
@@ -164,6 +172,35 @@ def test_renderer_produces_figure_without_data_arithmetic() -> None:
     fig = WithinCalibrationPanel(name="unit").build_matplotlib(d)
     assert len(fig.axes) >= 5
     matplotlib.pyplot.close(fig)
+
+
+def test_the_caption_names_the_dataset_and_refuses_an_artifact_without_one() -> None:
+    """Oracle: AGENTS.md section 3, errors are raised, not swallowed; the name set by hand.
+
+    Both adapters put the record's name in `meta["dataset"]`, so an artifact without it is
+    broken, and a caption that drops the name without a word is a wrong-but-plausible figure.
+    """
+    import copy
+
+    import matplotlib.pyplot as plt
+
+    pd_ = _t2star_like()
+    broken = copy.deepcopy(pd_)
+    del broken.meta["dataset"]
+    # Built around the builder, which refuses an empty name: the renderer refuses it too.
+    blank = copy.deepcopy(pd_)
+    blank.meta["dataset"] = "  "
+    fig = plt.figure()
+    try:
+        WithinCalibrationPanel._draw_caption(fig, pd_)
+        caption = fig.get_suptitle()
+        assert caption.startswith("unit-test  ·  T2* (µs): mean "), caption
+        with pytest.raises(KeyError, match="dataset"):
+            WithinCalibrationPanel._draw_caption(fig, broken)
+        with pytest.raises(ValueError, match="caption must name the record"):
+            WithinCalibrationPanel._draw_caption(fig, blank)
+    finally:
+        plt.close(fig)
 
 
 def test_renderer_rejects_wrong_type() -> None:
@@ -202,9 +239,10 @@ def _with_read_gaps() -> WithinCalibrationPanelData:
         primary_label="T2* (µs)",
         thresholds=_THRESHOLDS,
         meta={"dataset": "unit-test-gap"},
-        windows=carved.windows,
+        windows=carved.windows_in_spec,
         reads=carved.reads,
         gap_spans_s=carved.diagnostics["gap_spans_s"],
+        kaplan_meier=_km_of(carved),
     )
 
 
@@ -367,7 +405,6 @@ def test_a_missing_gap_list_is_refused_not_read_as_no_gaps() -> None:
         (compute._cumulative_time_out_of_spec, "gap_spans_h"),
         (compute._cumulative_damage, "gap_spans_h"),
         (compute._threshold_in_spec_frac, "gap_spans_h"),
-        (compute._threshold_summary, "gap_spans_h"),
     ):
         default = inspect.signature(fn).parameters[param].default
         assert default is inspect.Parameter.empty, (
@@ -390,7 +427,7 @@ def test_a_missing_gap_list_is_refused_not_read_as_no_gaps() -> None:
             "infidelity": np.full(10, 1e-3),
         }
     )
-    stand_in = types.SimpleNamespace(frame=frame, meta={})
+    stand_in = types.SimpleNamespace(frame=frame, meta={"dataset_id": "unit-test"})
     for adapter in (t2star.make_panel_data, fidelity.make_panel_data):
         with pytest.raises(ValueError, match="gap_spans_s is required"):
             adapter(
@@ -398,6 +435,7 @@ def test_a_missing_gap_list_is_refused_not_read_as_no_gaps() -> None:
                 windows=pd.DataFrame(),
                 reads=pd.DataFrame(),
                 gap_spans_s=None,  # type: ignore[arg-type]
+                kaplan_meier=None,  # type: ignore[arg-type]
             )
 
     t_h = np.concatenate([np.linspace(0.0, 5.0, 200), np.linspace(8.0, 12.0, 160)])
@@ -409,10 +447,11 @@ def test_a_missing_gap_list_is_refused_not_read_as_no_gaps() -> None:
             primary_series=s,
             primary_label="T2* (µs)",
             thresholds=_THRESHOLDS,
-            meta={},
+            meta={"dataset": "unit-test"},
             windows=win,
             reads=rd,
             gap_spans_s=None,  # type: ignore[arg-type]
+            kaplan_meier=_km_for(t_h, s, _THRESHOLDS),
         )
 
 
@@ -446,16 +485,68 @@ def test_a_cumulative_curve_longer_than_the_scan_clock_is_refused() -> None:
                 plt.close(fig)
 
 
-def test_the_survival_panel_states_how_many_censored_windows_it_excluded(
+def test_the_timeline_cull_counts_an_unmeasured_threshold_apart_from_one_below_5pct() -> (
+    None
+):
+    """Oracle: occupancy values set by hand on the artifact, one per threshold.
+
+    `_threshold_in_spec_frac` gives NaN where there is no observed time to measure on, so
+    that threshold was never measured below 5% in spec. The fixture's 3 µs is drawn and its
+    4 µs is measured below 5%; 2 µs is set to NaN. The cull drops both, and the title must
+    name them apart. With every threshold NaN the empty axes must not claim a measurement.
+    A missing occupancy key is a broken artifact (`check_thresholds` requires every label),
+    so it raises rather than being read as 0.
+    """
+    import copy
+
+    import matplotlib.pyplot as plt
+
+    base = _t2star_like()
+    occupancy = base.reliability.occupancy
+    assert occupancy["3 µs"] >= 0.05 > occupancy["4 µs"], f"premise: {occupancy}"
+    panel = WithinCalibrationPanel(name="cull_probe")
+
+    def draw(pd_):
+        fig, ax = plt.subplots()
+        try:
+            panel._draw_threshold_timeline(
+                ax, pd_, pd_.reliability.compliance_state_series, title="T"
+            )
+            ticks = [tick.get_text() for tick in ax.get_yticklabels()]
+            return ax.get_title(), ticks, [text.get_text() for text in ax.texts]
+        finally:
+            plt.close(fig)
+
+    one_unmeasured = copy.deepcopy(base)
+    one_unmeasured.reliability.occupancy["2 µs"] = float("nan")
+    title, ticks, _ = draw(one_unmeasured)
+    assert title == "T (1 thresholds below 5% in spec, 1 not measured)", title
+    assert ticks == ["3 µs"], ticks
+
+    none_measured = copy.deepcopy(base)
+    for label in none_measured.reliability.occupancy:
+        none_measured.reliability.occupancy[label] = float("nan")
+    title, _, notes = draw(none_measured)
+    assert title == "T (3 not measured)", title
+    assert notes == ["In-spec time not measured: no observed time"], notes
+
+    missing = copy.deepcopy(base)
+    del missing.reliability.occupancy["3 µs"]
+    with pytest.raises(KeyError, match="3 µs"):
+        draw(missing)
+
+
+def test_the_survival_panel_states_what_kaplan_meier_counted_and_left_out(
     capsys,
 ) -> None:
-    """Oracle: censored windows counted per threshold from the carve's own window table.
+    """Oracle: counts per threshold from the carve's own window table.
 
     docs/FIGURE_STANDARD.md: a panel that drops data says how much it dropped, in the panel,
-    not in the log. The survival estimator drops censored windows, so every threshold that
-    carved a window has a legend entry with that count, including one whose every window was
-    censored and which therefore has no curve (its entry draws no line sample); and the
-    reliability band step prints nothing.
+    not in the log. Kaplan-Meier keeps censored windows and leaves out windows whose birth
+    was not observed, so every threshold that carved a window has a legend entry with its
+    windows, deaths, censorings and left-out count, including one whose every window had an
+    unobserved birth and which therefore has no curve (its entry draws no line sample); and
+    the reliability band step prints nothing.
     """
     import matplotlib.pyplot as plt
 
@@ -477,10 +568,11 @@ def test_the_survival_panel_states_how_many_censored_windows_it_excluded(
         primary_series=s,
         primary_label="T2* (µs)",
         thresholds=_THRESHOLDS,
-        meta={},
-        windows=carved.windows,
+        meta={"dataset": "unit-test"},
+        windows=carved.windows_in_spec,
         reads=carved.reads,
         gap_spans_s=carved.diagnostics["gap_spans_s"],
+        kaplan_meier=_km_of(carved),
     )
     from quebra.analyzers import reliability_band
 
@@ -490,9 +582,10 @@ def test_the_survival_panel_states_how_many_censored_windows_it_excluded(
             t_h=t_h,
             values=s,
             reads=carved.reads,
-            windows=carved.windows,
+            windows=carved.windows_in_spec,
             thresholds=_THRESHOLDS,
             gap_spans_h=pd_.signal.gap_spans_h,
+            kaplan_meier=_km_of(carved),
             damage_fn=None,
         )
     )
@@ -508,23 +601,29 @@ def test_the_survival_panel_states_how_many_censored_windows_it_excluded(
             text.get_text(): handle.get_linestyle()
             for text, handle in zip(entries.get_texts(), entries.legend_handles)
         }
+        notes = [text.get_text() for text in ax.texts]
     finally:
         plt.close(fig)
+    assert "independence checks: NOT ASSESSED for this band" in notes, notes
     no_curve = [text for text in samples if text.endswith(", no curve")]
     assert no_curve, "no no-curve entry to check"
     for text in no_curve:
         assert samples[text] == "None", f"{text!r} draws a line sample"
 
-    table = carved.windows
+    table = carved.windows_in_spec
     with_curve = without_curve = 0
     for label, _, _ in _THRESHOLDS:
         mine = table[table["threshold_label"] == label]
         if len(mine) == 0:
             assert not any(t.startswith(label) for t in legend), (label, legend)
             continue
-        n_censored = int(mine["censored"].sum())
-        expected = f"{label} - excluded: {n_censored} of {len(mine)} windows (censored)"
-        if n_censored == len(mine):
+        seen = mine[mine["birth_observed"]]
+        n_censored = int(seen["censored"].sum())
+        expected = (
+            f"{label}: n={len(seen)}, d={len(seen) - n_censored}, c={n_censored}, "
+            f"u={len(mine) - len(seen)}"
+        )
+        if len(seen) == 0:
             expected += ", no curve"
             without_curve += 1
         else:
@@ -534,7 +633,7 @@ def test_the_survival_panel_states_how_many_censored_windows_it_excluded(
         "the fixture no longer has both kinds of threshold"
     )
 
-    # Every threshold fully censored: no curve at all, and the counts must still show.
+    # Every window with an unobserved birth: no curve at all, and the counts still show.
     only = [thr for thr in _THRESHOLDS if thr[0] == "2 µs"]
     carved_only = windows.run(
         windows.WindowsInputs(
@@ -546,23 +645,105 @@ def test_the_survival_panel_states_how_many_censored_windows_it_excluded(
         primary_series=s,
         primary_label="T2* (µs)",
         thresholds=only,
-        meta={},
-        windows=carved_only.windows,
+        meta={"dataset": "unit-test"},
+        windows=carved_only.windows_in_spec,
         reads=carved_only.reads,
         gap_spans_s=carved_only.diagnostics["gap_spans_s"],
+        kaplan_meier=_km_of(carved_only),
     )
     fig, ax = plt.subplots()
     try:
         WithinCalibrationPanel(name="survival_probe")._draw_survival(ax, pd_only)
         assert ax.get_legend() is not None, "no legend when no curve is drawn"
         legend = [text.get_text() for text in ax.get_legend().get_texts()]
-        # Windows exist and were all censored, so "no in-spec windows" would be false.
         notes = [text.get_text() for text in ax.texts]
-        assert notes == ["No complete in-spec windows for defined thresholds"], notes
+        assert notes == [
+            "No in-spec windows with an observed birth for defined thresholds"
+        ], notes
     finally:
         plt.close(fig)
-    n_only = len(carved_only.windows)
+    n_only = len(carved_only.windows_in_spec)
     assert n_only, "the single-threshold carve produced no window"
-    assert legend == [
-        f"2 µs - excluded: {n_only} of {n_only} windows (censored), no curve"
-    ], legend
+    assert legend == [f"2 µs: n=0, d=0, c=0, u={n_only}, no curve"], legend
+
+
+def test_the_survival_line_and_band_cover_the_curve_out_to_its_longest_window() -> None:
+    """Oracle: durations set by hand, checked against the curve the artifact carries.
+
+    `KaplanMeierCurve` holds S(t) as the left ends of its segments, defined out to
+    `max_observed_min`, with a log-log band wherever both bounds are finite. So the drawn
+    line must end at `max_observed_min` at the curve's last S, and the band must fill the
+    middle of every segment whose bounds are finite and of no other. One curve per threshold:
+    a death at 1 then windows censored at 5 and 10 (the tail [1, 10) at S = 2/3); no death,
+    censored at 4 and 8 (a flat line, no band); deaths at 1, 2 and 3 (the segment [2, 3) at
+    S = 1/3 ends where S reaches 0, so its right end is NaN and its left value is not).
+    """
+    import copy
+
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import to_rgba
+
+    from quebra.plots import theme
+
+    by_threshold = {
+        "2 µs": ([1.0, 5.0, 10.0], [True, False, False]),
+        "3 µs": ([4.0, 8.0], [False, False]),
+        "4 µs": ([1.0, 2.0, 3.0], [True, True, True]),
+    }
+    pd_ = copy.deepcopy(_t2star_like())
+    km = pd_.reliability.kaplan_meier
+    for label, (duration_min, death_observed) in by_threshold.items():
+        km.curves[(label, windows.SIDE_IN_SPEC)] = kaplan_meier.run(
+            kaplan_meier.KaplanMeierInputs(
+                duration_min=np.array(duration_min),
+                death_observed=np.array(death_observed),
+                label=label,
+                threshold_label=label,
+                side=windows.SIDE_IN_SPEC,
+                n_windows_carved=len(duration_min),
+            )
+        )
+    last_before_zero = km.curve("4 µs", windows.SIDE_IN_SPEC)
+    assert np.isfinite(last_before_zero.band_lower[-2]), "premise: [2, 3) has a band"
+    assert np.isnan(last_before_zero.band_lower[-1]), "premise: S = 0 has no band"
+
+    fig, ax = plt.subplots()
+    try:
+        WithinCalibrationPanel(name="survival_probe")._draw_survival(ax, pd_)
+        n = len(pd_.thresholds)
+        for i, (label, _, _) in enumerate(pd_.thresholds):
+            curve = km.curve(label, windows.SIDE_IN_SPEC)
+            colour = to_rgba(theme.threshold_color(i, n))
+            (line,) = [ln for ln in ax.get_lines() if to_rgba(ln.get_color()) == colour]
+            x = np.asarray(line.get_xdata(), dtype=float)
+            y = np.asarray(line.get_ydata(), dtype=float)
+            assert x[0] == 0.0 and x[-1] == curve.max_observed_min, (label, x)
+            assert y[-1] == curve.survival[-1], (label, y)
+
+            paths = [
+                path
+                for band in ax.collections
+                if np.allclose(band.get_facecolor()[0][:3], colour[:3])
+                for path in band.get_paths()
+            ]
+            ends = np.append(curve.time_min[1:], curve.max_observed_min)
+            for left, right, lo, hi in zip(
+                curve.time_min, ends, curve.band_lower, curve.band_upper
+            ):
+                if right <= left:
+                    continue
+                mid = 0.5 * (left + right)
+                if np.isfinite(lo) and np.isfinite(hi):
+                    point = (mid, 0.5 * (lo + hi))
+                    assert any(path.contains_point(point) for path in paths), (
+                        f"{label}: no band over [{left}, {right})"
+                    )
+                else:
+                    filled = [
+                        y_probe
+                        for y_probe in np.linspace(0.0, 1.0, 51)
+                        if any(path.contains_point((mid, y_probe)) for path in paths)
+                    ]
+                    assert not filled, f"{label}: band over [{left}, {right}), {filled}"
+    finally:
+        plt.close(fig)

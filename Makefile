@@ -27,7 +27,7 @@ TIERS := unit properties statistical integration validation regression policy
 ## Run before every checkpoint. This is what the checkpoint banner reports.
 check: lint types arch test
 
-## Run the same gate against a clean dependency resolve in a throwaway environment, which
+## Run the same steps against a clean dependency resolve in a throwaway environment, which
 ## is what the workflow does. `check` uses the installed tools, so it cannot see a failure
 ## caused by a newer release or by the install being non-editable. Run before pushing.
 check-ci:
@@ -80,7 +80,7 @@ test-real:
 	pytest -m "real or regression"
 
 ## Per-tier selection. The tier axis says what question a test answers; nothing in `check`
-## gates on it, so these are for reading the suite, not for CI.
+## selects by it, so these are for reading the suite, not for CI.
 ##
 ## Three tiers are empty and `tier-<name>` exits 5 for each, deliberately. `properties`
 ## gains members with the hypothesis work. `validation` is empty because the one place the
@@ -97,7 +97,7 @@ tiers:
 	  printf "%-14s %s\n" "$$t" "$$(pytest --collect-only -q -m "$$t" 2>/dev/null | tail -1)"; \
 	done
 
-## Reported, never gated: not in `check`, no `fail_under`. Reads whether a module executes
+## Reported, never enforced: not in `check`, no `fail_under`. Reads whether a module executes
 ## code nothing checks. Via `pytest --cov` because `pytest-cov` is declared and `coverage`
 ## is not. The number moves with the selector and the private tree, so both are printed.
 cov: require-selector

@@ -14,10 +14,10 @@ Both are STEP KWARGS. `core/closure.py`'s `_render` takes scalars and containers
 so a tuple of string triples enters the run identity and reaches the Mermaid label; a typed
 object would raise there instead, which is why the selection is data and not a class.
 
-**Nothing here gates anything.** A `fail`, an `underpowered`, an absent row and an empty
-ledger all produce a grid that renders. It raises only on wiring mistakes - a display-set
-outside the run-set, a threshold that is not in the ledger - because those are programming
-errors and a silent one draws a figure about the wrong thing.
+**No verdict stops anything.** A `fail`, an `underpowered`, an absent row and an empty ledger
+all produce a grid that renders. It raises only on wiring mistakes - a display-set outside
+the run-set, a threshold that is not in the ledger - because those are programming errors
+and a silent one draws a figure about the wrong thing.
 """
 
 from __future__ import annotations

@@ -6,13 +6,18 @@ from typing import Callable
 
 import pandas as pd
 
+import quebra.analyzers.event_table as event_table
 import quebra.analyzers.fidelity as fidelity
+import quebra.analyzers.kaplan_meier as kaplan_meier
+import quebra.analyzers.survival as survival
 import quebra.analyzers.t2star as t2star
 import quebra.analyzers.windows as windows
 from quebra.analyzers.allan import run as run_allan
+from quebra.analyzers.event_table import EventTables
 from quebra.analyzers.fidelity import FidelityResult
 from quebra.analyzers.fidelity import make_inputs_from_norm as _fidelity_make_inputs
 from quebra.analyzers.fidelity import run as _run_fidelity
+from quebra.analyzers.kaplan_meier import CONF_LEVEL, KaplanMeierSet
 from quebra.analyzers.t2star import T2STAR_DEFAULT_LADDER, T2StarResult
 from quebra.analyzers.tlf import run as run_tlf
 from quebra.analyzers.windows import DEFAULT_GAP_MULT, WindowsResult
@@ -163,7 +168,7 @@ def _fidelity_windows(result: FidelityResult, gap_mult: float) -> WindowsResult:
             t_rel_s=result.frame["t_rel_s"].to_numpy(dtype=float),
             values=series,
             thresholds=fidelity.panel_thresholds(series),
-            dataset_id=str(result.meta.get("dataset_id", "")),
+            dataset_id=str(result.meta["dataset_id"]),
             gap_mult=gap_mult,
         )
     )
@@ -186,19 +191,99 @@ XI_SEED = 20260813
 TLF_SEED = 20260902
 
 
+def _event_tables(window_result: WindowsResult) -> EventTables:
+    return event_table.event_tables_from_carve(window_result)
+
+
+def _kaplan_meier_set(tables: EventTables, conf_level: float) -> KaplanMeierSet:
+    return kaplan_meier.kaplan_meier_set(tables, conf_level=conf_level)
+
+
+def wire_kaplan_meier(
+    job: "Job", window_node: object, *, conf_level: float, node_suffix: str = ""
+) -> tuple[object, object]:
+    """Wire the event tables and the ONE Kaplan-Meier node off a carve; return both refs.
+
+    The panel and every other consumer read this node, so one set of windows cannot ship
+    two bands. `conf_level` is a step kwarg, so it reaches the provenance label.
+    """
+    tables = job.step(_event_tables, window_node, name=f"event_tables{node_suffix}")
+    km = job.step(
+        _kaplan_meier_set,
+        tables,
+        name=f"kaplan_meier{node_suffix}",
+        conf_level=conf_level,
+    )
+    return tables, km
+
+
+def wire_survival(
+    job: "Job",
+    tables_node: object,
+    *,
+    conf_level: float,
+    quantiles: tuple[float, ...] = survival.DEFAULT_QUANTILES,
+    rmst_tau_s: float | None = None,
+    turnbull_tol: float = survival.TURNBULL_TOL,
+    turnbull_max_iter: int = survival.TURNBULL_MAX_ITER,
+    node_suffix: str = "",
+) -> dict[str, object]:
+    """Wire the survival estimators off an event-table node; return their refs by name.
+
+    Nelson-Aalen, the curve summaries, Turnbull and the placement bracket, each one node
+    over every threshold and side. Nothing here adds a sink: a job that wants these
+    results materializes the refs it uses. Every choice that changes a number is a step
+    kwarg, so it reaches the identity and the provenance label; `rmst_tau_s` is ONE kwarg,
+    shared by the summaries and the bracket. `conf_level` has no default: pass the value
+    given to `wire_kaplan_meier`, since the summaries rebuild the same product-limit band.
+    """
+    return {
+        "nelson_aalen": job.step(
+            survival.nelson_aalen_set,
+            tables_node,
+            name=f"nelson_aalen{node_suffix}",
+            conf_level=conf_level,
+        ),
+        "curve_summaries": job.step(
+            survival.curve_summaries_set,
+            tables_node,
+            name=f"curve_summaries{node_suffix}",
+            quantiles=tuple(quantiles),
+            rmst_tau_s=rmst_tau_s,
+            conf_level=conf_level,
+        ),
+        "turnbull": job.step(
+            survival.turnbull_set,
+            tables_node,
+            name=f"turnbull{node_suffix}",
+            tol=turnbull_tol,
+            max_iter=turnbull_max_iter,
+        ),
+        "placement_bracket": job.step(
+            survival.placement_bracket_set,
+            tables_node,
+            name=f"placement_bracket{node_suffix}",
+            rmst_tau_s=rmst_tau_s,
+        ),
+    }
+
+
 def _fidelity_panel_data(
-    result: FidelityResult, window_result: WindowsResult, xi_seed: int
+    result: FidelityResult,
+    window_result: WindowsResult,
+    km: KaplanMeierSet,
+    xi_seed: int,
 ) -> WithinCalibrationPanelData:
     return fidelity.make_panel_data(
         result,
-        windows=window_result.windows,
+        windows=window_result.windows_in_spec,
         reads=window_result.reads,
         gap_spans_s=window_result.diagnostics["gap_spans_s"],
+        kaplan_meier=km,
         # `windows.run` always records this, so a missing key is a broken artifact rather
         # than an old one; defaulting it to False would silently redraw the panel in the
         # other mode. This repo raises instead of falling back.
         use_uncertainty=bool(window_result.meta["use_uncertainty"]),
-        dataset_id=str(result.meta.get("dataset_id", "")),
         xi_seed=xi_seed,
     )
 
@@ -214,6 +299,7 @@ def configure_ramsey_job(
     allan_carrier_col: str = "qubit_frequency_hz",
     xi_seed: int = XI_SEED,
     tlf_seed: int = TLF_SEED,
+    conf_level: float = CONF_LEVEL,
     figure_prefix: str | None = None,
 ) -> None:
     config = _copy_config(profile)
@@ -273,10 +359,14 @@ def configure_ramsey_job(
             name="fidelity_windows",
             gap_mult=DEFAULT_GAP_MULT,
         )
+        _fidelity_tables, fidelity_km = wire_kaplan_meier(
+            job, fidelity_windows, conf_level=conf_level, node_suffix="_fidelity"
+        )
         fidelity_panel = job.step(
             _fidelity_panel_data,
             fidelity_raw,
             fidelity_windows,
+            fidelity_km,
             name="fidelity_panel_data",
             # Declared, not defaulted: see the note in jobs/active/t2star_q1_070423.py.
             xi_seed=xi_seed,
@@ -335,7 +425,7 @@ def _windows_run(
             value_col="t2star_s",
             sigma_col="t2star_error_s" if use_uncertainty else None,
             thresholds=thresholds,
-            dataset_id=str(result.meta.get("dataset_id", "")),
+            dataset_id=str(result.meta["dataset_id"]),
             gap_mult=gap_mult,
             k=k,
             use_uncertainty=use_uncertainty,
@@ -346,6 +436,7 @@ def _windows_run(
 def _t2star_panel_data(
     result: T2StarResult,
     window_result: WindowsResult,
+    km: KaplanMeierSet,
     shape_min_reads: int,
     use_uncertainty: bool,
     xi_seed: int,
@@ -353,9 +444,10 @@ def _t2star_panel_data(
 ) -> WithinCalibrationPanelData:
     return t2star.make_panel_data(
         result,
-        windows=window_result.windows,
+        windows=window_result.windows_in_spec,
         reads=window_result.reads,
         gap_spans_s=window_result.diagnostics["gap_spans_s"],
+        kaplan_meier=km,
         thresholds=thresholds,
         shape_min_reads=shape_min_reads,
         use_uncertainty=use_uncertainty,
@@ -421,6 +513,7 @@ def configure_t2star_job(
     use_uncertainty: bool = T2STAR_USE_UNCERTAINTY,
     shape_min_reads: int = 5,
     xi_seed: int = XI_SEED,
+    conf_level: float = CONF_LEVEL,
 ) -> None:
     """Wire the whole T2* within-calibration graph onto `job`: the carve, then the panel.
 
@@ -446,10 +539,12 @@ def configure_t2star_job(
         k=k,
         use_uncertainty=use_uncertainty,
     )
+    _tables, km = wire_kaplan_meier(job, window_node, conf_level=conf_level)
     panel = job.step(
         _t2star_panel_data,
         result,
         window_node,
+        km,
         name="t2star_panel_data",
         shape_min_reads=shape_min_reads,
         use_uncertainty=use_uncertainty,

@@ -22,6 +22,7 @@ from collections.abc import Mapping
 import numpy as np
 import pandas as pd
 
+from quebra.analyzers.kaplan_meier import KaplanMeierSet
 from quebra.analyzers.within_calibration_compute import (
     build_within_calibration_panel_data,
 )
@@ -55,7 +56,12 @@ def make_inputs_from_norm(
             "The dataset must contain a 'T2star' column."
         )
     meta = norm.get("meta", {}) if isinstance(norm.get("meta", {}), Mapping) else {}
-    dataset_id = str(meta.get("dataset_id", ""))
+    dataset_id = str(meta.get("dataset_id") or "").strip()
+    if not dataset_id:
+        raise KeyError(
+            "T2* requires a non-empty meta['dataset_id'] in the normalized mapping: the "
+            "panel caption names the record it draws."
+        )
     t2star_error_s = (
         np.asarray(norm["T2star_error_s"], dtype=float)
         if "T2star_error_s" in norm
@@ -87,8 +93,9 @@ def run(inputs: T2StarInputs) -> T2StarResult:
         cols["t2star_error_s"] = inputs.t2star_error_s
 
     t2star_valid = t2star_s[valid]
-    mean_us = float(np.mean(t2star_valid)) * 1e6
-    std_us = float(np.std(t2star_valid, ddof=1)) * 1e6 if n_valid > 1 else 0.0
+    # NaN, not 0.0, where undefined: a sample std needs two reads, a mean one.
+    mean_us = float(np.mean(t2star_valid)) * 1e6 if n_valid else float("nan")
+    std_us = float(np.std(t2star_valid, ddof=1)) * 1e6 if n_valid > 1 else float("nan")
 
     diag: dict[str, object] = {
         "n_valid": n_valid,
@@ -138,6 +145,7 @@ def make_panel_data(
     windows: pd.DataFrame,
     reads: pd.DataFrame,
     gap_spans_s: list[tuple[float, float]],
+    kaplan_meier: KaplanMeierSet,
     shape_min_reads: int = 5,
     xi_seed: int = 0,
     k: float = 1.0,
@@ -159,9 +167,9 @@ def make_panel_data(
     resolved = thresholds if thresholds is not None else T2STAR_DEFAULT_LADDER
     # Convert threshold values from SI seconds to µs to match primary_series units.
     panel_thresholds = [(lbl, val * 1e6, bvg) for lbl, val, bvg in resolved]
-    # The carve ran in SI seconds on the SI ladder; the panel plots µs. Scaling both
-    # sides by the same constant cannot move a window boundary, so the tables are
-    # valid here unchanged - only durations, which are times, need no conversion.
+    # The carve ran in SI seconds on the SI ladder; the panel plots µs. The panel takes
+    # every in/out classification from the carve's tables and never reclassifies the
+    # rescaled values, so a read that sits on a threshold cannot change side here.
     sigma_us = (
         frame["t2star_error_s"].to_numpy(dtype=float) * 1e6
         if "t2star_error_s" in frame.columns
@@ -169,11 +177,8 @@ def make_panel_data(
     )
 
     label = primary_label if primary_label is not None else "T2* (µs)"
-    meta: dict[str, object] = {"dataset": str(result.meta.get("dataset_id", ""))}
-    if "mean_us" in result.meta:
-        meta["mean T2*"] = f"{result.meta['mean_us']:.4g} µs"
-    if "std_us" in result.meta:
-        meta["std T2*"] = f"{result.meta['std_us']:.4g} µs"
+    # The caption's mean and std are the signal band's (`value_mean`, `value_std`).
+    meta: dict[str, object] = {"dataset": str(result.meta["dataset_id"])}
 
     return build_within_calibration_panel_data(
         t_h=t_h,
@@ -184,6 +189,7 @@ def make_panel_data(
         windows=windows,
         reads=reads,
         gap_spans_s=gap_spans_s,
+        kaplan_meier=kaplan_meier,
         shape_min_reads=shape_min_reads,
         xi_seed=xi_seed,
         k=k,

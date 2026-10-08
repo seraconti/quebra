@@ -19,11 +19,12 @@ def hash_string(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
-# Both git helpers below anchor on the working directory and share this timeout. They are
-# two halves of one gate - `_reuse_eligible_dir` requires a commit match AND a clean tree -
-# so they must describe the SAME repository or the gate means nothing. `Path.cwd()` is what
-# makes that true: this module ships inside the wheel, so `__file__` is site-packages once
-# installed, where one half would read a repository the other half never saw.
+# Both git helpers below anchor on the working directory and share this timeout. They answer
+# the commit and clean-tree conditions of the reuse rule - `_reuse_eligible_dir` requires a
+# commit match AND a clean tree - so they must describe the SAME repository or those two
+# conditions mean nothing. `Path.cwd()` is what makes that true: this module ships inside the
+# wheel, so `__file__` is site-packages once installed, where one helper would read a
+# repository the other never saw.
 #
 # The timeout bounds the damage rather than fixing a known hang: both commands are local and
 # should answer in milliseconds, so a wait means something is wrong (a stale lock, a stalled

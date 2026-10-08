@@ -27,7 +27,7 @@ dependencies = [
   "numpy>=2.0",
   # 1.15 for `scipy.stats.chatterjeexi`, which its release notes list as new there: below it
   # the tier-4 cross-check in tests/test_r_cross_implementation.py skips instead of failing.
-  # CI resolves newest on every leg, so no gate exercises this floor.
+  # CI resolves newest on every leg, so no CI run exercises this floor.
   "scipy>=1.15",
   "pandas>=2.2",
   "matplotlib>=3.9",
@@ -102,8 +102,8 @@ markers = [
   "validation: does an end-to-end job reach the right verdict on known truth",
   "regression: did a refactor move a published number",
   "policy: does the source tree obey a rule we wrote down",
-  "slow: full statistical grids; excluded from the fast gate",
-  "heavy: large end-to-end job runs; excluded from the fast gate",
+  "slow: full statistical grids; excluded from the fast selection",
+  "heavy: large end-to-end job runs; excluded from the fast selection",
   "real: needs the private dataset tree; CI has none, so these skip there",
   "r: needs Rscript and the copula package, which is all c3_serial_copula.R calls",
 ]
@@ -145,7 +145,7 @@ python_version = "3.12"
 
 
 # `make types` checks core/ and says so. Without this, mypy follows core's imports out of
-# the tree and reports errors in modules the scope excludes, so whether the gate passes
+# the tree and reports errors in modules the scope excludes, so whether `make types` passes
 # depends on how the package happens to be installed. Their types are still read; only
 # their own errors are silenced. Widening the scope is what removes these entries.
 [[tool.mypy.overrides]]

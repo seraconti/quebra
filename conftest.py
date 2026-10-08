@@ -70,7 +70,7 @@ def in_repo(monkeypatch):
     Without it the suite passed only when pytest happened to be invoked from the repository.
     Measured: six tests failed under `cd /tmp && pytest <repo>/tests`, which is precisely
     the "unrelated working directory" the installability phase claims to support. The
-    acceptance script pinned the cwd itself, so the gate hid the gap instead of catching it.
+    acceptance script pinned the cwd itself, so the test hid the gap instead of catching it.
 
     `Path(__file__).parent` and not `Path.cwd()`: this file's location is stable, which is
     the whole point.

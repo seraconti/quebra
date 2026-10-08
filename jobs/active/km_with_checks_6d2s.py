@@ -123,7 +123,7 @@ def _km_run(
 ) -> KaplanMeierCurve:
     return kaplan_meier.run(
         kaplan_meier.make_inputs_from_windows(
-            window_result.windows,
+            window_result.windows_in_spec,
             threshold_label=threshold_label,
             label=label,
             dataset_id=str(window_result.meta.get("dataset_id", "")),

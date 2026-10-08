@@ -153,7 +153,7 @@ Worst deviation from nominal across EVERY null cell at n >= 35:
 | cvm_cramer_von_mises [permutation] | 0.786 | 0.329 | 0.411 | 0.853 |
 
 ## Criterion 3 - what the censoring machinery buys
-Restated as a PREDICTION rather than a gate, per the plan. Kvaloy & Lindqvist (Technometrics 62(1) 2020, Section 6.1, Figure 1, p. 107) report that these asymptotic calibrations are mildly NON-conservative at small samples. Read off Figure 1 at 10 expected events: AD about 0.11 at shape 1.5 and 0.09 at shape 0.75, LR about 0.08 at both, converging to 0.05 by 40-60. The size table above is the comparison. Note this criterion barely discriminates on the real data, where censoring is 0.000-0.026 wherever n >= 20; the 0.25 arm is deliberately outside that range.
+Restated as a PREDICTION rather than a pass/fail criterion, per the plan. Kvaloy & Lindqvist (Technometrics 62(1) 2020, Section 6.1, Figure 1, p. 107) report that these asymptotic calibrations are mildly NON-conservative at small samples. Read off Figure 1 at 10 expected events: AD about 0.11 at shape 1.5 and 0.09 at shape 0.75, LR about 0.08 at both, converging to 0.05 by 40-60. The size table above is the comparison. Note this criterion barely discriminates on the real data, where censoring is 0.000-0.026 wherever n >= 20; the 0.25 arm is deliberately outside that range.
 
 | row | target 0 (realised 0.008) | target 0.03 (realised 0.032) | target 0.25 (realised 0.165) |
 |---|---|---|---|

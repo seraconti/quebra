@@ -3,7 +3,7 @@
 #
 # The claim this phase makes is "a reviewer runs the documented install steps on a machine
 # that has never seen this repository". This script is the only thing that can falsify it:
-# every other gate runs against the editable install, where `src/` is on the path and a
+# every other test run uses the editable install, where `src/` is on the path and a
 # packaging mistake is invisible.
 #
 # The virtualenv is created OUTSIDE the repository on purpose. Inside it, `pip install`
@@ -92,7 +92,7 @@ print('fixture ->', len(result.frame), 'T2* points')
 # from a DIRECTORY THAT IS NOT THE REPOSITORY, because that is the claim the spec makes:
 # "import quebra works from an unrelated working directory, the fast test suite passes
 # there". An earlier version of this script ran the step with `env -C "${REPO}"` and passed
-# while six tests failed from anywhere else, so the gate concealed exactly the gap it was
+# while six tests failed from anywhere else, so the test concealed exactly the gap it was
 # written to expose. Pinning the cwd to the repository is the one thing this step must not
 # do.
 FAST_SELECTOR="$(cat "${REPO}/scripts/fast-selector.txt" 2>/dev/null || true)"

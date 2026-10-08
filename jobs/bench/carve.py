@@ -61,6 +61,8 @@ def carve_windows(
     v = np.asarray(values, dtype=float)
     if len(t) != len(v):
         raise ValueError(f"t and values must match; got {len(t)} and {len(v)}")
+    if not np.isfinite(threshold_value):
+        raise ValueError(f"threshold has non-finite value {threshold_value!r}")
     # The next two mirror `windows.run` exactly, and are not optional decoration: the
     # claim this module makes is that its output is IDENTICAL to `run`'s, and `run` drops
     # non-finite pairs BEFORE measuring spacing (so one NaN moves the median and hence the

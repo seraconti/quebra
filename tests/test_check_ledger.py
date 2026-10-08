@@ -184,7 +184,7 @@ def test_the_ledger_derives_its_stream_through_stream_for(monkeypatch):
     bench = pd.read_csv(bench_csv)
     ledger_module.run(
         ledger_module.CheckLedgerInputs(
-            windows=carved.windows,
+            windows=carved.windows_in_spec,
             bench_size_table=bench,
             thresholds=[("3 µs", 3.0, True)],
             n_permutations=49,
@@ -242,7 +242,7 @@ def _varied_carve() -> pd.DataFrame:
             dataset_id="unit",
         )
     )
-    return carved.windows
+    return carved.windows_in_spec
 
 
 def _bench_table() -> pd.DataFrame:
@@ -381,7 +381,7 @@ def test_the_recorded_n_is_the_n_handed_to_the_bridge(monkeypatch, tmp_path):
     from quebra.analyzers.checks import c3_serial_copula as c3
 
     # PATH is emptied for the same reason as its siblings: this is a `unit` test in the
-    # fast gate, and one that shelled out to R would assert something different on a machine
+    # fast selection, and one that shelled out to R would assert something different on a machine
     # with R than on one without. The kwargs are captured before dispatch, so the bridge
     # never needs to run for the assertion to hold.
     monkeypatch.setenv("PATH", str(tmp_path))

@@ -29,7 +29,7 @@ def _durations_min(t_rel_s: np.ndarray, values: np.ndarray) -> list[float]:
             t_rel_s=t_rel_s, values=values, thresholds=THRESHOLDS, dataset_id="unit"
         )
     )
-    return [float(d) / MINUTE_S for d in result.windows["duration_s"]]
+    return [float(d) / MINUTE_S for d in result.windows_in_spec["duration_s"]]
 
 
 def test_death_at_first_out_of_spec_read() -> None:
@@ -47,9 +47,12 @@ def test_death_types_of_that_trace() -> None:
             t_rel_s=t, values=v, thresholds=THRESHOLDS, dataset_id="unit"
         )
     )
-    assert list(result.windows["death_type"]) == ["down_crossing", "down_crossing"]
-    assert list(result.windows["birth_type"]) == ["up_crossing", "up_crossing"]
-    assert not result.windows["censored"].any()
+    assert list(result.windows_in_spec["death_type"]) == [
+        "down_crossing",
+        "down_crossing",
+    ]
+    assert list(result.windows_in_spec["birth_type"]) == ["up_crossing", "up_crossing"]
+    assert not result.windows_in_spec["censored"].any()
 
 
 def test_scan_end_window_is_not_inflated() -> None:
@@ -63,8 +66,8 @@ def test_scan_end_window_is_not_inflated() -> None:
             t_rel_s=t, values=v, thresholds=THRESHOLDS, dataset_id="unit"
         )
     )
-    assert list(result.windows["death_type"]) == ["scan_end"]
-    assert bool(result.windows["censored"].iloc[0]) is True
+    assert list(result.windows_in_spec["death_type"]) == ["scan_end"]
+    assert bool(result.windows_in_spec["censored"].iloc[0]) is True
 
 
 def test_non_finite_values_do_not_fabricate_a_crossing() -> None:
@@ -77,9 +80,9 @@ def test_non_finite_values_do_not_fabricate_a_crossing() -> None:
             t_rel_s=t, values=v, thresholds=THRESHOLDS, dataset_id="unit"
         )
     )
-    assert len(result.windows) == 1
+    assert len(result.windows_in_spec) == 1
     assert result.diagnostics["n_reads_dropped_nonfinite"] == 1
-    assert list(result.windows["death_type"]) == ["scan_end"]
+    assert list(result.windows_in_spec["death_type"]) == ["scan_end"]
 
 
 def test_backwards_time_raises_rather_than_yielding_negative_lifetimes() -> None:
@@ -135,5 +138,5 @@ def test_non_finite_drop_happens_before_spacing() -> None:
         )
     )
     assert result.diagnostics["n_gaps"] == 1
-    assert list(result.windows["death_type"]) == ["gap_start", "scan_end"]
-    assert list(result.windows["birth_type"]) == ["scan_start", "gap_resume"]
+    assert list(result.windows_in_spec["death_type"]) == ["gap_start", "scan_end"]
+    assert list(result.windows_in_spec["birth_type"]) == ["scan_start", "gap_resume"]

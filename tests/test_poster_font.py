@@ -14,7 +14,7 @@ warning and the assertion could not fail. These assert on the raise instead. And
 reports the miss through `logging`, not `warnings`, so `pytest.warns` would never fire.
 
 Tests needing the real face SKIP where it is absent, the way the `r` tier does. Failing there
-would turn the default gate red on every machine that does not happen to have it.
+would turn the default test run red on every machine that does not happen to have it.
 """
 
 from __future__ import annotations

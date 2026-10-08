@@ -34,9 +34,12 @@ class SignalBand(StaleArtifactGuard):
     # per-read 1-sigma in the same units; None when the dataset carries no error column
     sigma: np.ndarray | None = None
 
-    # marginal distribution of the metric
+    # marginal distribution of the metric; mean and population std over finite reads, in
+    # display units, for the figure's caption
     value_hist_counts: np.ndarray = field(default_factory=lambda: np.array([]))
     value_hist_edges: np.ndarray = field(default_factory=lambda: np.array([]))
+    value_mean: float = field(default_factory=lambda: float("nan"))
+    value_std: float = field(default_factory=lambda: float("nan"))
     # distribution of the per-read fit error
     sigma_hist_counts: np.ndarray = field(default_factory=lambda: np.array([]))
     sigma_hist_edges: np.ndarray = field(default_factory=lambda: np.array([]))
@@ -175,6 +178,8 @@ def run(inputs: SignalBandInputs) -> SignalBand:
         gap_spans_h=[(lo / 3600.0, hi / 3600.0) for lo, hi in inputs.gap_spans_s],
         value_hist_counts=value_hist[0],
         value_hist_edges=value_hist[1],
+        value_mean=_finite_stat(values, np.mean),
+        value_std=_finite_stat(values, np.std),
         sigma_hist_counts=sigma_hist[0],
         sigma_hist_edges=sigma_hist[1],
         sigma_hist_view_x_max=sigma_view[0],

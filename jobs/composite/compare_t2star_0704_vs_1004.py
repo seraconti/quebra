@@ -43,14 +43,9 @@ def _compare_t2star(*panels: WithinCalibrationPanelData) -> CompareSeriesData:
     """
     series: list[tuple[str, np.ndarray, np.ndarray]] = []
     for pd_ in panels:
-        label = (
-            str(pd_.meta.get("dataset", pd_.primary_label))
-            if pd_.meta
-            else pd_.primary_label
-        )
         series.append(
             (
-                label,
+                str(pd_.meta["dataset"]),
                 np.asarray(pd_.signal.t_h, dtype=float),
                 np.asarray(pd_.signal.values, dtype=float),
             )

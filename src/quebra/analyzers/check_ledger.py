@@ -226,7 +226,7 @@ def make_inputs_from_windows(
     """
     diagnostics = getattr(window_result, "diagnostics", {}) or {}
     return CheckLedgerInputs(
-        windows=window_result.windows,
+        windows=window_result.windows_in_spec,
         bench_size_table=bench_size_table,
         thresholds=list(thresholds),
         dataset_id=str(getattr(window_result, "meta", {}).get("dataset_id", "")),

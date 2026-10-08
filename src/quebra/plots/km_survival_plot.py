@@ -61,14 +61,16 @@ def _plain_minutes(value: float, _pos: int) -> str:
     return f"{value:g}"
 
 
-def _draw_arrays(
+def step_arrays(
     curve: KaplanMeierCurve, x_lo: float
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Step arrays clamped into the drawable range and closed at the last observation.
 
     The final segment is extended to the curve's longest observed window age: the step
     function holds its last value there, and stopping the line at the last DEATH would
-    leave the censored tail undrawn.
+    leave the censored tail undrawn, or draw no line at all for a curve with no death.
+    `x_lo` is the left limit of the axis; 0 clamps nothing, which suits a linear axis.
+    Shared with `panels.within_calibration`, whose survival axes draw the same curves.
     """
     x = np.maximum(curve.time_min, x_lo)
     s, lo, hi = curve.survival, curve.band_lower, curve.band_upper
@@ -79,6 +81,24 @@ def _draw_arrays(
         lo = np.append(lo, lo[-1])
         hi = np.append(hi, hi[-1])
     return x, s, lo, hi
+
+
+def band_vertices(
+    x: np.ndarray, lower: np.ndarray, upper: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Explicit vertices of a band on a right-continuous step function.
+
+    Segment i spans [x[i], x[i+1]) at its left values and gets two vertices of its own,
+    (x[i], v[i]) and (x[i+1], v[i]), so `fill_between` without `step=` fills it whole. A
+    segment whose two bounds are not both finite is NaN at both of its vertices and is
+    left unfilled. `fill_between(step="post")` splits at the NaN itself, so it cannot be
+    used: it drops a segment whose LEFT value is defined and whose right end is NaN, which
+    on a Kaplan-Meier band is the last segment before S reaches 0.
+    """
+    defined = np.isfinite(lower) & np.isfinite(upper)
+    lower = np.where(defined, lower, np.nan)
+    upper = np.where(defined, upper, np.nan)
+    return np.repeat(x, 2)[1:], np.repeat(lower, 2)[:-1], np.repeat(upper, 2)[:-1]
 
 
 class KMSurvivalPlot(BasePlot):
@@ -119,13 +139,10 @@ class KMSurvivalPlot(BasePlot):
 
             color = theme.POSTER_INK_SURVIVAL
             for index, curve in enumerate(curves):
-                x, s, lo, hi = _draw_arrays(curve, x_lo)
+                x, s, lo, hi = step_arrays(curve, x_lo)
                 linestyle = _LINESTYLES[index % len(_LINESTYLES)]
                 ax.fill_between(
-                    x,
-                    lo,
-                    hi,
-                    step="post",
+                    *band_vertices(x, lo, hi),
                     color=color,
                     alpha=theme.BAND_STYLE["fill_alpha"],
                     linewidth=0.0,

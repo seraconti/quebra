@@ -16,8 +16,10 @@ computed by reading the code it checks is not an oracle.
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
+from quebra.analyzers import event_table, windows
 from quebra.analyzers import kaplan_meier as km
 
 # Marked PER TEST, not at module level. R6.2 requires that of a file whose tests answer more
@@ -149,17 +151,56 @@ def test_the_estimate_is_invariant_to_input_order(seed) -> None:
 
 
 @pytest.mark.statistical
-def test_the_median_is_the_first_time_survival_reaches_one_half() -> None:
-    """Oracle: the definition `min{t : S(t) <= 0.5}`, tested where `<=` and `<` differ.
+@pytest.mark.parametrize(
+    ("durations", "observed", "r_median"),
+    [
+        ([1, 2], [True, True], 1.5),
+        ([10, 20, 30, 40], [True, True, True, True], 25.0),
+        ([10, 20, 30, 40], [True, True, False, False], 30.0),
+        (list(range(1, 25)), [True] * 24, 12.5),
+        (list(range(1, 35)), [True] * 34, 17.5),
+    ],
+    ids=[
+        "flat_to_next_death",
+        "sample_median",
+        "flat_to_last_follow_up",
+        "one_ulp_above_one_half",
+        "one_ulp_below_one_half",
+    ],
+)
+def test_the_median_on_a_flat_stretch_at_one_half_is_the_stretch_midpoint(
+    durations, observed, r_median
+) -> None:
+    """Oracle: R survival 3.8.6 `quantile(survfit(Surv(durations, observed) ~ 1), 0.5)`.
 
-    Two observed deaths at 1 and 2 give `S(1) = 0.5` exactly. Under `<=` the median is 1;
-    under a strict `<` it would be 2. Any case where `S` steps past 0.5 without landing on
-    it cannot tell the two apart, which is why this case sits exactly on the boundary.
+    Run in R 4.5.3 on these exact inputs; the last two are `Surv(1:24, rep(1, 24))` and
+    `Surv(1:34, rep(1, 34))`. The first three land S exactly on 0.5. The first-crossing
+    rule would answer 1, 20 and 20; R takes the midpoint of the flat stretch, which ends at
+    the next death or, with none, at the largest observed time. Without censoring that is
+    the ordinary sample median.
+
+    The last two land one ulp off 0.5 (R prints S = 0.50000000000000011 at 12 and
+    0.49999999999999989 at 17, and so does `run`). Only `QUANTILE_TOL` makes those the flat
+    stretch R sees: without it the answers are 13.0 and 17.0.
     """
-    curve = _curve([1, 2], [True, True])
+    curve = _curve(durations, observed)
 
-    assert curve.survival == pytest.approx([1.0, 0.5, 0.0], abs=1e-12)
-    assert curve.median_survival_min == 1.0
+    assert curve.median_survival_min == pytest.approx(r_median, abs=1e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("p", [0.0, 1.0, -0.2, 1.5, float("nan")])
+def test_a_quantile_outside_the_open_unit_interval_is_refused(p) -> None:
+    """Oracle: specification. The quantile rule is stated for 0 < p < 1 only.
+
+    Unchecked, p = 1.5 returned None (read as "never reached") and p = -0.2 the first step
+    time; at p = 0 R's `survival:::findq` special-cases the answer to the first time, which
+    this rule does not reproduce.
+    """
+    with pytest.raises(ValueError, match=r"must lie in \(0, 1\)"):
+        km.survival_quantile(
+            np.array([0.0, 1.0, 2.0]), np.array([1.0, 0.5, 0.0]), p, 2.0
+        )
 
 
 @pytest.mark.statistical
@@ -173,7 +214,7 @@ def test_a_curve_that_never_reaches_one_half_has_no_median() -> None:
 
 @pytest.mark.unit
 def test_the_band_is_undefined_at_exactly_the_endpoints_and_defined_between() -> None:
-    """Oracle: `_loglog_band`'s stated exclusion set, `{S = 1} u {S = 0}`.
+    """Oracle: `loglog_band`'s stated exclusion set, `{S = 1} u {S = 0}`.
 
     Named for what it pins rather than for the infinite Greenwood term, because that term
     is NOT separately observable. `denom == 0` holds only when `deaths == n_j`, which sets
@@ -257,7 +298,7 @@ def test_the_product_limit_estimate_agrees_with_scipys_ecdf(case) -> None:
 def test_the_log_log_band_agrees_with_scipys_log_log_interval(case) -> None:
     """Oracle: `ecdf(...).sf.confidence_interval(method="log-log")`, the same construction.
 
-    Compared only where BOTH are finite. `_loglog_band` returns NaN where `S = 1`, where
+    Compared only where BOTH are finite. `loglog_band` returns NaN where `S = 1`, where
     `S = 0` and where Greenwood is infinite, and scipy does not use the same exclusion set,
     so the excluded points are a difference in reporting policy rather than in arithmetic.
     Stating the rule here is what stops it becoming a reconciliation later.
@@ -276,6 +317,48 @@ def test_the_log_log_band_agrees_with_scipys_log_log_interval(case) -> None:
     assert ours_hi[both] == pytest.approx(theirs_hi[both], abs=1e-12)
 
 
+@pytest.mark.unit
+def test_a_curve_with_no_windows_has_no_distance_to_any_curve() -> None:
+    """Oracle: specification. An empty side's S = 1 is a placeholder, not an estimate.
+
+    Its support ends at 0, so unrefused it scores 0 against every curve, including one
+    that falls to 0, and `compare` would rank the two as identical.
+    """
+    empty_table = event_table.EventTable(
+        dataset_id="",
+        threshold_label="3 µs",
+        side=windows.SIDE_OUT_OF_SPEC,
+        age_s=np.array([], dtype=float),
+        event=np.array([], dtype=bool),
+    )
+    empty = km.curve_from_event_table(empty_table, label="empty")
+    falls = _curve([1.0, 2.0], [True, True], label="falls", threshold_label="3 µs")
+    assert empty.n_windows == 0 and falls.survival[-1] == 0.0
+
+    for a, b in ((empty, falls), (falls, empty)):
+        with pytest.raises(ValueError, match="holds no windows"):
+            km.log_time_separation(a, b)
+    for curves in ([falls, empty], [empty]):
+        with pytest.raises(ValueError, match="holds no windows"):
+            km.compare(curves, "3 µs")
+
+
+@pytest.mark.unit
+def test_run_and_compare_print_nothing(capsys) -> None:
+    """Oracle: specification. A step is pure compute: its result is the artifact.
+
+    The widest pair is a field of the comparison (`pair`), not a log line.
+    """
+    capsys.readouterr()
+    near = _curve([1.0, 2.0], [True, True], label="near", threshold_label="t")
+    far = _curve([100.0, 200.0], [True, True], label="far", threshold_label="t")
+    comparison = km.compare([near, far], "t")
+
+    assert comparison.pair == ("near", "far")
+    printed = capsys.readouterr()
+    assert printed.out == "" and printed.err == "", printed
+
+
 @pytest.mark.statistical
 def test_the_scipy_comparison_rejects_an_estimator_that_drops_censored_windows() -> (
     None
@@ -285,9 +368,9 @@ def test_the_scipy_comparison_rejects_an_estimator_that_drops_censored_windows()
     AGENTS.md section 4 records a carve control that compared `reference` to `reference`
     and passed with a deliberately broken carve, so a cross-check with no demonstrated
     failure mode is not evidence. The wrong estimator used here is a real one: the crude
-    survival curve that DISCARDS right-censored windows, which is what
-    `within_calibration_compute._window_survival` does and what Kaplan-Meier exists to
-    replace. On a heavily censored record the two must not agree.
+    survival curve that DISCARDS right-censored windows, which the within-calibration panel
+    drew before Kaplan-Meier replaced it. On a heavily censored record the two must not
+    agree.
     """
     durations, observed = CASES["heavily censored"]
     d, o = np.asarray(durations, dtype=float), np.asarray(observed, dtype=bool)
@@ -342,7 +425,7 @@ def test_the_handoff_drops_exactly_the_unobserved_births_and_counts_them() -> No
     wiring and the estimator can jointly be wrong, and it costs one test here.
     """
     carved = _carve_with_every_window_kind()
-    at = carved.windows
+    at = carved.windows_in_spec
     assert set(at["birth_type"]) == {"scan_start", "up_crossing", "gap_resume"}
 
     inputs = km.make_inputs_from_windows(at, threshold_label="3 µs", label="unit")
@@ -361,6 +444,84 @@ def test_the_handoff_drops_exactly_the_unobserved_births_and_counts_them() -> No
     )
 
 
+@pytest.mark.integration
+def test_an_out_of_spec_table_estimates_that_side_and_a_mixed_table_is_refused() -> (
+    None
+):
+    """Oracle: the carve's own out-of-spec table, and specification for the refusals.
+
+    The side estimated is the table's own `side` column. Both sides concatenated are two
+    lifetime laws in one sample, so the handoff raises rather than picking one; a table
+    short of a column the event table reads fails the handoff's own column check.
+    """
+    carved = _carve_with_every_window_kind()
+    out = carved.windows_out_of_spec
+    inputs = km.make_inputs_from_windows(out, threshold_label="3 µs", label="out")
+
+    assert inputs.side == windows.SIDE_OUT_OF_SPEC
+    assert inputs.duration_min == pytest.approx(
+        out["duration_s"].to_numpy() / 60.0, abs=1e-12
+    )
+    assert inputs.death_observed.tolist() == (~out["censored"]).tolist()
+    assert km.run(inputs).side == windows.SIDE_OUT_OF_SPEC
+
+    both = pd.concat([carved.windows_in_spec, out], ignore_index=True)
+    with pytest.raises(ValueError, match="must hold one side"):
+        km.make_inputs_from_windows(both, threshold_label="3 µs", label="mixed")
+    with pytest.raises(
+        KeyError, match=r"Kaplan-Meier requires columns \['t_birth_s'\]"
+    ):
+        km.make_inputs_from_windows(
+            out.drop(columns="t_birth_s"), threshold_label="3 µs", label="out"
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("flag", "code"), [("birth_observed", "birth_type"), ("censored", "death_type")]
+)
+def test_a_flag_that_disagrees_with_its_code_is_refused(flag, code) -> None:
+    """Oracle: the carve's rule. A birth is observed iff it is a crossing; a window is
+    censored iff it ended at a gap or at the end of the scan.
+
+    Selection reads the flags. Flipped on an up-crossing window, as here, a flag would
+    drop a lifetime or enter a censored window as a death, and only this check notices.
+    The other direction, a scan-start or gap-resume birth flagged observed, is refused
+    earlier by the event table: its length interval needs the read before birth, which
+    that window does not have.
+    """
+    at = _carve_with_every_window_kind().windows_in_spec.copy()
+    assert at.loc[1, "birth_type"] == "up_crossing"
+    at.loc[1, flag] = not at.loc[1, flag]
+
+    with pytest.raises(
+        ValueError, match=f"{flag} flag that disagrees with their {code}"
+    ):
+        km.make_inputs_from_windows(at, threshold_label="3 µs", label="u")
+
+
+@pytest.mark.unit
+def test_every_curve_in_a_set_names_the_side_it_estimates() -> None:
+    """Oracle: the (label, side) key each curve is stored under, empty sides included.
+
+    Both sides' curves carry the threshold label alone as `label`, so `side` is what tells
+    a curve opened alone which side it estimates.
+    """
+    always_in = windows.run(
+        windows.WindowsInputs(
+            t_rel_s=np.arange(6.0),
+            values=np.full(6, 9.0),
+            thresholds=[("3 µs", 3.0, True)],
+        )
+    )
+    for carved, n_empty in ((_carve_with_every_window_kind(), 0), (always_in, 2)):
+        kset = km.kaplan_meier_set(event_table.event_tables_from_carve(carved))
+        assert {key[1] for key in kset.curves} == set(event_table.SIDES)
+        assert sum(c.n_windows == 0 for c in kset.curves.values()) == n_empty
+        for (_label, side), curve in kset.curves.items():
+            assert curve.side == side
+
+
 @pytest.mark.statistical
 def test_a_zero_duration_window_is_censored_and_leaves_survival_at_one() -> None:
     """Oracle: the carve's death convention, which makes a zero-duration DEATH unreachable.
@@ -374,7 +535,7 @@ def test_a_zero_duration_window_is_censored_and_leaves_survival_at_one() -> None
     """
     carved = _carve_with_every_window_kind()
     inputs = km.make_inputs_from_windows(
-        carved.windows, threshold_label="3 µs", label="u"
+        carved.windows_in_spec, threshold_label="3 µs", label="u"
     )
     zero = inputs.duration_min == 0.0
     assert zero.sum() == 1
@@ -432,30 +593,37 @@ def test_the_band_covers_a_known_exponential_survival_at_nominal() -> None:
     )
 
 
+def _crude_survival(windows_min: list[float]) -> list[tuple[float, float]]:
+    """The crude estimator the panel drew before Kaplan-Meier: P(W >= t), uncensored only."""
+    w = np.asarray(windows_min, dtype=float)
+    w = w[np.isfinite(w)]
+    return [(float(x), float(np.sum(w >= x) / len(w))) for x in np.unique(w)]
+
+
 @pytest.mark.statistical
 def test_the_crude_estimator_differs_from_kaplan_meier_on_three_named_axes() -> None:
     """Oracle: the two implementations, compared axis by axis on inputs built to isolate each.
 
-    `kaplan_meier.py`'s module docstring names TWO differences from
-    `within_calibration_compute._window_survival`. There is a third, and it is the one that
-    is present even when the other two are switched off.
+    `kaplan_meier.py`'s module docstring names TWO differences from the crude estimator the
+    panel drew before Kaplan-Meier (`_crude_survival` below). There is a third, and it is
+    the one that is present even when the other two are switched off.
 
-    A. CENSORING. `reliability_band` feeds the crude estimator only `~censored` windows;
-       KM keeps them as censored observations.
-    B. BIRTH TYPE. The crude path does not filter on `birth_type`, so endurance bags enter
+    A. CENSORING. The crude estimator was fed only `~censored` windows; KM keeps them as
+       censored observations.
+    B. BIRTH TYPE. The crude path did not filter on `birth_type`, so endurance bags entered
        it; KM drops them and counts the drop.
-    C. RIGHT-CONTINUITY. `_window_survival` returns `P(W >= t)`; `run` returns `P(T > t)`.
+    C. RIGHT-CONTINUITY. `_crude_survival` returns `P(W >= t)`; `run` returns `P(T > t)`.
        They differ by one step on IDENTICAL uncensored inputs, and the crude curve never
        reaches 0.
 
-    Reported as numbers. Which estimator the within-calibration panel should draw is a
-    product decision and is not made here.
+    The panel draws Kaplan-Meier and no crude estimator remains in `src/`, so
+    `_crude_survival` is a test-local reference: the two asserts on `crude` describe it and
+    cannot fail on a production change. Every other assert reads `run`, the carve or
+    `make_inputs_from_windows`.
     """
-    from quebra.analyzers.within_calibration_compute import _window_survival
-
-    # Axis C in isolation: same durations, no censoring, no bags.
+    # Axis C in isolation: same durations, no censoring, no windows with unseen births.
     durations = [1.0, 2.0, 3.0]
-    crude = dict(_window_survival(durations))
+    crude = dict(_crude_survival(durations))
     curve = _curve(durations, [True, True, True])
     km_at = dict(zip(curve.time_min.tolist(), curve.survival.tolist()))
 
@@ -466,7 +634,7 @@ def test_the_crude_estimator_differs_from_kaplan_meier_on_three_named_axes() -> 
 
     # Axes A and B on the real carve: what each estimator is even given.
     carved = _carve_with_every_window_kind()
-    at = carved.windows
+    at = carved.windows_in_spec
     inputs = km.make_inputs_from_windows(at, threshold_label="3 µs", label="u")
 
     crude_input = at[~at["censored"]]["duration_s"].to_numpy() / 60.0

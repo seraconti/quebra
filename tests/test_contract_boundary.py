@@ -106,9 +106,16 @@ def test_an_unknown_death_type_is_refused_by_a_bare_raise_not_a_contract():
     windows = pd.DataFrame(
         {
             "threshold_label": ["thr", "thr"],
+            "side": ["in_spec", "in_spec"],
+            "t_before_birth_s": [0.0, 100.0],
+            "t_birth_s": [10.0, 110.0],
+            "t_last_s": [60.0, 230.0],
+            "t_death_s": [70.0, 230.0],
             "birth_type": ["up_crossing", "up_crossing"],
             "death_type": ["down_crossing", "teleported"],
             "duration_s": [60.0, 120.0],
+            "birth_observed": [True, True],
+            "censored": [False, True],
         }
     )
     with pytest.raises(ValueError, match="unknown death_type"):

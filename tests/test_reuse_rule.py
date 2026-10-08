@@ -1,8 +1,8 @@
-"""Reuse gate + artifact completeness.
+"""Reuse rule + artifact completeness.
 
-The gate: an artifact is reusable only when its content identity AND git commit
+The reuse rule: an artifact is reusable only when its content identity AND git commit
 match the current run AND the working tree is clean; any mismatch re-runs fresh.
-These unit-test the pure gate helper (so the clean-tree/commit logic is pinned
+These unit-test the pure reuse-rule helper (so the clean-tree/commit logic is pinned
 without needing a real clean repo), plus the panel-data completeness validators.
 """
 

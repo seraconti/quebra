@@ -27,7 +27,7 @@ MANIFEST = REPO / "docs" / "JOBS.md"
 # This was an allowlist of ten names, which was wrong in the way allowlists usually are: it
 # claimed to hold "the ones that decide what a run MEANS" while silently omitting
 # VALIDATION_SEED, ASYMPTOTIC_SIZE_SEED, C3_N_NULL_SIM, TIE_CUTOFF_DISTINCT and four others.
-# Editing a seed left the generated manifest byte-identical, so the staleness gate could not
+# Editing a seed left the generated manifest byte-identical, so the staleness test could not
 # see it either. A rule cannot go stale the way a list does.
 DECLARATIONS = frozenset({"JOB_ID", "JOB_FAMILY", "JOB_SWEEP"})
 

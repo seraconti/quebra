@@ -78,7 +78,7 @@ def block_permutations(
     permutation p-value a fresh random variable: three consecutive calls on identical input
     returned p = 0.3860 / 0.4040 / 0.3790. That is fatal downstream, because
     `Job.build_identity` folds only the job-file hash and the dataset hashes - two runs
-    producing opposite verdicts would share an identity, and the reuse gate would serve
+    producing opposite verdicts would share an identity, and the reuse rule would serve
     whichever ran first. Callers pass a generator built from an integer `seed` that travels
     as a step kwarg, so the seed reaches the provenance label.
     """

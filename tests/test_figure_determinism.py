@@ -39,7 +39,7 @@ def _poster_font_or_skip() -> None:
 
     The face is an environment requirement, not a Python dependency: it cannot be pip
     installed and CI does not provision it. A test that FAILED without it would turn the
-    default gate red on every machine but the one that has the font, which is the opposite
+    default test run red on every machine but the one that has the font, which is the opposite
     of what a guard against silent substitution should cost.
     """
     from quebra.plots import theme

@@ -45,7 +45,8 @@ class WithinCalibrationPanelData(StaleArtifactGuard):
                     out of spec (e.g. infidelity); True -> below is (e.g. T2*).
     primary_label : y-axis label carrying the unit, e.g. "T2* (µs)"
     traces        : optional extra labeled series overlaid on the signal axis
-    meta          : arbitrary dict shown in summary text (<=4 items displayed)
+    meta          : dict with a required non-empty "dataset" entry, which the caption
+                    shows (the builder raises without it); other keys are free
     """
 
     signal: SignalBand

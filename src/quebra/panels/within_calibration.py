@@ -33,10 +33,11 @@ import plotly.graph_objects as go
 
 from quebra.panels import _within_calibration_render as render
 from quebra.analyzers.reliability_band import estimator_name
-from quebra.analyzers.windows import STATE_UNOBSERVED
+from quebra.analyzers.windows import SIDE_IN_SPEC, STATE_UNOBSERVED
 from quebra.analyzers.within_calibration_data import WithinCalibrationPanelData
 from quebra.plots import theme
 from quebra.plots.base import BasePlot
+from quebra.plots.km_survival_plot import band_vertices, step_arrays
 
 
 # Per-threshold colours come from plots.theme.threshold_color: used on primary-axis
@@ -56,7 +57,8 @@ class WithinCalibrationPanel(BasePlot):
       band 1  signal       series + value, fit-error and relative-error distributions
       band 2  distinguish  4-state read timeline, excursion shape, xi by threshold
       band 3  reliability  2-state compliance timeline, survival curve
-    then cumulative time / damage [opt-in] and the summary text.
+    then cumulative time / damage [opt-in]. A one-line caption names the dataset and the
+    series' mean and standard deviation.
 
     The two timelines share an x-axis and sit vertically adjacent on purpose: if they
     look the same, resolvability costs nothing; if they differ, that is the finding.
@@ -87,7 +89,6 @@ class WithinCalibrationPanel(BasePlot):
             ]
             if has_extra_row:
                 rows.append(("cumulative", 2.4))
-            rows.append(("summary", max(1.6, 0.28 * n_thr)))
 
             fig = plt.figure(
                 figsize=(16, sum(h for _, h in rows)),
@@ -158,7 +159,6 @@ class WithinCalibrationPanel(BasePlot):
             else:
                 ax_cum_time = None
                 ax_cum_dmg = None
-            ax_sum = fig.add_subplot(gs[row["summary"], :])
 
             color = pd_.color if pd_.color is not None else "C0"
 
@@ -223,7 +223,7 @@ class WithinCalibrationPanel(BasePlot):
                 theme.apply_common_style(ax_cum_dmg)
                 self._draw_cumulative_damage(ax_cum_dmg, pd_)
 
-            self._draw_summary(ax_sum, pd_)
+            self._draw_caption(fig, pd_)
         return fig
 
     def build_plotly(self, result: object) -> go.Figure:
@@ -489,26 +489,42 @@ class WithinCalibrationPanel(BasePlot):
             ax.axis("off")
             return
 
-        # Only plot thresholds with >=5% in-spec time; keep all in textual summary.
-        # (Decision: keep the cull, preserving current figures.)
+        # Only plot thresholds with >=5% in-spec time; the title states how many were culled.
+        # (Decision: keep the cull, preserving current figures.) A NaN occupancy means no
+        # observed time to measure it on: the cull drops it, and the title counts it apart
+        # from the thresholds measured below 5%.
+        occupancy = pd_.reliability.occupancy
         plotted = [
             (label, thr_val, bvg)
             for label, thr_val, bvg in pd_.thresholds
-            if pd_.reliability.occupancy.get(label, 0.0) >= 0.05
+            if occupancy[label] >= 0.05
         ]
-
-        n_culled = len(pd_.thresholds) - len(plotted)
-        if n_culled:
-            title = f"{title} ({n_culled} thresholds below 5% in spec)"
+        n_unmeasured = int(
+            sum(np.isnan(occupancy[label]) for label, _, _ in pd_.thresholds)
+        )
+        n_below = len(pd_.thresholds) - len(plotted) - n_unmeasured
+        culled = [
+            text
+            for n, text in (
+                (n_below, f"{n_below} thresholds below 5% in spec"),
+                (n_unmeasured, f"{n_unmeasured} not measured"),
+            )
+            if n
+        ]
+        if culled:
+            title = f"{title} ({', '.join(culled)})"
         if not plotted:
             ax.text(
                 0.5,
                 0.5,
-                "No thresholds with >=5% in-spec time",
+                "No thresholds with >=5% in-spec time"
+                if n_below
+                else "In-spec time not measured: no observed time",
                 ha="center",
                 va="center",
                 transform=ax.transAxes,
             )
+            ax.set_title(title)
             ax.axis("off")
             return
 
@@ -830,42 +846,46 @@ class WithinCalibrationPanel(BasePlot):
             ax.axis("off")
             return
 
+        # The key travels with the counts, so each entry stays short enough for the legend
+        # to sit beside the axes without collapsing the figure's layout.
         legend_kwargs = dict(
             frameon=False,
             fontsize=7,
             loc="upper left",
             bbox_to_anchor=(1.01, 1.0),
             borderaxespad=0.0,
+            title="n windows, d deaths, c censored;\nu left out (birth not observed)",
         )
+        km = pd_.reliability.kaplan_meier
         plotted = 0
         excluded_only = 0
         for i, (label, _thr_val, _bvg) in enumerate(pd_.thresholds):
             color = theme.threshold_color(i, len(pd_.thresholds))
-            # FIGURE_STANDARD: a panel that drops data says how much, in the panel. The
-            # estimator drops censored windows, so each threshold's entry carries its count,
-            # a threshold whose every window was censored included: it has no curve to label.
-            dropped = pd_.reliability.n_censored_dropped[label]
-            carved = pd_.reliability.n_windows[label]
-            note = f"{label} - excluded: {dropped} of {carved} windows (censored)"
-            survival = pd_.reliability.survival_curve_min.get(label, [])
-            if not survival:
-                if carved:
+            curve = km.curve(label, SIDE_IN_SPEC)
+            # FIGURE_STANDARD: a panel that drops data says how much, in the panel.
+            # Kaplan-Meier keeps censored windows; windows whose start was not seen are
+            # the ones left out, and each entry counts them.
+            note = (
+                f"{label}: n={curve.n_windows}, d={curve.n_deaths}, "
+                f"c={curve.n_censored}, u={curve.n_unobserved_birth_dropped}"
+            )
+            if curve.n_windows == 0:
+                if curve.n_unobserved_birth_dropped:
                     # No line sample: the entry reports a count, not a curve.
                     ax.plot(
                         [], [], color=color, linestyle="none", label=f"{note}, no curve"
                     )
                     excluded_only += 1
                 continue
-            surv_x, surv_y = zip(*survival)
-            ax.semilogy(
-                surv_x,
-                surv_y,
-                linewidth=1.2,
-                markersize=4,
-                markevery=max(1, len(surv_x) // 10),
+            # Line and band run to the longest observed window, not the last death, and
+            # the band fills every segment whose own bounds are defined.
+            x, s, lower, upper = step_arrays(curve, 0.0)
+            ax.step(x, s, where="post", linewidth=1.2, color=color, label=note)
+            ax.fill_between(
+                *band_vertices(x, lower, upper),
                 color=color,
-                label=note,
-                linestyle="-",
+                alpha=theme.BAND_STYLE["fill_alpha"],
+                linewidth=0.0,
             )
             plotted += 1
 
@@ -873,7 +893,7 @@ class WithinCalibrationPanel(BasePlot):
             ax.text(
                 0.5,
                 0.5,
-                "No complete in-spec windows for defined thresholds"
+                "No in-spec windows with an observed birth for defined thresholds"
                 if excluded_only
                 else "No in-spec windows for defined thresholds",
                 ha="center",
@@ -885,11 +905,23 @@ class WithinCalibrationPanel(BasePlot):
             ax.axis("off")
             return
 
+        # Linear, not log: Kaplan-Meier reaches 0 and a log axis would hide the last drop.
+        ax.set_ylim(0.0, 1.02)
         ax.set_xlabel("Window length (minutes)")
-        ax.set_ylabel("Fraction of windows lasting >= length")
+        ax.set_ylabel("Fraction of windows outliving length")
         ax.set_title(
             f"In-spec window survival per threshold "
-            f"({estimator_name(pd_.reliability.estimator)})"
+            f"({estimator_name(pd_.reliability.estimator)}, "
+            f"{km.conf_level:.0%} log-log band)"
+        )
+        ax.text(
+            0.01,
+            0.02,
+            km.checks.summary(),
+            transform=ax.transAxes,
+            ha="left",
+            va="bottom",
+            **theme.ANNOTATION,
         )
         ax.grid(True, which="both", color="lightgray", alpha=0.4)
         ax.legend(**legend_kwargs)
@@ -1018,78 +1050,28 @@ class WithinCalibrationPanel(BasePlot):
             ncol=max(1, (len(pd_.thresholds) + 4) // 5),
         )
 
-    def _draw_summary(self, ax: plt.Axes, pd_: WithinCalibrationPanelData) -> None:
-        series = pd_.signal.values
-        cv = pd_.signal.cv
-        finite = series[np.isfinite(series)]
+    @staticmethod
+    def _draw_caption(fig: plt.Figure, pd_: WithinCalibrationPanelData) -> None:
+        """One line above the figure: dataset, series, mean and standard deviation.
 
-        lines: list[str] = [
-            f"Metric: {pd_.primary_label}",
-            f"Points: {len(finite)}",
-            f"Initial value: {float(finite[0]):.6g}"
-            if len(finite) > 0
-            else "Initial value: N/A",
-            f"Range: {float(np.min(finite)):.6g} to {float(np.max(finite)):.6g}"
-            if len(finite) > 0
-            else "Range: N/A",
-            f"CV: {cv:.4f}" if np.isfinite(cv) else "CV: N/A",
-        ]
-        if pd_.meta:
-            lines.append("")
-            for k, v in list(pd_.meta.items())[:4]:
-                lines.append(f"{k}: {v}")
-
-        ttf_map = pd_.reliability.ttf_per_threshold if pd_.include_ttf else {}
-
-        for label, thr_val, big_values_good in pd_.thresholds:
-            summ = pd_.reliability.threshold_summary.get(label)
-            if summ is None:
-                continue
-            time_oos_h = summ["time_oos_h"]
-            frac_oos = summ["frac_oos_pct"]
-            lines.append("")
-            lines.append(f"{label} (thr={thr_val:.6g}):")
-            lines.append(f"  Out of spec: {time_oos_h:.2f} h ({frac_oos:.1f}%)")
-            w = pd_.reliability.threshold_window_stats.get(label, {}).get(
-                "raw_series_runs", {"above": {}, "below": {}}
+        `meta["dataset"]` is required and non-empty. The builder refuses anything else,
+        and an artifact constructed around the builder is refused here too: a missing key
+        raises KeyError and an empty or blank name ValueError, rather than drawing a caption
+        that names no record.
+        """
+        dataset = str(pd_.meta["dataset"]).strip()
+        if not dataset:
+            raise ValueError(
+                "meta['dataset'] is empty: the caption must name the record"
             )
-            # big_values_good=False (infidelity): above threshold = oos, below = in-spec
-            # big_values_good=True  (T2*):        below threshold = oos, above = in-spec
-            oos_key = "above" if not big_values_good else "below"
-            in_spec_key = "below" if not big_values_good else "above"
-            ws_oos = w[oos_key]
-            ws_in_spec = w[in_spec_key]
-            if ws_oos.get("count", 0) > 0:
-                lines.append(
-                    f"  oos: count={ws_oos['count']}, mean={ws_oos['mean']:.1f} min, p90={ws_oos['p90']:.1f} min"
-                )
-            if ws_in_spec.get("count", 0) > 0:
-                lines.append(
-                    f"  in-spec: count={ws_in_spec['count']}, mean={ws_in_spec['mean']:.1f} min, p90={ws_in_spec['p90']:.1f} min"
-                )
-            if pd_.include_ttf and label in ttf_map:
-                first_cross = ttf_map[label]
-                if first_cross is None:
-                    lines.append("  First crossing: none in dataset")
-                else:
-                    lines.append(f"  First crossing: {first_cross:.3f} h")
-
-        ax.axis("off")
-        ax.text(
-            0.02,
-            0.98,
-            "\n".join(lines).strip(),
-            transform=ax.transAxes,
-            ha="left",
-            va="top",
-            fontsize=7.5,
-            family="monospace",
-            bbox={
-                "facecolor": "lightyellow",
-                "edgecolor": "gray",
-                "boxstyle": "round,pad=0.5",
-            },
+        mean, std = pd_.signal.value_mean, pd_.signal.value_std
+        stats = (
+            f"mean {mean:.4g} ± std {std:.4g}"
+            if np.isfinite(mean) and np.isfinite(std)
+            else "no finite reads"
         )
+        caption = f"{dataset}  ·  {pd_.primary_label}: {stats}"
+        fig.suptitle(caption, x=0.01, ha="left", **theme.CAPTION)
 
 
 __all__ = ["WithinCalibrationPanel", "WithinCalibrationPanelData"]

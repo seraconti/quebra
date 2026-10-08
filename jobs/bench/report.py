@@ -419,10 +419,10 @@ def verdicts(size: pd.DataFrame, power: pd.DataFrame) -> pd.DataFrame:
             & (power["arm"] == arm)
             & (power["n_target"] == 100)
         ]
-        # min / mean / max over the directed grid. The gate uses the MEAN, for every check:
-        # taking the max reports the single most favourable cell as if it were the expected
-        # power - for c1 [permutation] at n = 100 the eight (shape, b) cells run 0.195 to
-        # 1.000, and a hand-typed driver string would print 1.000.
+        # min / mean / max over the directed grid. The acceptance rule uses the MEAN, for
+        # every check: taking the max reports the single most favourable cell as if it were
+        # the expected power - for c1 [permutation] at n = 100 the eight (shape, b) cells
+        # run 0.195 to 1.000, and a hand-typed driver string would print 1.000.
         power_min = (
             float(directed["rejection_rate"].min()) if len(directed) else float("nan")
         )
@@ -639,7 +639,8 @@ def build(runtime_note: str = "") -> str:
 
     add("\n## Criterion 3 - what the censoring machinery buys\n")
     add(
-        "Restated as a PREDICTION rather than a gate, per the plan. Kvaloy & Lindqvist "
+        "Restated as a PREDICTION rather than a pass/fail criterion, per the plan. "
+        "Kvaloy & Lindqvist "
         "(Technometrics 62(1) 2020, Section 6.1, Figure 1, p. 107) report that these "
         "asymptotic calibrations are mildly NON-conservative at small samples. Read off "
         "Figure 1 at 10 expected events: AD about 0.11 at shape 1.5 and 0.09 at shape "
