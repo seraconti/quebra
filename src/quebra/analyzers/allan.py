@@ -52,16 +52,11 @@ def _allan_deviation_overlapping(
     )
 
 
-def _transform_signal(freq_hz: np.ndarray, mode: str) -> tuple[np.ndarray, float]:
-    frequency = np.asarray(freq_hz, dtype=float)
-    f0_hz = float(np.mean(frequency))
+def _transform_signal(freq_hz: np.ndarray, mode: str) -> np.ndarray:
+    """The series a mode computes on. One mode exists: `raw`, the detuning as read."""
     if mode == "raw":
-        return frequency, f0_hz
-    if mode == "centered":
-        return frequency - f0_hz, f0_hz
-    if mode == "fractional":
-        return (frequency - f0_hz) / f0_hz, f0_hz
-    raise ValueError(f"Unknown Allan mode '{mode}'.")
+        return np.asarray(freq_hz, dtype=float)
+    raise ValueError(f"Unknown Allan mode '{mode}'; the only mode is 'raw'.")
 
 
 def run(
@@ -100,7 +95,7 @@ def run(
 
     summary: dict[str, pd.DataFrame] = {}
     for mode in modes:
-        signal, f0_hz = _transform_signal(delta_hz, mode=str(mode))
+        signal = _transform_signal(delta_hz, mode=str(mode))
         tau_s, adev, adev_err, n_pairs = _allan_deviation_overlapping(
             signal, dt_s, min_points, taus_mode
         )
@@ -111,7 +106,6 @@ def run(
                 "adev_err": adev_err,
                 "n_pairs": n_pairs,
                 "dt_s": np.full_like(tau_s, dt_s, dtype=float),
-                "f0_hz": np.full_like(tau_s, f0_hz, dtype=float),
             }
         )
         print(
@@ -126,7 +120,8 @@ def run(
         if carrier_col not in norm:
             raise ValueError(
                 f"fractional=True requires column '{carrier_col}' in the DataFrame. Found: {list(norm.keys())}. "
-                f"Ensure lookup_prior has been run upstream to inject the carrier frequency."
+                f"Pass carrier_col= naming a column present in the norm, or run with "
+                f"fractional=False."
             )
         carrier_vals = np.asarray(norm[carrier_col], dtype=float)
         # mean carrier (Hz)

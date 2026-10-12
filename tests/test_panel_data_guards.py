@@ -404,9 +404,10 @@ def _panel_through_the_recipe(adapter: str, norm: dict) -> object:
     profile = "longrun" if adapter == "fidelity_longrun" else ""
     config = {"dataset_profile": profile}
     result = fidelity.run(fidelity.make_inputs_from_norm(norm, config))
-    carved = recipes._fidelity_windows(result, 10.0)
+    ladder = list(fidelity.FIDELITY_LADDER)
+    carved = recipes._fidelity_windows(result, 10.0, ladder)
     km = recipes._kaplan_meier_set(recipes._event_tables(carved), 0.95)
-    return recipes._fidelity_panel_data(result, carved, km, 0)
+    return recipes._fidelity_panel_data(result, carved, km, 0, ladder)
 
 
 _WAVE = np.sin(np.arange(_N_NORM) / 3.0)
@@ -421,5 +422,5 @@ def test_the_dataset_id_reaches_the_caption_through_every_adapter(adapter) -> No
     else:
         norm = {**_FIDELITY_NORM, "delta_hz": 2e4 * _WAVE}
         norm["raw_frequency_hz"] = 5e9 + 2e4 * _WAVE
-    norm["meta"] = {"dataset_id": "Q7"}
+    norm["meta"] = {"dataset_id": "Q7", "rabi_source": "declared"}
     assert _panel_through_the_recipe(adapter, norm).meta["dataset"] == "Q7"

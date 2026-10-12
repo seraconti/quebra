@@ -38,8 +38,8 @@ breaking any composite, and recategorising costs one string edit.
 
 | JOB_ID | file | datasets | includes | parameters |
 |---|---|---|---|---|
-| `ramsey_2x2_q1_030723` | `jobs/active/ramsey_2x2_q1_030723.py` | `data/real_private/2x2/030723_2x2_qubit1.pickle` | — | `PREFIX='q1_2x2_16h_0307_dataset'` |
-| `ramsey_q1_100423` | `jobs/active/ramsey_q1_100423.py` | `data/real_private/6D2S/100423_6D2S_qubit1.pickle`<br>`data/real_private/companion/qubit1.pickle` | — | `PREFIX='q1_13h_1004_dataset'` |
+| `ramsey_2x2_q1_030723` | `jobs/active/ramsey_2x2_q1_030723.py` | `data/real_private/2x2/030723_2x2_qubit1.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='q1_2x2_16h_0307_dataset'` |
+| `ramsey_q1_100423` | `jobs/active/ramsey_q1_100423.py` | `data/real_private/6D2S/100423_6D2S_qubit1.pickle` | — | `PREFIX='q1_13h_1004_dataset'` |
 
 ## survival
 

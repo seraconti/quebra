@@ -1,12 +1,12 @@
-"""Archetype: 2x2-device Ramsey job.
+"""Archetype: 2x2-device Ramsey job - Allan and fidelity via configure_ramsey_job.
 
-Differs from the 6D2S Ramsey archetype in two ways, both deliberate:
-  - No companion calibration file, so no lookup_prior: the 2x2 datasets carry no
-    prior frequency/Rabi columns to enrich with.
-  - configure_ramsey_job detects `device` starting with "2x2" and forces
-    include_fidelity, include_tlf and allan_fractional off. Fidelity needs a Rabi
-    drive frequency this device family does not supply. Passing include_fidelity=False
-    here as well makes that explicit at the job level rather than implicit in common.
+Shape: Dataset -> configure_ramsey_job, which loads the record and owns the filter, Allan and
+fidelity wiring. The flags below are exactly what runs: configure_ramsey_job does not
+override them from the device.
+
+Fidelity uses the record's DECLARED Rabi frequency: one row of the declared table, keyed by
+the Dataset's device, qubit and `extra["run_date"]`, each of which must match the file
+name (checked at graph build). A record with no row of its own raises when the join runs.
 """
 
 from __future__ import annotations
@@ -30,15 +30,18 @@ main_ds = Dataset(
     qubit=1,
     device="2x2",
     duration_h=16,
-    extra={"run_name": PREFIX},
+    extra={"run_name": PREFIX, "run_date": "2023-07-03"},
 )
-
-main_node = job.load(main_ds)
+rabi_table = Dataset(
+    path="data/real_private/declared/rabi_frequencies_2x2.csv",
+    loader_kwargs={"comment": "#"},
+)
 
 configure_ramsey_job(
     job,
-    main_node,
+    main_ds,
     profile="overnight",
-    include_fidelity=False,
+    include_fidelity=True,
+    rabi_table=rabi_table,
     figure_prefix=PREFIX,
 )

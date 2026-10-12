@@ -7,9 +7,9 @@
 # one a figure was computed from, the identities will not match either.
 
 [manifest]
-generated = "2026-08-29"
-file_count = 63
-total_bytes = 11907648
+generated = "2026-10-12"
+file_count = 64
+total_bytes = 11908754
 
 [[record]]
 path = "2x2/030723_2x2_qubit1.pickle"
@@ -643,3 +643,10 @@ sha256 = "0ab829232e02ef96f970e1a1dfa0e81e06b78685c9b43c91d20d44a339701569"
 bytes = 406244
 embargo = "embargoed"
 group = "companion"
+
+[[record]]
+path = "declared/rabi_frequencies_2x2.csv"
+sha256 = "bd927d3e4ed878e2f28f2c22f200e9073aa8489ad98469ed20897df04e1a243f"
+bytes = 1106
+embargo = "embargoed"
+group = "declared"

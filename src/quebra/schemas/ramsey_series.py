@@ -97,8 +97,8 @@ class RamseySeriesSchema:
                     warnings.warn(
                         f"[{meta['dataset_id']}] run_start_unix_s derived from DDMMYY filename prefix "
                         f"as midnight local time (resolution: date_only_midnight). Intra-day "
-                        f"precision is lost; a calibration from earlier the same day or late "
-                        f"the previous day may be selected incorrectly. "
+                        f"precision is lost, so nothing that needs the time of day may rely "
+                        f"on it. "
                         f"Provide Dataset.extra['run_start_unix_s'] for precision.",
                         UserWarning,
                         # 3, not 2: after the move out of `_load_dataset` there is one more

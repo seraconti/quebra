@@ -12,8 +12,10 @@ THREE THINGS TO KNOW BEFORE READING THE OUTPUT
    `validate` drops every row with a null "T2star error" before the Norm is built, so
    this count sees only surviving inf/NaN. The true pre-validation unknown fraction is
    not observable from a single load, and this script loads once by design.
-2. No chi-squared or sigma filter is applied here, so window counts will not match what
-   a job produces. This measures the ladder against the raw record.
+2. The job filter is not applied here. On the released records it drops no read (its
+   chi-square stage is a guard and its other stage a backstop for non-finite reads), so
+   filtering is not a source of difference from a job's window counts. This measures the
+   ladder against the raw record.
 3. Every job file declares a ladder byte-identical to T2STAR_DEFAULT_LADDER, so that
    ladder is used for all datasets.
 

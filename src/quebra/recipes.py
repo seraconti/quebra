@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -29,21 +30,27 @@ from quebra.panels.within_calibration import (
 )
 from quebra.plots.allan_plot import AllanPlot
 from quebra.plots.tlf_plot import TLFPlot
+from quebra.transforms.declared_rabi import join_declared_rabi
 from quebra.transforms.filter import run as run_filter
-from quebra.transforms.interpolate import run as run_interpolate
 from quebra.transforms.lookup_prior import check_unix_s
 
+# Unless a comment cites a source, a value here was ported unchanged from the predecessor
+# pipeline's "overnight" profile, and no source for it is located.
 RAMSEY_CONFIG: dict[str, object] = {
     "filter": {
+        # Ported; the guard it switches is cited in `transforms/filter.py`.
         "apply_chi_squared": True,
+        # Capannelli et al., Supplementary notes, section III.C, p. 9: drift datasets scoring
+        # a normalised chi-squared of 0.8 or more are filtered out. The released records hold
+        # the points left after that filter (Supplementary Figs. 10 and 11, pp. 10-11).
         "chi_squared_threshold": 0.8,
-        "apply_sigma": True,
-        "sigma_factor": 3.5,
-        "apply_frequency_window": False,
-        "frequency_window_hz": {"min": 1.0e6, "max": 3.0e6},
     },
+    # Ported; no source located. Allan computes the raw detuning series only.
     "allan": {"modes": ["raw"], "taus_mode": "all", "min_points_for_allan": 8},
+    # Ported. It has no effect on the result: the gate-fidelity formula depends on detuning
+    # and Rabi frequency only through their ratio, which a common factor of 2*pi leaves alone.
     "fidelity": {"use_angular_frequency": False},
+    # Ported. Overwritten per job by `configure_ramsey_job(profile=...)`.
     "dataset_profile": "overnight",
 }
 
@@ -52,9 +59,6 @@ def _copy_config(profile: str) -> dict[str, object]:
     config = dict(RAMSEY_CONFIG)
     config["dataset_profile"] = profile
     config["filter"] = dict(RAMSEY_CONFIG["filter"])
-    config["filter"]["frequency_window_hz"] = dict(
-        RAMSEY_CONFIG["filter"]["frequency_window_hz"]
-    )
     config["allan"] = dict(RAMSEY_CONFIG["allan"])
     config["fidelity"] = dict(RAMSEY_CONFIG["fidelity"])
     return config
@@ -84,15 +88,6 @@ def _filter_step(
 ) -> Callable[[dict[str, object]], dict[str, object]]:
     def step(norm: dict[str, object]) -> dict[str, object]:
         return run_filter(norm, config, None)
-
-    return step
-
-
-def _interpolate_step(
-    config: Mapping[str, object],
-) -> Callable[[dict[str, object]], dict[str, object]]:
-    def step(norm: dict[str, object]) -> dict[str, object]:
-        return run_interpolate(norm, config)
 
     return step
 
@@ -156,18 +151,22 @@ def _final_stage(bundle: object) -> dict[str, object]:
     return dict(bundle["stages"][bundle["final_stage"]])
 
 
-def _fidelity_windows(result: FidelityResult, gap_mult: float) -> WindowsResult:
-    """Carve in-spec windows on the infidelity series.
+def _fidelity_windows(
+    result: FidelityResult,
+    gap_mult: float,
+    thresholds: list[tuple[str, float, bool]],
+) -> WindowsResult:
+    """Carve windows on the infidelity series, against the declared ladder.
 
-    The ladder is data-derived, so this calls the SAME pure `panel_thresholds` on the
-    SAME clipped series the panel adapter uses - the two nodes cannot disagree.
+    The panel-data step receives the same `thresholds` kwarg, so the two nodes carve and
+    render one ladder; both read the series through `fidelity.panel_series`.
     """
     series = fidelity.panel_series(result)
     return windows.run(
         windows.WindowsInputs(
             t_rel_s=result.frame["t_rel_s"].to_numpy(dtype=float),
             values=series,
-            thresholds=fidelity.panel_thresholds(series),
+            thresholds=list(thresholds),
             dataset_id=str(result.meta["dataset_id"]),
             gap_mult=gap_mult,
         )
@@ -273,6 +272,7 @@ def _fidelity_panel_data(
     window_result: WindowsResult,
     km: KaplanMeierSet,
     xi_seed: int,
+    thresholds: list[tuple[str, float, bool]],
 ) -> WithinCalibrationPanelData:
     return fidelity.make_panel_data(
         result,
@@ -280,12 +280,72 @@ def _fidelity_panel_data(
         reads=window_result.reads,
         gap_spans_s=window_result.diagnostics["gap_spans_s"],
         kaplan_meier=km,
+        thresholds=thresholds,
         # `windows.run` always records this, so a missing key is a broken artifact rather
         # than an old one; defaulting it to False would silently redraw the panel in the
         # other mode. This repo raises instead of falling back.
         use_uncertainty=bool(window_result.meta["use_uncertainty"]),
         xi_seed=xi_seed,
     )
+
+
+# `DDMMYY_<device>_qubit<N>[_<condition>]`: the record-name convention `ramsey_series` and
+# `scripts/make_data_manifest.py` also read.
+_RECORD_NAME = re.compile(r"^(\d{2})(\d{2})(\d{2})_(\w+?)_qubit(\d+)(?:_(\w+))?$")
+
+
+def _declared_rabi_key(dataset: object, rabi_table: object) -> tuple[str, str, int]:
+    """(device, run_date, qubit) for the declared Rabi join, or raise at graph build.
+
+    The key comes from the record's own `Dataset` declaration, never from a loaded node, and
+    each of its three parts must agree with the record's file name, so a key copied from
+    another job cannot silently join another record's Rabi frequency.
+    """
+    if not isinstance(dataset, Dataset):
+        raise TypeError(
+            "include_fidelity=True needs the record's Dataset, not a loaded node: its "
+            "device, qubit and extra['run_date'] key the declared Rabi table"
+        )
+    if rabi_table is None:
+        raise ValueError(
+            "include_fidelity=True needs rabi_table=Dataset(...), the table that declares "
+            "this record's Rabi frequency"
+        )
+    if not isinstance(rabi_table, Dataset):
+        raise TypeError(
+            f"rabi_table must be a Dataset, got {type(rabi_table).__name__}"
+        )
+    run_date = dataset.extra.get("run_date")
+    missing = [
+        name
+        for name, value in (
+            ("device", dataset.device),
+            ("qubit", dataset.qubit),
+            ("extra['run_date']", run_date),
+        )
+        if value is None
+    ]
+    if missing:
+        raise ValueError(
+            f"the declared Rabi join needs Dataset {', '.join(missing)} for {dataset.path}"
+        )
+    stem = Path(dataset.path).stem
+    match = _RECORD_NAME.match(stem)
+    if match is None:
+        raise ValueError(
+            f"cannot check the Rabi key against {stem!r}: the file name is not "
+            f"DDMMYY_<device>_qubit<N>"
+        )
+    day, month, year, named_device, named_qubit, _condition = match.groups()
+    declared = (str(dataset.device), str(run_date), int(dataset.qubit))
+    named = (named_device, f"20{year}-{month}-{day}", int(named_qubit))
+    for part, said, found in zip(("device", "run_date", "qubit"), declared, named):
+        if said != found:
+            raise ValueError(
+                f"the Dataset declares {part}={said!r} but the file {stem!r} names "
+                f"{found!r}; the declared Rabi row would belong to another record"
+            )
+    return declared
 
 
 def configure_ramsey_job(
@@ -297,12 +357,19 @@ def configure_ramsey_job(
     include_tlf: bool = False,
     allan_fractional: bool = False,
     allan_carrier_col: str = "qubit_frequency_hz",
+    rabi_table: Dataset | None = None,
     xi_seed: int = XI_SEED,
     tlf_seed: int = TLF_SEED,
     conf_level: float = CONF_LEVEL,
     figure_prefix: str | None = None,
 ) -> None:
     config = _copy_config(profile)
+    # Checked before any node is registered, so a mis-declared job fails at build time.
+    if rabi_table is not None and not include_fidelity:
+        raise ValueError(
+            "rabi_table was given but include_fidelity=False; nothing would read it"
+        )
+    rabi_key = _declared_rabi_key(dataset, rabi_table) if include_fidelity else None
     # dataset may be a Dataset (to load) or an already-registered Reference
     # (LocalRef/ArtifactRef - a node whose result is loaded/enriched upstream).
     if hasattr(dataset, "resolve"):
@@ -310,26 +377,14 @@ def configure_ramsey_job(
     else:
         raw = job.load(dataset)
 
-    # Decide fidelity inclusion based on device family when caller didn't explicitly
-    # disable it. Device-aware branching keeps the job semantics clear per dataset.
-    dev = None
-    # if raw was created from a Dataset node, that original Dataset lives in kwargs
-    if hasattr(raw, "kwargs") and isinstance(raw.kwargs.get("dataset"), Dataset):
-        dev = raw.kwargs.get("dataset").device
-    elif hasattr(dataset, "device"):
-        dev = dataset.device
-    if dev is not None and isinstance(dev, str) and dev.lower().startswith("2x2"):
-        include_fidelity = False
-        include_tlf = False
-        allan_fractional = False
+    # `include_fidelity`, `include_tlf` and `allan_fractional` mean what the caller says;
+    # nothing here overrides them from the dataset's device. Every analysis reads the
+    # filtered reads themselves, never a resampled series.
     filtered = job.step(_filter_step(config), raw, name="filter")
     final_filtered = job.step(_final_stage, filtered, name="final_filter_stage")
-    interpolated = job.step(
-        _interpolate_step(config), final_filtered, name="interpolate"
-    )
     allan = job.step(
         _allan_step(config),
-        interpolated,
+        final_filtered,
         name="allan",
         fractional=allan_fractional,
         carrier_col=allan_carrier_col,
@@ -341,15 +396,24 @@ def configure_ramsey_job(
     )
 
     if include_fidelity:
-        fidelity_raw = job.step(
-            _fidelity_step(config), final_filtered, name="fidelity_raw"
+        # Validated by `_declared_rabi_key` before any node was registered.
+        device, run_date, qubit = rabi_key  # type: ignore[misc]
+        # The join sits on the filtered reads and feeds fidelity only: Allan and TLF never
+        # depend on the Rabi table.
+        with_rabi = job.step(
+            join_declared_rabi,
+            final_filtered,
+            job.load_df(rabi_table),
+            name="declared_rabi",
+            device=device,
+            run_date=run_date,
+            qubit=qubit,
         )
-        # Fidelity is carved and drawn from the FILTERED reads, never the interpolated
-        # ones. Interpolation puts points on a uniform grid, which erases exactly the
-        # read gaps the carve exists to find: on 100423 the interpolated fidelity
-        # reported gaps=0 across a real 30-minute gap, because 99.8% of its points
-        # were manufactured. Allan still uses `interpolated` - it needs uniform
-        # sampling and is not downstream of a carve.
+        fidelity_raw = job.step(_fidelity_step(config), with_rabi, name="fidelity_raw")
+        ladder = list(fidelity.FIDELITY_LADDER)
+        # Fidelity is carved and drawn from the FILTERED reads. A resampled series puts
+        # points on a uniform grid, which erases exactly the read gaps the carve exists to
+        # find.
         #
         # Panel data is a STEP, not a draw-time side effect: the carve has to be a node
         # so its gap policy reaches provenance and its tables can be materialized.
@@ -358,6 +422,7 @@ def configure_ramsey_job(
             fidelity_raw,
             name="fidelity_windows",
             gap_mult=DEFAULT_GAP_MULT,
+            thresholds=ladder,
         )
         _fidelity_tables, fidelity_km = wire_kaplan_meier(
             job, fidelity_windows, conf_level=conf_level, node_suffix="_fidelity"
@@ -370,6 +435,7 @@ def configure_ramsey_job(
             name="fidelity_panel_data",
             # Declared, not defaulted: see the note in jobs/active/t2star_q1_070423.py.
             xi_seed=xi_seed,
+            thresholds=ladder,
         )
         job.figure(
             WithinCalibrationPanel,

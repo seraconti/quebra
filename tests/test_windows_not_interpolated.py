@@ -1,7 +1,8 @@
-"""The carve must never consume a resampled series.
+"""Neither the carve nor the Allan deviation may consume a resampled series.
 
 A gap policy is meaningless on a uniform grid, and an interpolated point is not an
-observation - a window built from one reports lifetime the instrument never measured.
+observation - a window built from one reports lifetime the instrument never measured, and an
+Allan deviation computed on one reports stability at time scales the reads never sampled.
 
 This is a WHITELIST, not a blacklist. Asserting "no node called interpolate" would pass
 for any future decimation or resampling step under a different name, and would be
@@ -29,11 +30,14 @@ pytestmark = pytest.mark.policy
 REPO_ROOT = Path(__file__).resolve().parents[1]
 JOBS_DIR = REPO_ROOT / "jobs"
 
-# Nodes whose output is observed reads, filtered but never resampled.
+# Step kinds whose output is observed reads, filtered but never resampled, plus the checked
+# node kinds themselves (`windows`, `fidelity_windows`, `allan`), which are listed because
+# `_ancestors` includes the node it starts from.
 OBSERVED_ANCESTORS = {
     "load",
     "load_df",
-    "lookup_prior",
+    # joins one declared scalar per record onto the reads; no read is added or moved
+    "declared_rabi",
     "t2star_filter",
     "t2star_final_filter_stage",
     "t2star",
@@ -42,6 +46,8 @@ OBSERVED_ANCESTORS = {
     "fidelity_raw",
     "windows",
     "fidelity_windows",
+    # `_ancestors` includes the checked node itself, so each checked kind is listed too.
+    "allan",
 }
 
 
@@ -157,22 +163,57 @@ def _windows_nodes(job: Job) -> list[str]:
     ]
 
 
+def _allan_nodes(job: Job) -> list[str]:
+    # Same matching rule as `_windows_nodes`, and for the same reason: over-match.
+    return [
+        node_id
+        for node_id, node in job.dag.items()
+        if "allan" in node.fn_name or "allan" in node_id
+    ]
+
+
+def _checked_nodes(job: Job) -> list[str]:
+    """Every node whose input must be observed reads. ONE selector for test and control."""
+    return _windows_nodes(job) + _allan_nodes(job)
+
+
 def test_there_are_jobs_to_check() -> None:
     # Guards against the whole suite passing vacuously if jobs/active empties out.
     assert _job_files(), f"no job files found in {JOBS_DIR}"
 
 
 @pytest.mark.parametrize("job_file", _job_files(), ids=lambda p: p.stem)
-def test_windows_ancestors_are_observed_reads(job_file: Path) -> None:
+def test_carve_and_allan_ancestors_are_observed_reads(job_file: Path) -> None:
     job = _load_job(job_file)
-    for node_id in _windows_nodes(job):
+    for node_id in _checked_nodes(job):
         unexpected = _unexpected(job, node_id)
         assert not unexpected, (
-            f"{job_file.name}: the windows node {node_id!r} consumes {sorted(unexpected)}, "
+            f"{job_file.name}: the node {node_id!r} consumes {sorted(unexpected)}, "
             f"which is not a known-observed step. If it does not resample the series, add "
             f"its step kind to OBSERVED_ANCESTORS deliberately - unless the name carries a "
             f"RESAMPLING_TOKENS substring, which no whitelist entry overrides."
         )
+
+
+def test_the_check_catches_a_resampled_allan_input() -> None:
+    """Positive control for the Allan half, routed through the real selector.
+
+    Asserting `_unexpected` on a hardcoded node id would keep passing if `_allan_nodes`
+    stopped matching; going through `_checked_nodes` makes a dead selector fail here too.
+    """
+
+    def _passthrough(*xs: object) -> object:
+        return xs[0]
+
+    job = Job("synthetic_bad_allan_job")
+    job.job_file = REPO_ROOT / "jobs" / "active" / "__init__.py"
+    raw = job.step(_passthrough, name="filter")
+    resampled = job.step(_passthrough, raw, name="interpolate")
+    job.step(_passthrough, resampled, name="allan")
+
+    assert {node: _unexpected(job, node) for node in _checked_nodes(job)} == {
+        "allan": {"interpolate"}
+    }
 
 
 def test_the_check_catches_a_resampled_input() -> None:
@@ -204,7 +245,8 @@ def test_the_guard_actually_matches_something() -> None:
     `check_ledger` family, which carves the most: one carve per record, 28 records over six
     jobs.
     """
-    per_job = {path.stem: len(_windows_nodes(_load_job(path))) for path in _job_files()}
+    jobs = {path.stem: _load_job(path) for path in _job_files()}
+    per_job = {name: len(_windows_nodes(job)) for name, job in jobs.items()}
     carving = {name: n for name, n in per_job.items() if n}
     assert len(carving) >= 2, f"the carve matcher found nothing to check: {per_job}"
     ledger = {
@@ -213,6 +255,9 @@ def test_the_guard_actually_matches_something() -> None:
     assert len(ledger) == 6 and sum(ledger.values()) >= 28, (
         f"the check_ledger family carves 28 records; the matcher sees {ledger}"
     )
+    # The Allan selector can go dead the same way. Both Ramsey archetypes compute one.
+    allan = {name: n for name, job in jobs.items() if (n := len(_allan_nodes(job)))}
+    assert len(allan) >= 2, f"the allan matcher found fewer than two jobs: {allan}"
 
 
 def test_the_check_catches_a_resampled_input_behind_a_dataset_suffix() -> None:

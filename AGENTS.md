@@ -222,7 +222,8 @@ core/        dataset.py, job.py, runner.py, types.py (Norm, Measurement, Calibra
 provenance.py
 loaders/registry.py            built-ins: .csv  .yaml/.yml  .h5/.hdf5  .pkl/.pickle
 schemas/     base.py, track912.py (912-day Ramsey), calibration_log.py
-transforms/  filter.py, interpolate.py, lookup_prior.py (public check_unix_s lives here)
+transforms/  filter.py, declared_rabi.py (the declared Rabi join), lookup_prior.py
+             (check_unix_s only, the public unix-seconds check)
 analyzers/   allan.py, fidelity.py, t2star.py, tlf.py, mtbf.py, psd.py (stub)
              windows.py  window carving on both sides of a threshold: the one in-spec
              definition (margin), gap policy, censoring, read table
@@ -295,19 +296,20 @@ they describe the project you are running in, not the one this package is instal
 
 See any `jobs/active/ramsey_*.py`.
 
-- Load the main dataset with `job.load(ds) -> norm`; load the companion with
+- Load the main dataset with `job.load(ds) -> norm`; load a tabular side input with
   `job.load_df(ds) -> DataFrame`.
-- Enrich with `lookup_prior(main, comp, fields=[...], aliases={...})`. Source columns
-  (`frequency`, `Rabi_frequency`) stay as-is and map to `qubit_frequency_hz` / `rabi_hz` via
-  aliases.
-- Either call `configure_ramsey_job(job, enriched, profile=..., include_fidelity=..., ...)` or
-  wire steps by hand with `job.step(fn, *inputs, name=...)`.
+- Either call `configure_ramsey_job(job, dataset, profile=..., include_fidelity=..., ...)` or
+  wire steps by hand with `job.step(fn, *inputs, name=...)`. The flags mean what the caller
+  says; nothing overrides them from the device.
 - End in `job.figure(Panel, panel_node, targets=["static","academic"], title=...)`.
 
 ### Data
 
 - Main 912-day Ramsey: `data/real_private/6D2S/{DDMMYY}_6D2S_qubit{N}.pickle`
-- Companion calibration pickles: `data/real_private/companion/qubit{N}.pickle`
+- 2x2 device Ramsey: `data/real_private/2x2/{DDMMYY}_2x2_qubit{N}.pickle`
+- Declared Rabi frequencies (2x2, embargoed): `data/real_private/declared/rabi_frequencies_2x2.csv`,
+  keyed by `(device, run_date, qubit)`; a fidelity job declares `extra["run_date"]` on its
+  `Dataset` and passes `rabi_table=` to `configure_ramsey_job`.
 - Dataset pickles are read-only inputs.
 
 ---

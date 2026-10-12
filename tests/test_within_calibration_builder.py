@@ -428,7 +428,11 @@ def test_a_missing_gap_list_is_refused_not_read_as_no_gaps() -> None:
         }
     )
     stand_in = types.SimpleNamespace(frame=frame, meta={"dataset_id": "unit-test"})
-    for adapter in (t2star.make_panel_data, fidelity.make_panel_data):
+    # The fidelity adapter takes its ladder as an argument; T2* defaults its own.
+    for adapter, ladder in (
+        (t2star.make_panel_data, {}),
+        (fidelity.make_panel_data, {"thresholds": list(fidelity.FIDELITY_LADDER)}),
+    ):
         with pytest.raises(ValueError, match="gap_spans_s is required"):
             adapter(
                 stand_in,  # type: ignore[arg-type]
@@ -436,6 +440,7 @@ def test_a_missing_gap_list_is_refused_not_read_as_no_gaps() -> None:
                 reads=pd.DataFrame(),
                 gap_spans_s=None,  # type: ignore[arg-type]
                 kaplan_meier=None,  # type: ignore[arg-type]
+                **ladder,
             )
 
     t_h = np.concatenate([np.linspace(0.0, 5.0, 200), np.linspace(8.0, 12.0, 160)])

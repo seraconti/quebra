@@ -412,7 +412,7 @@ class Job:
         )
 
     def load_df(self, dataset: Dataset) -> LocalRef:
-        """Load a dataset as a raw pandas.DataFrame node (for companion/auxiliary files).
+        """Load a dataset as a raw pandas.DataFrame node (for side tables and auxiliary files).
 
         This registers a node that yields a DataFrame (not the normalized mapping).
         """

@@ -7,6 +7,9 @@ import numpy as np
 
 Norm = dict[str, object]
 
+# The filter config keys `run` reads; any other key is refused.
+FILTER_KEYS = frozenset({"apply_chi_squared", "chi_squared_threshold"})
+
 
 @dataclass(slots=True)
 class FilterResult:
@@ -36,8 +39,7 @@ def _subset_norm(norm: Mapping[str, object], mask: np.ndarray) -> Norm:
     Every array a Norm carries is one value per read, so a length disagreeing with the mask
     is a defect rather than a column with nothing to filter. Left unfiltered it would be
     index-misaligned against `t_rel_s` for every step downstream, and no consumer raises on
-    it - `interpolate` reads a length mismatch as simply not row-aligned. Scalars pass
-    through; an array that cannot be boxed at all says so.
+    it. Scalars pass through; an array that cannot be boxed at all says so.
     """
     out = _copy_norm(norm)
     mask = np.asarray(mask, dtype=bool)
@@ -84,8 +86,10 @@ def run(
 ) -> FilterResult:
     """Filter a normalized Ramsey dataset.
 
-    The filter may apply chi-square, frequency-window, and sigma clipping steps.
-    Time values are in seconds and frequency values are in hertz.
+    Two stages: a chi-square GUARD that refuses a record containing a read at or above the
+    published fit-quality cut, and a stage that drops a read with no finite detuning or time.
+    No read is dropped for its value: an outlier is an observation. Time values are in seconds
+    and frequency values are in hertz.
     """
     del output_dir
 
@@ -113,97 +117,92 @@ def run(
         if isinstance(config.get("filter", {}), Mapping)
         else {}
     )
+    # A key this filter does not read is refused, not ignored: a caller passing a cut that no
+    # longer exists would otherwise get none and be told nothing.
+    unknown = sorted(set(filter_cfg) - FILTER_KEYS)
+    if unknown:
+        raise KeyError(
+            f"unknown filter config key(s) {unknown}; the filter reads only "
+            f"{sorted(FILTER_KEYS)}"
+        )
     apply_chi = bool(filter_cfg.get("apply_chi_squared", True))
-    apply_sigma = bool(filter_cfg.get("apply_sigma", True))
-    apply_window = bool(filter_cfg.get("apply_frequency_window", False))
 
     if apply_chi:
         if "chi_squared" not in current:
             raise KeyError(
-                "chi_squared filtering requested but normalized mapping has no 'chi_squared' key."
+                "the chi-square guard requires a 'chi_squared' key in the normalized mapping."
             )
         if "chi_squared_threshold" not in filter_cfg:
             raise KeyError(
-                "Missing config.filter.chi_squared_threshold required for chi-squared filtering."
+                "the chi-square guard requires config.filter.chi_squared_threshold."
             )
         chi_threshold = float(filter_cfg["chi_squared_threshold"])
-        print(
-            f"[filter] chi_squared profile={config.get('dataset_profile')} threshold={chi_threshold}",
-            flush=True,
-        )
-        mask = np.asarray(current["chi_squared"], dtype=float) < chi_threshold
-        current = _subset_norm(current, mask)
+        # A GUARD, not a cut. Capannelli et al., "Tracking spin qubit frequency variations
+        # over 912 days", Supplementary notes, section III.C, p. 9, filter out every drift
+        # dataset whose normalised chi-squared score is 0.8 or more, and the released records
+        # hold the points left after that filter (Supplementary Figs. 10 and 11, pp. 10-11,
+        # fitted minus filtered points, for the linear and the 2x2 device). A read at or above the threshold therefore means the record is not
+        # the published one; dropping it here would hide that, so the record is refused. A
+        # missing chi-square is refused too, though a Norm built through `track912Schema` never
+        # has one: its validation drops such rows on load.
+        chi = np.asarray(current["chi_squared"], dtype=float)
+        failing = ~(chi < chi_threshold)
+        if np.any(failing):
+            worst = (
+                np.nanmax(chi[failing])
+                if np.any(np.isfinite(chi[failing]))
+                else chi[failing][0]
+            )
+            raise ValueError(
+                f"[{dataset_id}] {int(failing.sum())} read(s) have a normalised chi-square "
+                f">= {chi_threshold} or none at all (largest {worst!r}). The records are "
+                f"expected already filtered at this threshold; filter them upstream, or set "
+                f"filter.apply_chi_squared=False deliberately (that choice is not a step "
+                f"kwarg, so it does not appear on the provenance label)."
+            )
         rows.append({"stage": "chi_squared", "n_points": int(len(current["t_rel_s"]))})
         stages["chi_squared"] = _copy_norm(current)
         stage_order.append("chi_squared")
         print(
-            f"[filter] after_chi_squared<{chi_threshold}: {len(current['t_rel_s'])}",
+            f"[filter] chi-square guard: all {len(current['t_rel_s'])} reads below "
+            f"{chi_threshold}",
             flush=True,
         )
 
-    if apply_window:
-        if "raw_frequency_hz" not in current:
-            raise KeyError(
-                "frequency window filtering requested but normalized mapping has no 'raw_frequency_hz'."
-            )
-        window_cfg = filter_cfg.get("frequency_window_hz")
-        if (
-            not isinstance(window_cfg, Mapping)
-            or "min" not in window_cfg
-            or "max" not in window_cfg
-        ):
-            raise ValueError(
-                "filter.frequency_window_hz must be a mapping with numeric min/max."
-            )
-        min_hz = float(window_cfg["min"])
-        max_hz = float(window_cfg["max"])
-        frequency_hz = np.asarray(current["raw_frequency_hz"], dtype=float)
-        mask = (frequency_hz > min_hz) & (frequency_hz < max_hz)
-        current = _subset_norm(current, mask)
-        rows.append(
-            {"stage": "frequency_window", "n_points": int(len(current["t_rel_s"]))}
+    # A BACKSTOP. A read with no finite detuning or time carries no observation, and is
+    # dropped and counted here. On the 6D2S and 2x2 records it drops nothing: on load the
+    # schemas already remove rows with a missing (NaN) T2*, phase or chi-square
+    # (`track912Schema.validate`) and rows with a non-finite time or frequency
+    # (`RamseySeriesSchema.to_norm`), and those removals are not counted here. It also masks every row-aligned column, which is what checks their
+    # alignment.
+    if "delta_hz" not in current:
+        raise KeyError("filter.run requires 'delta_hz' (hertz) in normalized mapping")
+    delta_hz = np.asarray(current["delta_hz"], dtype=float)
+    finite = np.isfinite(delta_hz) & np.isfinite(
+        np.asarray(current["t_rel_s"], dtype=float)
+    )
+    if not np.any(finite):
+        raise ValueError(
+            f"filter has no read with both a finite 'delta_hz' and a finite 't_rel_s' "
+            f"({delta_hz.size} read(s): {int((~np.isfinite(delta_hz)).sum())} non-finite "
+            f"delta_hz, "
+            f"{int((~np.isfinite(np.asarray(current['t_rel_s'], dtype=float))).sum())} "
+            f"non-finite t_rel_s)."
         )
-        stages["frequency_window"] = _copy_norm(current)
-        stage_order.append("frequency_window")
-        print(
-            f"[filter] after_frequency_window({min_hz},{max_hz}): {len(current['t_rel_s'])}",
-            flush=True,
-        )
-
-    if apply_sigma:
-        sigma_factor = float(filter_cfg.get("sigma_factor", 3.5))
-        delta_hz = np.asarray(current["delta_hz"], dtype=float)
-        # Over the finite values only. `np.mean`/`np.std` propagate, so a single failed fit
-        # makes both NaN, every comparison below False, and the mask all-False - the dataset
-        # reaches the analyzer empty and is reported as empty rather than as unfittable.
-        finite = np.isfinite(delta_hz)
-        if not np.any(finite):
-            raise ValueError(
-                f"sigma filter has no finite 'delta_hz' values to work from "
-                f"({delta_hz.size} read(s), all non-finite)."
-            )
-        mu = float(np.mean(delta_hz[finite]))
-        sigma = float(np.std(delta_hz[finite]))
-        if sigma == 0.0:
-            # Every finite value identical: no outlier is definable, so keep them and drop
-            # only the non-finite reads.
-            mask = finite
-        else:
-            # `finite &` is redundant today - each NaN comparison is already False - but it
-            # states the intent, and it survives the bounds being rewritten as a negation.
-            mask = (
-                finite
-                & (delta_hz - mu < sigma_factor * sigma)
-                & (delta_hz - mu > -sigma_factor * sigma)
-            )
-        current = _subset_norm(current, mask)
-        rows.append({"stage": "sigma", "n_points": int(len(current["t_rel_s"]))})
-        stages["sigma"] = _copy_norm(current)
-        stage_order.append("sigma")
-        print(
-            f"[filter] after_sigma({sigma_factor}): {len(current['t_rel_s'])}",
-            flush=True,
-        )
+    current = _subset_norm(current, finite)
+    rows.append(
+        {
+            "stage": "non_finite",
+            "n_points": int(len(current["t_rel_s"])),
+            "n_dropped": int((~finite).sum()),
+        }
+    )
+    stages["non_finite"] = _copy_norm(current)
+    stage_order.append("non_finite")
+    print(
+        f"[filter] non_finite: kept {len(current['t_rel_s'])}, dropped {int((~finite).sum())}",
+        flush=True,
+    )
 
     diagnostics: dict[str, object] = {"stage_counts": rows}
     return FilterResult(

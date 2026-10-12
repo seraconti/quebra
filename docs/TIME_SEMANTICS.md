@@ -1,6 +1,6 @@
 # Time Semantics (Project Convention)
 
-This document exists to prevent ambiguous time handling across shared steps (e.g. `lookup_prior`, fidelity, Allan) and dataset types.
+This document exists to prevent ambiguous time handling across shared steps (e.g. fidelity, Allan) and dataset types.
 
 The goal is **documentation, not enforcement**: shared code should avoid guessing clocks/units. Jobs should be explicit when a dataset format provides a real experiment start time.
 
@@ -27,18 +27,16 @@ Canonical Norm frequency keys:
 |---|---|
 | `delta_hz` | Ramsey detuning (fitted frequency − mean) |
 | `raw_frequency_hz` | Fitted qubit frequency (absolute) |
-| `rabi_hz` | Rabi drive frequency from calibration |
-| `qubit_frequency_hz` | Carrier/qubit frequency from calibration (was `qubit_frequency`) |
+| `rabi_hz` | Rabi drive frequency, declared per record (see below) |
+| `qubit_frequency_hz` | Carrier/qubit frequency (was `qubit_frequency`); no shipped job sets it |
 
 
-**Source column names** in the calibration pickles (`data/real_private/companion/qubit*.pickle`)
-are not renamed - they remain `frequency` and `Rabi_frequency` as verified in the
-external data. The `aliases` argument to `lookup_prior` maps them to the
-correct norm keys:
-```python
-fields=["frequency", "Rabi_frequency"],
-aliases={"frequency": "qubit_frequency_hz", "Rabi_frequency": "rabi_hz"},
-```
+**The Rabi frequency is declared, not looked up.** A record's Rabi frequency is one row of
+`data/real_private/declared/rabi_frequencies_2x2.csv` (kHz, as supplied with the data), keyed
+by `(device, run_date, qubit)` from the record's own `Dataset` declaration.
+`transforms.declared_rabi.join_declared_rabi` matches the key exactly and writes `rabi_hz`.
+There is no time column and no "latest value before the run start" rule, so no clock is
+involved: a record without a row of its own raises.
 
 ## Run-Start Time Resolution Levels
 
@@ -50,7 +48,10 @@ aliases={"frequency": "qubit_frequency_hz", "Rabi_frequency": "rabi_hz"},
 | 2 - date_only_midnight | DDMMYY_ filename prefix (e.g. `040423_...`) | `"date_only_midnight"` | Midnight local naive. Emits `UserWarning`. Intra-day precision lost. |
 | 3 - missing | Neither source available | raises `ValueError` | Do NOT fall back to `t_raw[0]` (~1970 epoch). |
 
-**Why not fall back to `t_raw[0]`?** In at least one inspected 912days Ramsey file, `timestamp` starts at 0 (relative seconds), so `t_raw[0] == 0` would yield 1970-01-01 and silently select an incorrect calibration prior.
+No shipped step reads `run_start_unix_s`: it is recorded in the Norm's `meta` and in
+provenance, and the resolution level says how far to trust it.
+
+**Why not fall back to `t_raw[0]`?** In at least one inspected 912days Ramsey file, `timestamp` starts at 0 (relative seconds), so `t_raw[0] == 0` would yield 1970-01-01 and silently record a run start in 1970.
 
 ## Normalized Mapping Time Keys
 
@@ -62,7 +63,7 @@ There is no `t_s` key; downstream steps use `t_rel_s`.
 
 ## Verified Dataset Types
 
-### 1) Calibration log pickles (`data/real_private/companion/qubit*.pickle`)
+### 1) Calibration log pickles (`data/real_private/companion/qubit*.pickle`; read by no job)
 
 **Verified fields:**
 
@@ -108,10 +109,10 @@ Mixing a timezone-aware epoch timestamp (true UTC) with a naive local timestamp 
 
 This project currently has dataset types where the primary time column is **naive local** (`date`, `measurement_time`). If you convert one side to Unix seconds *correctly* (respecting timezone) but later compare it to naive-local timestamps, you will be off by typically 1–2 hours (DST dependent).
 
-Pragmatic rule for calibration lookup:
+Pragmatic rule when a run start is compared with a naive-local column:
 
-- `lookup_prior` does **no timezone conversion**.
-- Whatever you provide as `reference_time` (or derive from `run_start_unix_s`) must be in the **same naive clock** as `source[time_col]`.
+- No shared step converts timezones.
+- Both sides of the comparison must be in the **same naive clock**.
 
 If you need `run_start_unix_s` to round-trip back to the same naive clock via `pd.to_datetime(run_start_unix_s, unit="s")`, compute it from a naive timestamp using:
 
@@ -126,16 +127,3 @@ This is intentionally the “naive-as-UTC” representation (document it when us
 - If a dataset format provides an explicit experiment start (`measurement_time`, header timestamp, etc.), derive a **single** reference time and use it consistently.
 - Prefer passing `run_start_unix_s` explicitly via `Dataset.extra` for formats where `Job.load()` cannot infer a correct start.
 - Use `transforms.lookup_prior.check_unix_s(...)` in jobs when you derive unix seconds to catch obvious unit mistakes (ms vs s vs ns).
-
-## Verified Calibration Lookup Example
-
-Using:
-
-- main: `frequency_cal_q1.hdf5` (`measurement_time` = `2023-11-30 10:02:45.303548`)
-- source: `qubit1.pickle` (`date` column)
-
-The strict “latest calibration strictly before experiment start” selection returns:
-
-- `date`: `2023-11-29 16:59:25.165609`
-- `frequency`: ~`1.5988e10`
-- `Rabi_frequency`: ~`7.297e6`

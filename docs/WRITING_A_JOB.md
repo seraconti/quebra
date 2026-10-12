@@ -73,7 +73,7 @@ the names the analyzers read, and writing one is the normal way to point this to
 own records. That is [WRITING_A_SCHEMA.md](WRITING_A_SCHEMA.md).
 
 `job.load_df(dataset)` skips the schema entirely and hands your step a plain
-`pandas.DataFrame`. It suits a companion table — the bench jobs read a CSV of results that
+`pandas.DataFrame`. It suits a side table — the bench jobs read a CSV of results that
 way — but a step taking a raw frame has to know that file's column names, so it does not
 compose the way a `Norm` does.
 
