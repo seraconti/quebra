@@ -153,13 +153,14 @@ def spacing(t_rel_s: np.ndarray, gap_mult: float = DEFAULT_GAP_MULT):
 
     The median is over POSITIVE differences only. A repeated timestamp gives a zero
     difference, and enough of them would drive the median to zero, making every positive
-    step a gap and destroying every window.
+    step a gap and destroying every window. With fewer than two reads there is no spacing:
+    the median is NaN and nothing is a gap.
 
     Returns (median_spacing_s, gap_threshold_s, n_gaps, n_nonpositive_steps).
     """
     dt = np.diff(np.asarray(t_rel_s, dtype=float))
     if len(dt) == 0:
-        return 1.0, float("inf"), 0, 0
+        return float("nan"), float("inf"), 0, 0
     n_nonpositive = int((dt <= 0).sum())
     positive = dt[dt > 0]
     if not len(positive):
@@ -217,6 +218,18 @@ class ObservedReads:
         that is, does not cross a gap. One entry per consecutive pair of reads."""
         return ~self.is_gap[1:]
 
+    def effective_spacing_s(self) -> float:
+        """sum(delta^2) / sum(delta) over the within-segment spacings, gaps excluded.
+
+        The mean length of the interval a crossing lands in, when a stationary process
+        crosses at a constant rate: the interval is chosen with probability proportional
+        to its length. It equals the mean spacing times (1 + CV^2), with the CV taken with
+        the 1/n variance. NaN when no within-segment spacing is positive.
+        """
+        delta = np.diff(self.t_rel_s)[self.within_segment()]
+        total = float(np.sum(delta))
+        return float(np.sum(delta * delta)) / total if total > 0.0 else float("nan")
+
 
 def observed_reads(
     t_rel_s: np.ndarray,
@@ -232,7 +245,8 @@ def observed_reads(
     spacing on the wrong array or lets a NaN read stand inside a segment.
 
     Raises ValueError on mismatched lengths (values or sigma), on time that steps
-    backwards, and, through `spacing`, when no step between reads is positive.
+    backwards, and, through `spacing`, when no step between reads is positive. Fewer than
+    two finite reads leave no spacing: `median_spacing_s` is NaN and there is no gap.
     """
     t_all = np.asarray(t_rel_s, dtype=float)
     v_all = np.asarray(values, dtype=float)

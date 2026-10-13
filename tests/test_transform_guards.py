@@ -175,7 +175,7 @@ def test_the_same_seed_gives_the_same_verdict():
     second = run_tlf(values, timestamps, seed=20260902)
     assert first.bic_delta == second.bic_delta
     assert first.is_bimodal == second.is_bimodal
-    assert first.mean_dwell_s0 == second.mean_dwell_s0
+    assert first.mean_dwell_state0_s == second.mean_dwell_state0_s
 
 
 def test_the_seed_is_required():
@@ -185,9 +185,7 @@ def test_the_seed_is_required():
         run_tlf(values, timestamps)
 
 
-def test_a_failed_fit_reports_fit_failed_rather_than_a_verdict(monkeypatch):
-    """`bic_delta = 0.0` with `gmm2` aliased to `gmm1` let a consumer read "no evidence of
-    bimodality" off a comparison that never happened."""
+def _two_component_fit_raises(monkeypatch, error: Exception) -> None:
     import quebra.analyzers.tlf as tlf_module
 
     real = tlf_module.GaussianMixture
@@ -199,19 +197,36 @@ def test_a_failed_fit_reports_fit_failed_rather_than_a_verdict(monkeypatch):
 
         def fit(self, *args, **kwargs):
             if self._n == 2:
-                raise ValueError("singular covariance")
+                raise error
             return self._inner.fit(*args, **kwargs)
 
         def __getattr__(self, name):
             return getattr(self._inner, name)
 
     monkeypatch.setattr(tlf_module, "GaussianMixture", _FailsOnTwo)
+
+
+def test_a_failed_fit_reports_fit_failed_rather_than_a_verdict(monkeypatch):
+    """`bic_delta = 0.0` with `gmm2` aliased to `gmm1` let a consumer read "no evidence of
+    bimodality" off a comparison that never happened."""
+    _two_component_fit_raises(monkeypatch, ValueError("singular covariance"))
     values, timestamps = _bimodal()
     result = run_tlf(values, timestamps, seed=1)
 
     assert result.fit_failed is True
+    assert result.diagnostics["fit_error"] == "ValueError: singular covariance"
     assert result.bic_delta is None, (
         "a comparison that did not happen reported a number"
     )
     assert result.gmm2 is None, "gmm2 aliased to the 1-component fit"
     assert result.is_bimodal is False
+
+
+def test_a_programming_error_in_the_fit_is_not_read_as_a_failed_fit(monkeypatch):
+    """Only the fit's own failure types become `fit_failed`; anything else propagates."""
+    _two_component_fit_raises(
+        monkeypatch, TypeError("a bug, not a singular covariance")
+    )
+    values, timestamps = _bimodal()
+    with pytest.raises(TypeError, match="a bug"):
+        run_tlf(values, timestamps, seed=1)

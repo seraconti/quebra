@@ -69,10 +69,10 @@ true length lies in the closed interval `[age_lo, age_hi]`:
 - **Censored window:** `age_lo = t[e-1] - t[s]` and `age_hi = inf`.
 
 A duplicate timestamp, two reads at one time, is legal (`windows.spacing` leaves its zero
-step out of the median). A duplicate at one crossing pins that crossing exactly, and the length still ranges over the whole interval. A duplicate at both
-crossings makes the interval a single point, `age_lo == age_hi`: the length is known
-exactly. `EventTable` holds the same closed interval and checks that the
-Kaplan-Meier age lies in it.
+step out of the median). A duplicate at one crossing pins that crossing exactly, and the
+length still ranges over the whole interval. A duplicate at both crossings makes the
+interval a single point, `age_lo == age_hi`: the length is known exactly. `EventTable`
+holds the same closed interval and checks that the Kaplan-Meier age lies in it.
 
 One reader departs from the closed reading. `survival.turnbull` reads a non-degenerate
 interval half-open, `(age_lo, age_hi]`, as R's `Surv(type = "interval2")` does, and a point

@@ -15,9 +15,11 @@ class TLFPlot(BasePlot):
         with style_context(style):
             result = payload["result"]
             values_hz = np.asarray(payload["values_hz"], dtype=float)
+            t_rel_s = np.asarray(payload["t_rel_s"], dtype=float)
             meta = dict(payload.get("meta", {}))
 
-            values_hz = values_hz[np.isfinite(values_hz)]
+            # The reads the fit used: a finite time AND a finite value, as in `tlf.run`.
+            values_hz = values_hz[np.isfinite(values_hz) & np.isfinite(t_rel_s)]
             if len(values_hz) == 0:
                 raise ValueError("TLFPlot requires finite values_hz")
 
@@ -205,29 +207,35 @@ class TLFPlot(BasePlot):
                 else "  switching_rate_per_hour: n/a",
             ]
             for k in (0, 1):
-                dwell = getattr(result, f"mean_dwell_s{k}")
-                cv = getattr(result, f"dwell_cv_s{k}")
-                exits = getattr(result, f"n_exits_s{k}")
-                complete = getattr(result, f"n_complete_runs_s{k}")
-                cut = getattr(result, f"n_cut_runs_s{k}")
+                dwell = getattr(result, f"mean_dwell_state{k}_s")
+                cv = getattr(result, f"dwell_cv_state{k}")
+                exits = getattr(result, f"n_exits_state{k}")
+                exposure = getattr(result, f"exposure_state{k}_s")
+                complete = getattr(result, f"n_complete_runs_state{k}")
+                cut = getattr(result, f"n_cut_runs_state{k}")
+                if fit_failed:
+                    dynamics_lines += [
+                        f"  mean dwell, state {k}: n/a (fit failed)",
+                        f"  dwell CV, state {k}: n/a (fit failed)",
+                    ]
+                    continue
                 dynamics_lines.append(
-                    f"  mean_dwell_s{k}: {dwell:.2f} s ({exits} exits)"
+                    f"  mean dwell, state {k}: {dwell:.2f} s ({exits} exits)"
                     if dwell is not None
-                    else f"  mean_dwell_s{k}: n/a"
+                    else f"  mean dwell, state {k}: n/a ({exits} exits, "
+                    f"{exposure:.0f} s exposure)"
                 )
                 dynamics_lines.append(
-                    f"  dwell_cv_s{k}: {cv:.3f} ({complete} complete, {cut} cut runs)"
+                    f"  dwell CV, state {k}: {cv:.3f} ({complete} complete, {cut} cut runs)"
                     if cv is not None
-                    else f"  dwell_cv_s{k}: n/a ({complete} complete, {cut} cut runs)"
+                    else f"  dwell CV, state {k}: n/a ({complete} complete, {cut} cut runs)"
                 )
 
-            n_used = result.diagnostics.get("n_reads")
-            n_dropped = result.diagnostics.get("n_dropped_nonfinite")
+            n_used = result.diagnostics["n_reads"]
+            n_dropped = result.diagnostics["n_dropped_nonfinite"]
             summary_lines = [
                 "TLF Summary",
-                f"reads: {n_used} used, {n_dropped} dropped (non-finite time or value)"
-                if n_used is not None and n_dropped is not None
-                else "reads: n/a",
+                f"reads: {n_used} used, {n_dropped} dropped (non-finite time or value)",
                 "",
                 f"is_bimodal: {bool(result.is_bimodal)}"
                 if not fit_failed

@@ -141,6 +141,7 @@ def _tlf_step() -> Callable[..., dict[str, object]]:
         return {
             "result": result,
             "values_hz": values_hz,
+            "t_rel_s": timestamps,
             "meta": dict(norm.get("meta", {})),
         }
 

@@ -14,10 +14,17 @@ the exposure, exit and run bookkeeping, not mixture-based state assignment
 
 from __future__ import annotations
 
+import dataclasses
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
 from quebra.analyzers import tlf
+from quebra.plots.tlf_plot import TLFPlot
 
 pytestmark = pytest.mark.unit
 
@@ -64,26 +71,26 @@ def test_the_fixture_has_the_spacing_and_gap_it_claims() -> None:
 
 def test_exposure_exits_and_mean_dwell_match_hand_arithmetic(result) -> None:
     """Oracle: the run table above. Mean dwell = exposure / exits, per state."""
-    assert result.exposure_s0 == pytest.approx(EXPOSURE_S0, abs=1e-9)
-    assert result.exposure_s1 == pytest.approx(EXPOSURE_S1, abs=1e-9)
-    assert (result.n_exits_s0, result.n_exits_s1) == (EXITS_S0, EXITS_S1)
-    assert result.mean_dwell_s0 == pytest.approx(EXPOSURE_S0 / EXITS_S0, abs=1e-9)
-    assert result.mean_dwell_s1 == pytest.approx(EXPOSURE_S1 / EXITS_S1, abs=1e-9)
+    assert result.exposure_state0_s == pytest.approx(EXPOSURE_S0, abs=1e-9)
+    assert result.exposure_state1_s == pytest.approx(EXPOSURE_S1, abs=1e-9)
+    assert (result.n_exits_state0, result.n_exits_state1) == (EXITS_S0, EXITS_S1)
+    assert result.mean_dwell_state0_s == pytest.approx(EXPOSURE_S0 / EXITS_S0, abs=1e-9)
+    assert result.mean_dwell_state1_s == pytest.approx(EXPOSURE_S1 / EXITS_S1, abs=1e-9)
 
 
 def test_dwell_cv_is_over_complete_runs_only(result) -> None:
     """Oracle: the complete runs above. State 1 has three, CV = sd(60, 20, 20) / mean
     = 1.2 / sqrt(3); state 0 has two, too few for a CV, and three cut runs."""
-    assert (result.n_complete_runs_s0, result.n_cut_runs_s0) == (
+    assert (result.n_complete_runs_state0, result.n_cut_runs_state0) == (
         len(COMPLETE_S0),
         CUT_S0,
     )
-    assert (result.n_complete_runs_s1, result.n_cut_runs_s1) == (
+    assert (result.n_complete_runs_state1, result.n_cut_runs_state1) == (
         len(COMPLETE_S1),
         CUT_S1,
     )
-    assert result.dwell_cv_s0 is None
-    assert result.dwell_cv_s1 == pytest.approx(1.2 / np.sqrt(3.0), abs=1e-12)
+    assert result.dwell_cv_state0 is None
+    assert result.dwell_cv_state1 == pytest.approx(1.2 / np.sqrt(3.0), abs=1e-12)
 
 
 def test_a_change_across_the_gap_is_not_a_transition(result) -> None:
@@ -97,3 +104,90 @@ def test_a_change_across_the_gap_is_not_a_transition(result) -> None:
 def test_lobe_separation_is_in_hertz(result) -> None:
     """Oracle: the two levels, 10 Hz apart. A ppm conversion would divide by the mean."""
     assert result.lobe_separation_hz == pytest.approx(HIGH - LOW, abs=1e-6)
+
+
+def test_gap_mult_reaches_the_gap_rule() -> None:
+    """Oracle: the run table above with the gap closed. At gap_mult 200 the threshold is
+    2000 s, so the 1000 s step is observed: the change across it is an eighth transition,
+    and state 0's run at reads 10-11 now exits at read 12, 1040 s after it began."""
+    values, t = _record()
+    closed = tlf.run(values, t, seed=11, gap_mult=200.0)
+    assert closed.diagnostics["n_gaps"] == 0
+    assert closed.n_transitions == 8
+    assert closed.exposure_state0_s == pytest.approx(EXPOSURE_S0 + 1000.0, abs=1e-9)
+    assert (closed.n_exits_state0, closed.n_cut_runs_state1) == (EXITS_S0 + 1, 0)
+
+
+def test_a_dropped_read_is_counted_and_changes_nothing_else(result) -> None:
+    """Oracle: the same record with one extra read whose value is NaN, at t = 5 s."""
+    values, t = _record()
+    with_nan = tlf.run(
+        np.insert(values, 1, np.nan), np.insert(t, 1, 5.0), seed=11, gap_mult=10.0
+    )
+    assert with_nan.diagnostics["n_dropped_nonfinite"] == 1
+    assert result.diagnostics["n_dropped_nonfinite"] == 0
+    assert with_nan.exposure_state0_s == result.exposure_state0_s
+    assert with_nan.n_transitions == result.n_transitions
+
+
+def test_a_repeated_timestamp_inside_a_segment_raises() -> None:
+    """Oracle: specification. A state change between two reads at one time would be an
+    exit after zero exposure."""
+    t = np.array([0.0, 10.0, 10.0, 20.0, 30.0, 40.0])
+    with pytest.raises(ValueError, match="repeated timestamp"):
+        tlf.run(np.array([0.0, 0.0, 10.0, 10.0, 0.0, 10.0]), t, seed=11)
+
+
+def _figure_text(result: tlf.TLFResult, values: np.ndarray, t: np.ndarray) -> str:
+    payload = {"result": result, "values_hz": values, "t_rel_s": t, "meta": {}}
+    figure = TLFPlot("unit").build_matplotlib(payload)
+    try:
+        return "\n".join(text.get_text() for ax in figure.axes for text in ax.texts)
+    finally:
+        plt.close(figure)
+
+
+def test_the_figure_prints_the_counts_from_the_artifact(result) -> None:
+    """Oracle: the hand counts above, as the panel prints them."""
+    values, t = _record()
+    text = _figure_text(result, values, t)
+    assert "reads: 22 used, 0 dropped (non-finite time or value)" in text
+    assert (
+        f"mean dwell, state 1: {EXPOSURE_S1 / EXITS_S1:.2f} s ({EXITS_S1} exits)"
+        in text
+    )
+    assert "dwell CV, state 0: n/a (2 complete, 3 cut runs)" in text
+
+
+def test_a_failed_fit_reads_as_failed_in_the_figure(result) -> None:
+    """Oracle: specification. A fit that did not happen must not print counts of None."""
+    values, t = _record()
+    failed = dataclasses.replace(
+        result,
+        gmm2=None,
+        fit_failed=True,
+        bic_delta=None,
+        **dict.fromkeys(tlf._DYNAMICS_FIELDS),
+    )
+    text = _figure_text(failed, values, t)
+    assert "mean dwell, state 0: n/a (fit failed)" in text
+    assert "None" not in text
+
+
+def test_the_histogram_draws_the_reads_the_fit_used(monkeypatch) -> None:
+    """Oracle: the fit's own count. A read with a finite value at a NaN time is dropped by
+    the fit, so the histogram must drop it too, or its count and the printed one disagree."""
+    drawn: list[int] = []
+    real_hist = matplotlib.axes.Axes.hist
+
+    def spy(self, x, *args, **kwargs):
+        drawn.append(len(np.asarray(x)))
+        return real_hist(self, x, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "hist", spy)
+    values, t = _record()
+    values_bad, t_bad = np.insert(values, 1, 5.0), np.insert(t, 1, np.nan)
+    fit = tlf.run(values_bad, t_bad, seed=11, gap_mult=10.0)
+    _figure_text(fit, values_bad, t_bad)
+    assert fit.diagnostics["n_reads"] == 22
+    assert drawn == [22]

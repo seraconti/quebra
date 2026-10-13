@@ -219,7 +219,10 @@ def test_observed_reads_segments_follow_the_strict_gap_rule_and_match_the_carve(
 
     carved = windows.run(
         windows.WindowsInputs(
-            t_rel_s=t, values=np.full(t.size, 2.0), thresholds=[("u", 1.0, True)]
+            t_rel_s=t,
+            values=np.full(t.size, 2.0),
+            thresholds=[("u", 1.0, True)],
+            gap_mult=10.0,
         )
     )
     spans = [(float(t[s - 1]), float(t[s])) for s, _ in obs.segments()[1:]]
@@ -237,6 +240,57 @@ def test_dropped_nonfinite_reads_leave_a_gap_where_they_were():
     assert obs.n_dropped_nonfinite == 11
     assert obs.t_rel_s.tolist() == [0.0, 1.0, 2.0, 3.0, *range(15, 21)]
     assert obs.segments() == [(0, 4), (4, 10)]
+    assert obs.n_gaps == 1
+
+
+@pytest.mark.unit
+def test_sigma_stays_with_its_read_when_a_read_is_dropped():
+    """Oracle: each read's own sigma, by index. The read at t = 2 has a NaN value, so the
+    kept sigmas are the other four, in order."""
+    t = np.arange(5, dtype=float)
+    obs = windows.observed_reads(
+        t,
+        np.array([1.0, 1.0, np.nan, 1.0, 1.0]),
+        sigma=np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
+    )
+    assert obs.sigma.tolist() == [0.1, 0.2, 0.4, 0.5]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "t, values, segments",
+    [
+        (np.array([]), np.array([]), []),
+        (np.array([7.0]), np.array([1.0]), [(0, 1)]),
+        (np.array([0.0, 1.0]), np.array([np.nan, np.nan]), []),
+    ],
+    ids=["no-read", "one-read", "all-nonfinite"],
+)
+def test_a_record_too_short_to_space_has_no_spacing(t, values, segments):
+    """Oracle: specification. No pair of reads, no spacing: the median is NaN rather than a
+    made-up scale, nothing is a gap, and an empty record has no segment at all."""
+    obs = windows.observed_reads(t, values)
+    assert obs.segments() == segments
+    assert obs.within_segment().tolist() == []
+    assert math.isnan(obs.median_spacing_s)
+    assert math.isnan(obs.effective_spacing_s())
+
+
+@pytest.mark.unit
+def test_effective_spacing_is_length_biased_and_ignores_the_gap():
+    """Oracle: sum(delta^2) / sum(delta) by hand. A regular 10 s grid with a gap gives 10 s
+    exactly; seven 10 s and three 40 s spacings give 5500 / 190 = 550 / 19 s, which their
+    plain mean (19 s) does not. The 1000 s gap is in neither."""
+    regular = np.r_[np.arange(8) * 10.0, 1070.0 + np.arange(5) * 10.0]
+    assert (
+        windows.observed_reads(regular, np.ones(regular.size)).effective_spacing_s()
+        == 10.0
+    )
+    steps = [10.0] * 4 + [40.0] * 2 + [1000.0] + [10.0] * 3 + [40.0]
+    t = np.r_[0.0, np.cumsum(steps)]
+    obs = windows.observed_reads(t, np.ones(t.size))
+    assert obs.n_gaps == 1
+    assert obs.effective_spacing_s() == pytest.approx(550.0 / 19.0, rel=1e-15)
 
 
 # -------------------- what does and does not move a boundary (8.4a)

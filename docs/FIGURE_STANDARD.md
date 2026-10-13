@@ -10,11 +10,13 @@ typography half of this; the rules below are the half a module cannot enforce.
   excluded, and censored windows each survival curve excluded), `panels/check_ledger.py`
   (thresholds with no usable windows), `plots/check_outcome_plot.py` (checks shown of those
   run, and checks asked for that produced no answer), `plots/independence_survey_plot.py`
-  (cells not computed, and that C3 is drawn with no bench cell) and
+  (cells not computed, and that C3 is drawn with no bench cell),
   `plots/instrument_validation_plot.py` (the tier that is not drawn, and the censored gap the
-  load-haul-dump comparison drops). Two record a deviation in their own docstrings and carry
-  the count only on the artifact: `plots/km_survival_plot.py` (windows whose birth was not
-  observed) and `plots/mtbc_hist_plot.py` (non-positive intervals).
+  load-haul-dump comparison drops), `plots/tlf_plot.py` (reads with a non-finite time or
+  value) and `plots/allan_plot.py` (fractional points that are non-finite or not positive).
+  Two record a deviation in their own docstrings and carry the count only on the artifact:
+  `plots/km_survival_plot.py` (windows whose birth was not observed) and
+  `plots/mtbc_hist_plot.py` (non-positive intervals).
 - **Vocabulary.** The backlog is larger than a few axis labels, and part of it cannot be fixed
   in the render layer: threshold labels are step kwargs and artifact keys. It is deferred to
   its own spec; see `spec/specpresentation09.md`, Not done.

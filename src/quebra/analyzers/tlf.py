@@ -11,8 +11,11 @@ the record observed, under the carve's gap rule (`windows.observed_reads`):
   change across a gap was not observed and is neither an exit nor a transition;
 - **mean dwell** is exposure / exits;
 - **dwell CV** is over COMPLETE runs only, those whose start and end were both observed. A
-  run cut by a gap or by either end of the record is counted in `n_cut_runs_*`;
+  run cut by a gap or by either end of the record is counted in `n_cut_runs_state*`;
 - **switching rate** is the within-segment state changes over the total exposure.
+
+Two reads at one time inside a segment raise: a state change between them would be an exit
+after zero exposure.
 
 `values` are in hertz (the Ramsey recipe passes `raw_frequency_hz` or `delta_hz`), so the
 lobe separation and spread are in hertz. Fractional units would need a declared operating
@@ -50,26 +53,45 @@ class TLFResult:
     gmm1: Any
     gmm2: Any
 
-    # Group 2 - dynamics. State 0 is the lower lobe. Times in seconds.
+    # Group 2 - dynamics. State 0 is the lower lobe, state 1 the upper.
     n_transitions: int | None
     switching_rate_per_hour: float | None
-    mean_dwell_s0: float | None
-    mean_dwell_s1: float | None
-    dwell_cv_s0: float | None
-    dwell_cv_s1: float | None
-    exposure_s0: float | None
-    exposure_s1: float | None
-    n_exits_s0: int | None
-    n_exits_s1: int | None
-    n_complete_runs_s0: int | None
-    n_complete_runs_s1: int | None
-    n_cut_runs_s0: int | None
-    n_cut_runs_s1: int | None
+    mean_dwell_state0_s: float | None
+    mean_dwell_state1_s: float | None
+    dwell_cv_state0: float | None
+    dwell_cv_state1: float | None
+    exposure_state0_s: float | None
+    exposure_state1_s: float | None
+    n_exits_state0: int | None
+    n_exits_state1: int | None
+    n_complete_runs_state0: int | None
+    n_complete_runs_state1: int | None
+    n_cut_runs_state0: int | None
+    n_cut_runs_state1: int | None
 
     diagnostics: dict[str, object] = field(default_factory=dict)
     # Read this before `is_bimodal`: False there means no comparison was made, not that one
     # lobe was established.
     fit_failed: bool = False
+
+
+# Every dynamics field, None together when the 2-component fit failed.
+_DYNAMICS_FIELDS = (
+    "n_transitions",
+    "switching_rate_per_hour",
+    *(
+        f"{name}_state{k}{unit}"
+        for name, unit in (
+            ("mean_dwell", "_s"),
+            ("dwell_cv", ""),
+            ("exposure", "_s"),
+            ("n_exits", ""),
+            ("n_complete_runs", ""),
+            ("n_cut_runs", ""),
+        )
+        for k in (0, 1)
+    ),
+)
 
 
 @dataclass(slots=True)
@@ -130,26 +152,38 @@ def run(
     argument too.
 
     Non-finite (time, value) pairs are dropped first and counted in `diagnostics`. A
-    2-component fit that raises sets `fit_failed` and leaves `bic_delta`, `gmm2` and every
-    dynamics field as None rather than reporting a comparison that did not happen.
+    2-component fit that raises ValueError or LinAlgError sets `fit_failed`, records the
+    error in `diagnostics["fit_error"]` and leaves `bic_delta`, `gmm2` and every dynamics
+    field as None rather than reporting a comparison that did not happen. A repeated
+    timestamp inside a segment raises ValueError.
 
     Validity assumptions:
 
     - Assumption: the state process is a two-state Markov chain in continuous time, leaving
       state 0 at rate lambda0 and state 1 at rate lambda1.
-      Diagnostic: the dwell CV over complete runs, which is 1 for exponential dwells in the
-      limit of dense reads.
+      Diagnostic: the dwell CV over complete runs, which is 1 for exponential dwells when
+      the reads are dense and the segments long compared with the dwells. Complete runs
+      are biased toward short dwells otherwise, so a CV below 1 is not by itself evidence
+      against exponential dwells.
       Consequence of violation: exposure / exits stays the ratio estimate of a mean dwell
-      under a stationary renewal process, but is no longer the maximum-likelihood estimate.
+      under a stationary renewal process. Even under the chain it is the maximum-likelihood
+      estimate of 1 / lambda0 only for a continuously observed path; with discrete reads it
+      is the dense-read approximation of the next assumption.
       Reference: the censored-exponential maximum-likelihood estimate, total time at risk
       over the number of events; no source located.
-    - Assumption: the reads are dense on the scale of the dwells.
-      Diagnostic: the effective spacing E[delta^2]/E[delta] times (lambda0 + lambda1).
-      Consequence of violation: switches missed between reads bias the mean dwell UP. For
-      the chain above, P(the right read is in state 1 | the left read is in state 0) =
-      lambda0 delta - lambda0 (lambda0 + lambda1) delta^2 / 2 + O(delta^3), so, as a ratio
-      of expectations, mean dwell = (1 / lambda0) (1 + (lambda0 + lambda1) E[delta^2] /
-      (2 E[delta])) to first order in the spacing, and symmetrically for state 1.
+    - Assumption: the reads are dense on the scale of the dwells, the chain is stationary
+      (the probability that a read is in state 0 is the same at every read), and the
+      spacings do not depend on the state.
+      Diagnostic: `diagnostics["effective_spacing_s"]`, E[delta^2]/E[delta] over the
+      within-segment spacings, times (lambda0 + lambda1).
+      Consequence of violation: switches missed between reads bias the mean dwell UP and
+      the switching rate DOWN. For the chain above, P(the right read is in state 1 | the
+      left read is in state 0) = lambda0 delta - lambda0 (lambda0 + lambda1) delta^2 / 2 +
+      O(delta^3). So, as ratios of expectations with the moments taken over the
+      within-segment spacings, mean dwell = (1 / lambda0) (1 + (lambda0 + lambda1)
+      E[delta^2] / (2 E[delta])) to first order, symmetrically for state 1, and the
+      switching rate = (2 lambda0 lambda1 / (lambda0 + lambda1)) (1 - (lambda0 + lambda1)
+      E[delta^2] / (2 E[delta])).
       Reference: derived here from the two-state transition probability; no source located.
     - Assumption: each read is assigned its true state.
       Diagnostic: `lobe_snr`.
@@ -170,10 +204,18 @@ def run(
     vals = obs.values.reshape(-1, 1)
     if vals.size == 0:
         raise ValueError("No finite (time, value) pair provided to TLF analysis")
+    within = np.diff(obs.t_rel_s)[obs.within_segment()]
+    if np.any(within == 0.0):
+        raise ValueError(
+            f"{int(np.sum(within == 0.0))} repeated timestamp(s) inside a segment; a state "
+            f"change between two reads at one time would be an exit after zero exposure"
+        )
     diagnostics: dict[str, object] = {
         "n_reads": int(vals.shape[0]),
         "n_dropped_nonfinite": obs.n_dropped_nonfinite,
+        "n_nonpositive_steps": obs.n_nonpositive_steps,
         "median_spacing_s": obs.median_spacing_s,
+        "effective_spacing_s": obs.effective_spacing_s(),
         "gap_threshold_s": obs.gap_threshold_s,
         "n_gaps": obs.n_gaps,
         "gap_mult": float(gap_mult),
@@ -187,7 +229,8 @@ def run(
             n_components=2, covariance_type="full", random_state=seed
         )
         gmm2.fit(vals)
-    except Exception:
+    except (ValueError, np.linalg.LinAlgError) as exc:
+        diagnostics["fit_error"] = f"{type(exc).__name__}: {exc}"
         return TLFResult(
             is_bimodal=False,
             bic_delta=None,
@@ -197,20 +240,7 @@ def run(
             lobe_snr=None,
             gmm1=gmm1,
             gmm2=None,
-            n_transitions=None,
-            switching_rate_per_hour=None,
-            mean_dwell_s0=None,
-            mean_dwell_s1=None,
-            dwell_cv_s0=None,
-            dwell_cv_s1=None,
-            exposure_s0=None,
-            exposure_s1=None,
-            n_exits_s0=None,
-            n_exits_s1=None,
-            n_complete_runs_s0=None,
-            n_complete_runs_s1=None,
-            n_cut_runs_s0=None,
-            n_cut_runs_s1=None,
+            **dict.fromkeys(_DYNAMICS_FIELDS),
             diagnostics=diagnostics,
             fit_failed=True,
         )
@@ -257,17 +287,17 @@ def run(
         gmm2=gmm2,
         n_transitions=n_transitions,
         switching_rate_per_hour=switching_rate_per_hour,
-        mean_dwell_s0=low.exposure_s / low.exits if low.exits else None,
-        mean_dwell_s1=high.exposure_s / high.exits if high.exits else None,
-        dwell_cv_s0=_dwell_cv(low.complete_s),
-        dwell_cv_s1=_dwell_cv(high.complete_s),
-        exposure_s0=low.exposure_s,
-        exposure_s1=high.exposure_s,
-        n_exits_s0=low.exits,
-        n_exits_s1=high.exits,
-        n_complete_runs_s0=len(low.complete_s),
-        n_complete_runs_s1=len(high.complete_s),
-        n_cut_runs_s0=low.n_cut,
-        n_cut_runs_s1=high.n_cut,
+        mean_dwell_state0_s=low.exposure_s / low.exits if low.exits else None,
+        mean_dwell_state1_s=high.exposure_s / high.exits if high.exits else None,
+        dwell_cv_state0=_dwell_cv(low.complete_s),
+        dwell_cv_state1=_dwell_cv(high.complete_s),
+        exposure_state0_s=low.exposure_s,
+        exposure_state1_s=high.exposure_s,
+        n_exits_state0=low.exits,
+        n_exits_state1=high.exits,
+        n_complete_runs_state0=len(low.complete_s),
+        n_complete_runs_state1=len(high.complete_s),
+        n_cut_runs_state0=low.n_cut,
+        n_cut_runs_state1=high.n_cut,
         diagnostics=diagnostics,
     )
