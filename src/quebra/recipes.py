@@ -13,6 +13,7 @@ import quebra.analyzers.kaplan_meier as kaplan_meier
 import quebra.analyzers.survival as survival
 import quebra.analyzers.t2star as t2star
 import quebra.analyzers.windows as windows
+from quebra.analyzers.allan import check_nu0_hz
 from quebra.analyzers.allan import run as run_allan
 from quebra.analyzers.event_table import EventTables
 from quebra.analyzers.fidelity import FidelityResult
@@ -45,7 +46,8 @@ RAMSEY_CONFIG: dict[str, object] = {
         # the points left after that filter (Supplementary Figs. 10 and 11, pp. 10-11).
         "chi_squared_threshold": 0.8,
     },
-    # Ported; no source located. Allan computes the raw detuning series only.
+    # Ported; no source located. Allan computes the raw detuning series only, and keeps a
+    # tau only when its pooled second differences number at least `min_points_for_allan`.
     "allan": {"modes": ["raw"], "taus_mode": "all", "min_points_for_allan": 8},
     # Ported. It has no effect on the result: the gate-fidelity formula depends on detuning
     # and Rabi frequency only through their ratio, which a common factor of 2*pi leaves alone.
@@ -92,13 +94,16 @@ def _filter_step(
     return step
 
 
-def _allan_step(config: Mapping[str, object]) -> Callable[[dict[str, object]], object]:
+def _allan_step(config: Mapping[str, object]) -> Callable[..., object]:
     def step(
         norm: dict[str, object],
-        fractional: bool = False,
-        carrier_col: str = "frequency",
+        gap_mult: float,
+        fractional: bool,
+        nu0_hz: float | None,
     ) -> object:
-        return run_allan(norm, config, fractional=fractional, carrier_col=carrier_col)
+        return run_allan(
+            norm, config, gap_mult=gap_mult, fractional=fractional, nu0_hz=nu0_hz
+        )
 
     return step
 
@@ -360,7 +365,7 @@ def configure_ramsey_job(
     include_fidelity: bool,
     include_tlf: bool = False,
     allan_fractional: bool = False,
-    allan_carrier_col: str = "qubit_frequency_hz",
+    allan_nu0_hz: float | None = None,
     rabi_table: Dataset | None = None,
     xi_seed: int = XI_SEED,
     tlf_seed: int = TLF_SEED,
@@ -374,6 +379,13 @@ def configure_ramsey_job(
             "rabi_table was given but include_fidelity=False; nothing would read it"
         )
     rabi_key = _declared_rabi_key(dataset, rabi_table) if include_fidelity else None
+    if allan_fractional != (allan_nu0_hz is not None):
+        raise ValueError(
+            "allan_fractional and allan_nu0_hz go together: a fractional Allan deviation "
+            "divides by the declared operating frequency, and nothing else reads it"
+        )
+    if allan_nu0_hz is not None:
+        check_nu0_hz(allan_nu0_hz)
     # dataset may be a Dataset (to load) or an already-registered Reference
     # (LocalRef/ArtifactRef - a node whose result is loaded/enriched upstream).
     if hasattr(dataset, "resolve"):
@@ -390,8 +402,9 @@ def configure_ramsey_job(
         _allan_step(config),
         final_filtered,
         name="allan",
+        gap_mult=RAMSEY_GAP_MULT,
         fractional=allan_fractional,
-        carrier_col=allan_carrier_col,
+        nu0_hz=allan_nu0_hz,
     )
 
     prefix = figure_prefix or job.name
