@@ -151,9 +151,9 @@ class WindowsResult:
 def spacing(t_rel_s: np.ndarray, gap_mult: float = DEFAULT_GAP_MULT):
     """Median read spacing and the derived gap threshold.
 
-    The median is over POSITIVE differences only. Duplicated timestamps are common in
-    scan-structured records and would otherwise drive the median to zero, making every
-    positive step a gap and destroying every window.
+    The median is over POSITIVE differences only. A repeated timestamp gives a zero
+    difference, and enough of them would drive the median to zero, making every positive
+    step a gap and destroying every window.
 
     Returns (median_spacing_s, gap_threshold_s, n_gaps, n_nonpositive_steps).
     """
@@ -183,6 +183,96 @@ def gap_flags(t_rel_s: np.ndarray, gap_threshold_s: float) -> np.ndarray:
     record is always a scan_start and never a gap_resume."""
     dt = np.diff(np.asarray(t_rel_s, dtype=float))
     return np.r_[False, dt > gap_threshold_s]
+
+
+@dataclass(slots=True)
+class ObservedReads:
+    """The reads a record observed, with the one gap rule every consumer shares.
+
+    A *segment* is a maximal run of reads with no gap between neighbours. `is_gap[i]` is
+    True when read i opens a segment after a gap; read 0 opens the first segment and is
+    never a gap.
+    """
+
+    t_rel_s: np.ndarray
+    values: np.ndarray
+    sigma: np.ndarray | None
+    is_gap: np.ndarray
+    median_spacing_s: float
+    gap_threshold_s: float
+    n_gaps: int
+    n_nonpositive_steps: int
+    n_dropped_nonfinite: int
+
+    def segments(self) -> list[tuple[int, int]]:
+        """`[start, end)` read-index ranges of the segments, in order."""
+        n = len(self.t_rel_s)
+        if n == 0:
+            return []
+        starts = [0, *(int(i) for i in np.flatnonzero(self.is_gap))]
+        return list(zip(starts, [*starts[1:], n]))
+
+    def within_segment(self) -> np.ndarray:
+        """`within[i]` is True when the spacing from read i to read i+1 is observed,
+        that is, does not cross a gap. One entry per consecutive pair of reads."""
+        return ~self.is_gap[1:]
+
+
+def observed_reads(
+    t_rel_s: np.ndarray,
+    values: np.ndarray,
+    *,
+    sigma: np.ndarray | None = None,
+    gap_mult: float = DEFAULT_GAP_MULT,
+) -> ObservedReads:
+    """Drop non-finite (time, value) pairs, then apply the gap rule.
+
+    ORDER IS LOAD-BEARING: dropping non-finite pairs BEFORE measuring spacing lets a run of
+    failed fits widen the interval into a real gap. The other way round either measures
+    spacing on the wrong array or lets a NaN read stand inside a segment.
+
+    Raises ValueError on mismatched lengths (values or sigma), on time that steps
+    backwards, and, through `spacing`, when no step between reads is positive.
+    """
+    t_all = np.asarray(t_rel_s, dtype=float)
+    v_all = np.asarray(values, dtype=float)
+    if len(t_all) != len(v_all):
+        raise ValueError(
+            f"t_rel_s and values must be the same length; got {len(t_all)} and "
+            f"{len(v_all)}"
+        )
+    sigma_all = None
+    if sigma is not None:
+        sigma_all = np.asarray(sigma, dtype=float)
+        if len(sigma_all) != len(t_all):
+            raise ValueError(
+                f"sigma must be the same length as t_rel_s; got {len(sigma_all)} and "
+                f"{len(t_all)}"
+            )
+    finite = np.isfinite(t_all) & np.isfinite(v_all)
+    t = t_all[finite]
+
+    # Durations are t_death - t_birth, so time running backwards yields NEGATIVE
+    # lifetimes that flow straight onto the survival curve - finite, plausible and
+    # wrong. Loaders sort by timestamp; a caller that did not has a bug upstream.
+    if len(t) > 1 and bool(np.any(np.diff(t) < 0)):
+        raise ValueError(
+            "t_rel_s must be non-decreasing; got a time array that steps backwards. "
+            "Sort the reads by timestamp before carving."
+        )
+
+    median_s, gap_threshold_s, n_gaps, n_nonpositive = spacing(t, gap_mult)
+    return ObservedReads(
+        t_rel_s=t,
+        values=v_all[finite],
+        sigma=sigma_all[finite] if sigma_all is not None else None,
+        is_gap=gap_flags(t, gap_threshold_s) if len(t) else np.zeros(0, dtype=bool),
+        median_spacing_s=median_s,
+        gap_threshold_s=gap_threshold_s,
+        n_gaps=n_gaps,
+        n_nonpositive_steps=n_nonpositive,
+        n_dropped_nonfinite=int(len(t_all) - len(t)),
+    )
 
 
 def carve(
@@ -519,21 +609,7 @@ def run(inputs: WindowsInputs) -> WindowsResult:
     RuntimeError when the windows fail the tiling or accounting check.
     """
     t_all = np.asarray(inputs.t_rel_s, dtype=float)
-    v_all = np.asarray(inputs.values, dtype=float)
-    if len(t_all) != len(v_all):
-        raise ValueError(
-            f"t_rel_s and values must be the same length; got {len(t_all)} and "
-            f"{len(v_all)}"
-        )
-    sigma_all = inputs.sigma
-    if sigma_all is not None:
-        sigma_all = np.asarray(sigma_all, dtype=float)
-        if len(sigma_all) != len(t_all):
-            raise ValueError(
-                f"sigma must be the same length as t_rel_s; got {len(sigma_all)} and "
-                f"{len(t_all)}"
-            )
-    if inputs.use_uncertainty and sigma_all is None:
+    if inputs.use_uncertainty and inputs.sigma is None:
         raise ValueError(
             "use_uncertainty=True requires a sigma array. A dataset with no error "
             "column is legal, but then use_uncertainty must be False - the uncertain "
@@ -552,26 +628,14 @@ def run(inputs: WindowsInputs) -> WindowsResult:
         if not math.isfinite(float(thr_value)):
             raise ValueError(f"threshold {label!r} has non-finite value {thr_value!r}")
 
-    # ORDER IS LOAD-BEARING: drop non-finite (t, value) pairs BEFORE measuring spacing,
-    # so a run of failed fits widens the interval into a real gap. Doing it the other
-    # way round either measures spacing on the wrong array or lets NaN >= threshold
-    # evaluate False and fabricate a down-crossing at every failed fit.
-    finite = np.isfinite(t_all) & np.isfinite(v_all)
-    t = t_all[finite]
-    v = v_all[finite]
-    sigma = sigma_all[finite] if sigma_all is not None else None
-
-    # Durations are t_death - t_birth, so time running backwards yields NEGATIVE
-    # lifetimes that flow straight onto the survival curve - finite, plausible and
-    # wrong. Loaders sort by timestamp; a caller that did not has a bug upstream.
-    if len(t) > 1 and bool(np.any(np.diff(t) < 0)):
-        raise ValueError(
-            "t_rel_s must be non-decreasing; got a time array that steps backwards. "
-            "Sort the reads by timestamp before carving."
-        )
-
-    median_s, gap_threshold_s, n_gaps, n_nonpositive = spacing(t, inputs.gap_mult)
-    is_gap = gap_flags(t, gap_threshold_s) if len(t) else np.zeros(0, dtype=bool)
+    # A NaN left in place would evaluate NaN >= threshold as False and fabricate a
+    # down-crossing at every failed fit; `observed_reads` drops it first.
+    obs = observed_reads(
+        t_all, inputs.values, sigma=inputs.sigma, gap_mult=inputs.gap_mult
+    )
+    t, v, sigma, is_gap = obs.t_rel_s, obs.values, obs.sigma, obs.is_gap
+    median_s, gap_threshold_s = obs.median_spacing_s, obs.gap_threshold_s
+    n_gaps, n_nonpositive = obs.n_gaps, obs.n_nonpositive_steps
 
     sigma_known = (
         np.isfinite(sigma) if sigma is not None else np.zeros(len(t), dtype=bool)

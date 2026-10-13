@@ -113,7 +113,7 @@ def _fidelity_step(
 
 
 def _tlf_step() -> Callable[..., dict[str, object]]:
-    def step(norm: dict[str, object], seed: int) -> dict[str, object]:
+    def step(norm: dict[str, object], seed: int, gap_mult: float) -> dict[str, object]:
         # TLF analysis on filtered (but NOT interpolated) data to preserve noise metrics.
         # Input norm is the final filtered stage from filter step, with uninterpolated timestamps.
         if "raw_frequency_hz" in norm:
@@ -132,7 +132,7 @@ def _tlf_step() -> Callable[..., dict[str, object]]:
             )
         timestamps = norm["t_rel_s"]
 
-        result = run_tlf(values_hz, timestamps, seed=seed)
+        result = run_tlf(values_hz, timestamps, seed=seed, gap_mult=gap_mult)
         return {
             "result": result,
             "values_hz": values_hz,
@@ -188,6 +188,10 @@ XI_SEED = 20260813
 # dwell statistic a fresh random variable per call. Passed as a step kwarg, so it reaches the
 # parameter row and the provenance label.
 TLF_SEED = 20260902
+
+# The Ramsey family's gap rule: one constant for every node that segments the filtered
+# reads, passed as a step kwarg so it reaches the parameter row.
+RAMSEY_GAP_MULT = DEFAULT_GAP_MULT
 
 
 def _event_tables(window_result: WindowsResult) -> EventTables:
@@ -421,7 +425,7 @@ def configure_ramsey_job(
             _fidelity_windows,
             fidelity_raw,
             name="fidelity_windows",
-            gap_mult=DEFAULT_GAP_MULT,
+            gap_mult=RAMSEY_GAP_MULT,
             thresholds=ladder,
         )
         _fidelity_tables, fidelity_km = wire_kaplan_meier(
@@ -446,7 +450,13 @@ def configure_ramsey_job(
         job.materialize(fidelity_raw, name=f"{prefix}_fidelity_raw")
 
     if include_tlf:
-        tlf = job.step(_tlf_step(), final_filtered, name="tlf", seed=tlf_seed)
+        tlf = job.step(
+            _tlf_step(),
+            final_filtered,
+            name="tlf",
+            seed=tlf_seed,
+            gap_mult=RAMSEY_GAP_MULT,
+        )
         job.figure(TLFPlot, tlf, targets=["static", "academic"], title=f"{prefix} TLF")
         job.materialize(tlf, name=f"{prefix}_tlf")
 

@@ -207,6 +207,38 @@ def test_equality_is_not_a_gap() -> None:
     assert n_gaps == 0
 
 
+@pytest.mark.unit
+def test_observed_reads_segments_follow_the_strict_gap_rule_and_match_the_carve():
+    """Oracle: the strict `>` rule by hand. Median spacing 1 s, threshold 10 s: the 10 s
+    step stays inside a segment and the 25 s step opens one. The carve's gap spans must be
+    the same boundary, because both read one rule."""
+    t = np.array([0.0, 1.0, 2.0, 3.0, 13.0, 14.0, 15.0, 40.0, 41.0, 42.0])
+    obs = windows.observed_reads(t, np.full(t.size, 2.0), gap_mult=10.0)
+    assert obs.segments() == [(0, 7), (7, 10)]
+    assert obs.within_segment().tolist() == [True] * 6 + [False] + [True] * 2
+
+    carved = windows.run(
+        windows.WindowsInputs(
+            t_rel_s=t, values=np.full(t.size, 2.0), thresholds=[("u", 1.0, True)]
+        )
+    )
+    spans = [(float(t[s - 1]), float(t[s])) for s, _ in obs.segments()[1:]]
+    assert carved.diagnostics["gap_spans_s"] == spans == [(15.0, 40.0)]
+
+
+@pytest.mark.unit
+def test_dropped_nonfinite_reads_leave_a_gap_where_they_were():
+    """Oracle: unit-spaced reads at t = 0..20 with values NaN at t = 4..14. Dropped, they
+    leave a 12 s step against a 1 s median, which is a gap; kept, they would fill it and the
+    record would be one segment."""
+    t = np.arange(21, dtype=float)
+    values = np.where((t >= 4) & (t <= 14), np.nan, 1.0)
+    obs = windows.observed_reads(t, values, gap_mult=10.0)
+    assert obs.n_dropped_nonfinite == 11
+    assert obs.t_rel_s.tolist() == [0.0, 1.0, 2.0, 3.0, *range(15, 21)]
+    assert obs.segments() == [(0, 4), (4, 10)]
+
+
 # -------------------- what does and does not move a boundary (8.4a)
 
 

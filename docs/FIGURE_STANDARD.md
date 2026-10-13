@@ -14,9 +14,8 @@ typography half of this; the rules below are the half a module cannot enforce.
   `plots/instrument_validation_plot.py` (the tier that is not drawn, and the censored gap the
   load-haul-dump comparison drops). Two record a deviation in their own docstrings and carry
   the count only on the artifact: `plots/km_survival_plot.py` (windows whose birth was not
-  observed) and `plots/mtbc_hist_plot.py` (non-positive intervals). `plots/tlf_plot.py` drops
-  non-finite values, and `plots/allan_plot.py` non-finite and non-positive fractional-deviation
-  points, with no note.
+  observed) and `plots/mtbc_hist_plot.py` (non-positive intervals). `plots/allan_plot.py`
+  drops non-finite and non-positive fractional-deviation points with no note.
 - **Vocabulary.** The backlog is larger than a few axis labels, and part of it cannot be fixed
   in the render layer: threshold labels are step kwargs and artifact keys. It is deferred to
   its own spec; see `spec/specpresentation09.md`, Not done.

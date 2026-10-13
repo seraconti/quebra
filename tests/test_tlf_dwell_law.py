@@ -2,9 +2,10 @@
 
 Oracle: a two-state chain observed on a read grid. Sampled at spacing `dt`, a state left
 with per-read probability `p` has run lengths exactly Geometric(p) on {1, 2, ...}. `tlf.run`
-measures dwells on the ASSIGNED READ SEQUENCE - `tlf.py` run-length encodes the per-read
-state assignment and multiplies by the median read spacing - so the quantities it reports
-converge to
+measures dwells on the ASSIGNED READ SEQUENCE: a state's mean dwell is its exposure (the
+forward spacings whose left read is in the state) over its exits (observed changes out of
+it), and its CV is over complete runs. On a uniform grid a complete run of L reads lasts
+L * dt, so the quantities it reports converge to
 
     mean dwell -> dt / p            dwell CV -> sqrt(1 - p)
 
