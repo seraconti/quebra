@@ -61,7 +61,7 @@ class AllanPlot(BasePlot):
             for index, mode_name in enumerate(mode_names):
                 frame = result.modes[mode_name]
                 tau_s = frame["tau_s"].to_numpy(dtype=float)
-                adev = frame["adev"].to_numpy(dtype=float)
+                adev = frame["adev_hz"].to_numpy(dtype=float)
                 color = base_color if index == 0 else accent_color
                 ax_main.loglog(
                     tau_s,
@@ -191,9 +191,12 @@ class AllanPlot(BasePlot):
                 ax_main.set_title(title)
                 diag = result.diagnostics
                 ax_main.annotate(
-                    f"{diag.get('n_segments')} segments, "
-                    f"{diag.get('n_segments_too_short')} too short; a tau is kept with "
-                    f">= {diag.get('min_terms_per_tau')} pooled terms",
+                    f"{diag['n_segments']} segments, {diag['n_segments_too_short']} too "
+                    f"short; spacing CV within segments "
+                    f"{diag['spacing_cv_within_segments']:.2f} (tau is nominal when it is "
+                    f"large); a tau is kept with >= {diag['min_terms_per_tau']} pooled terms"
+                    f"\ndropped: {diag['n_dropped_nonfinite']} non-finite reads, "
+                    f"{int(np.sum(~tau_mask))} non-positive or non-finite ADEV points",
                     xy=(0.02, 0.02),
                     xycoords="axes fraction",
                     ha="left",
@@ -201,7 +204,7 @@ class AllanPlot(BasePlot):
                     **CAPTION,
                 )
 
-            ax_main.set_ylabel("ADEV")
+            ax_main.set_ylabel("ADEV (Hz)")
             ax_main.grid(True, which="major", color="lightgray", alpha=0.4)
             ax_main.legend(frameon=False)
 

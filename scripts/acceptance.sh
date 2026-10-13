@@ -61,7 +61,7 @@ echo "wheel: ${WHEEL}"
 
 step "create the venv"  python3 -m venv "${VENV}"
 step "install the wheel" "${VENV}/bin/pip" install --quiet "${WHEEL}"
-step "install pytest"    "${VENV}/bin/pip" install --quiet pytest hypothesis allantools
+step "install pytest"    "${VENV}/bin/pip" install --quiet pytest hypothesis "allantools>=2024.6"
 # hypothesis, not only pytest: the repository conftest registers a settings profile at
 # import time, so without it collection fails here and nowhere else. allantools is the
 # reference the Allan tests compare against; the package itself does not import it.

@@ -9,7 +9,12 @@ spans a gap.
 
 Two exponents are easy to confuse and are named apart here. The local slope of
 log ADEV against log tau is mu / 2 in the convention AVAR ∝ tau^mu. The spectral exponent
-alpha of S_y(f) ∝ f^alpha is a different number (mu = -alpha - 1 for -3 < alpha < 1).
+alpha of S_y(f) ∝ f^alpha is a different number (mu = -alpha - 1 for -3 < alpha < 1; no
+source located for this relation here).
+
+`tau = m * tau0` is nominal: it is exact only when the reads inside a segment are equally
+spaced. `diagnostics["spacing_cv_within_segments"]` says how far they are from it, and the
+figure prints it.
 """
 
 from __future__ import annotations
@@ -41,8 +46,11 @@ def check_nu0_hz(nu0_hz: object) -> float:
     """Return a declared operating frequency as a float, or raise.
 
     A non-positive or non-finite value has no fractional meaning, and dividing by it would
-    give a series of the right shape and the wrong size.
+    give a series of the right shape and the wrong size. A bool or a string is refused
+    before conversion: `True` would read as 1 Hz.
     """
+    if isinstance(nu0_hz, (bool, str, bytes)):
+        raise TypeError(f"nu0_hz must be a number of hertz, got {nu0_hz!r}")
     try:
         value = float(nu0_hz)  # type: ignore[arg-type]
     except (TypeError, ValueError) as exc:
@@ -54,15 +62,17 @@ def check_nu0_hz(nu0_hz: object) -> float:
 
 def _segment_terms(y: np.ndarray, m: int) -> tuple[float, int]:
     """Sum of squared second differences of one segment's phase at factor m, and their
-    count. In units of y squared times tau0 squared, so tau0 is applied once, at pooling.
+    count, in units of y squared; tau0 never enters (see `pooled_overlapping_adev`).
 
     Phase in units of tau0 is the running sum of y, starting at 0; the second difference
     x[j + 2m] - 2 x[j + m] + x[j] is m times the difference of two adjacent m-read means.
+    The segment's mean is subtracted first, which leaves every second difference unchanged
+    and keeps the running sum small, as `allantools`' frequency-to-phase conversion does.
     """
     n_terms = len(y) - 2 * m + 1
     if n_terms < 1:
         return 0.0, 0
-    x = np.concatenate(([0.0], np.cumsum(y)))
+    x = np.concatenate(([0.0], np.cumsum(y - np.mean(y))))
     d2 = x[2 * m :] - 2.0 * x[m:-m] + x[: -2 * m]
     return float(np.sum(d2 * d2)), n_terms
 
@@ -72,11 +82,14 @@ def pooled_overlapping_adev(
 ) -> pd.DataFrame:
     """Overlapping ADEV at tau = m * tau0, pooled over segments by term count.
 
-    AVAR(m) = sum of squared second differences over every segment /
-    (2 m^2 tau0^2 * total terms), the overlapping estimator of each segment weighted by its
-    number of terms. A tau is kept when its pooled term count is at least `min_terms`.
-    `adev_err` is adev / sqrt(terms), the term-count standard error; the overlapping terms
-    are correlated, so it understates the uncertainty, and it is not a confidence interval.
+    Per segment, the overlapping Allan variance of NIST SP 1065 (Riley), which
+    `allantools.oadev` cites as eqn (11), p. 16. Pooled, AVAR(m) = sum of squared second
+    differences over every segment / (2 m^2 tau0^2 * total terms), each segment weighted by
+    its number of terms; no source located for the pooling across segments. A tau is kept
+    when its pooled term count is at least `min_terms`. `adev_err_hz` is adev / sqrt(terms),
+    the term-count standard error; the overlapping terms are correlated, so it understates
+    the uncertainty, and it is not a confidence interval. Deviations are in the unit of the
+    series, hertz for a detuning.
     """
     if taus_mode not in TAUS_MODES:
         raise ValueError(f"taus_mode must be one of {TAUS_MODES}, got {taus_mode!r}")
@@ -102,14 +115,15 @@ def pooled_overlapping_adev(
             {
                 "m": m,
                 "tau_s": m * tau0_s,
-                "adev": adev,
-                "adev_err": adev / math.sqrt(terms),
+                "adev_hz": adev,
+                "adev_err_hz": adev / math.sqrt(terms),
                 "n_terms": terms,
                 "n_segments": used,
             }
         )
     return pd.DataFrame(
-        rows, columns=["m", "tau_s", "adev", "adev_err", "n_terms", "n_segments"]
+        rows,
+        columns=["m", "tau_s", "adev_hz", "adev_err_hz", "n_terms", "n_segments"],
     )
 
 
@@ -151,9 +165,9 @@ def run(
       Consequence of violation: the pooled deviation is a term-weighted average, led by
       the longest segments.
       Reference: no source located.
-    - Assumption: the terms behind `adev_err` are independent.
+    - Assumption: the terms behind `adev_err_hz` are independent.
       Diagnostic: none; overlapping terms share reads, so they are not.
-      Consequence of violation: `adev_err` understates the uncertainty, more at large m.
+      Consequence of violation: `adev_err_hz` understates the uncertainty, more at large m.
       Reference: `allantools` reports the same form (`calc_adev_phase`); confidence
       intervals with equivalent degrees of freedom are not computed here.
     """
@@ -205,7 +219,7 @@ def run(
         if frame.empty:
             raise ValueError(
                 f"no tau keeps {min_terms} pooled terms: {len(segments)} segment(s), the "
-                f"longest of {max(e - s for s, e in segments)} reads"
+                f"longest of {max((e - s for s, e in segments), default=0)} reads"
             )
         summary[str(mode)] = frame
         print(
@@ -217,7 +231,7 @@ def run(
     fractional_adev: np.ndarray | None = None
     if nu0 is not None:
         first = summary[str(modes[0])]
-        fractional_adev = first["adev"].to_numpy(dtype=float) / nu0
+        fractional_adev = first["adev_hz"].to_numpy(dtype=float) / nu0
 
     return AllanResult(
         modes=summary,
