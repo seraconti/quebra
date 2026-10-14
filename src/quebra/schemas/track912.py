@@ -19,7 +19,8 @@ class track912Schema(BaseQubitSchema):
     T2star_s: Series[float] = pa.Field(alias="T2star")
     # T2star_error_s: uncertainty on Ramsey coherence time in seconds.
     T2star_error_s: Series[float] = pa.Field(alias="T2star error")
-    # frequency_hz: fitted qubit frequency in hertz.
+    # frequency_hz: fitted Ramsey fringe frequency in hertz, of order MHz; not the
+    # absolute qubit frequency.
     frequency_hz: Series[float] = pa.Field(alias="frequency")
     # frequency_error_hz: uncertainty on fitted frequency in hertz.
     frequency_error_hz: Series[float] = pa.Field(alias="frequency error")

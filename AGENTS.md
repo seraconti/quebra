@@ -9,7 +9,8 @@ The pipeline is a lazy DAG: nothing runs until a sink (figure or materialize) re
 **Implemented today:** Kaplan-Meier, the Nelson-Aalen cumulative hazard, curve quantiles and
 the restricted mean (RMST), Turnbull's estimate, the placement bracket, MTBF and MTBC, window
 carving on both sides of a threshold with an explicit gap policy, an independence check
-battery, and the metric analyzers.
+battery, the metric analyzers, and the tellability of a record (its spectral window,
+spectrum and G10, count exponent, crossing placement, run-length ratio and sigma rows).
 **Not implemented:** log-rank, MCF, a smoothed hazard h(t). `grep -rli` finds no module for any
 of them. Do not describe them as shipping.
 
@@ -224,9 +225,16 @@ loaders/registry.py            built-ins: .csv  .yaml/.yml  .h5/.hdf5  .pkl/.pic
 schemas/     base.py, track912.py (912-day Ramsey), calibration_log.py
 transforms/  filter.py, declared_rabi.py (the declared Rabi join), lookup_prior.py
              (check_unix_s only, the public unix-seconds check)
-analyzers/   allan.py, fidelity.py, t2star.py, tlf.py, mtbf.py, psd.py (stub)
+analyzers/   allan.py, fidelity.py, t2star.py, tlf.py, mtbf.py
              windows.py  window carving on both sides of a threshold: the one in-spec
-             definition (margin), gap policy, censoring, read table
+             definition (margin), gap policy, censoring, read table; observed_reads, the
+             one gap rule every step that segments a record shares
+             spectrum.py  the Lomb-Scargle spectrum, spectral window and G10 of a record
+             read at irregular times
+             min_p.py  one calibrated p-value for a panel of statistics on shared
+             permutations; a leaf, imports nothing from quebra
+             tellability.py  can a record tell when its crossings happened: every row of
+             the tellability panel with its status (docs/TELLABILITY_SEMANTICS.md)
              event_table.py  the event table every survival estimator reads
              survival.py  Nelson-Aalen, curve summaries, Turnbull, placement bracket
              check_attachment.py  standings and check-outcome fields; a leaf, imports
@@ -261,6 +269,9 @@ src/quebra/recipes.py          RAMSEY_CONFIG + configure_ramsey_job orchestrator
 src/quebra/ledger_recipe.py    configure_check_ledger_job and the survey wiring. Apart
                                from recipes.py so the checks stay out of the T2* jobs'
                                identity closure.
+src/quebra/tellability_recipe.py  wire_*_tellability: one tellability step per metric
+                               record, on the nodes configure_* return. recipes.py never
+                               imports it, so jobs without tellability do not carry it.
 src/quebra/cli.py              the CLI, installed as the `quebra` console script.
                                Anchors output/ and the --all glob on the WORKING
                                DIRECTORY, never on __file__, so an installed copy
@@ -373,7 +384,8 @@ Tests requiring R **skip** when `Rscript` is absent. They never pass with mocked
 This repo has drifted here before. Hold the line.
 
 - `docs/` holds reference docs: `TIME_SEMANTICS`, `WINDOW_SEMANTICS` (in spec, sides, windows,
-  the event table), `PANEL_CONTRACT`, `FIGURE_STANDARD`, `JOBS`,
+  the event table), `TELLABILITY_SEMANTICS` (the tellability rows and their statuses),
+  `PANEL_CONTRACT`, `FIGURE_STANDARD`, `JOBS`,
   `WRITING_A_JOB`, `WRITING_A_SCHEMA`, `GOLD_STANDARD` (every published number the checks
   reproduce, with its locator), and `iid_checks/` (one page per check plus limitations).
   Architecture rationale lives there, not in this file. Refresh docs; do not narrate evolving
@@ -481,11 +493,14 @@ These apply to every docstring, comment, spec, ADR and doc page you write.
 ## 11. Scope and workflow
 
 Do not build deferred or speculative work unprompted: composite job machinery beyond what exists,
-a real `psd.py` (currently a stub), or large new subsystems. If you ARE asked to, implementing it
-is correct and welcome. These are scope calls, not standing prohibitions.
+or large new subsystems. If you ARE asked to, implementing it is correct and welcome. These are
+scope calls, not standing prohibitions.
 
 - New functionality: Plan mode (Shift+Tab). The plan is approved by Sera before any edit.
 - Implement on Sonnet by default, Opus when Sonnet is not enough.
-- Before a checkpoint: `/review` (Opus reviewer, fresh context). ruff and tests green.
+- Review: `/review` (Opus reviewer, fresh context) over committed slices of at most ~400
+  changed lines, each in a worktree pinned at its commit and run with
+  `PYTHONPATH=<worktree>/src`, since the editable install otherwise imports the main
+  checkout. ruff and tests green before a commit.
 - Cold second opinion on a plan or architecture: `/plan-critique`.
 - Check a doc against the code: `/doccheck`.

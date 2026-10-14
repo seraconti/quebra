@@ -918,3 +918,21 @@ doing it needs its own home; it will not arrive as a side effect of a later phas
 and most expensive just before a figure is promoted for publication. It is not urgent: nothing
 is wrong today, and the note exists so the decision is made deliberately rather than by a
 future agent noticing the same thing and refactoring unasked.
+
+### 9.3 A check on gaps, kept out of tellability
+
+**Where it came from.** Issue #3 first asked for a gap check: whether the in-spec fraction of
+the reads just before each gap matches the whole record's. If observation stops because the
+qubit has drifted, the windows a gap censors are not a random sample, and the survival curve
+overstates survival. That is the informative censoring 9.1 describes.
+
+**Why it is not in tellability.** Tellability asks whether a record can time a crossing, given
+its schedule and its error bars. The gap check asks whether the stops in observation depend on
+the qubit's state, which is an assumption of the survival estimate, not a question about timing.
+It is stated as an assumption, non-informative censoring, and is kept with 9.1.
+
+**What would have to be settled first.** The same as 9.1: whether anything data-side can be said
+about it, given that right-censoring shows only which of the window's end and the observation's
+stop came first, or whether the useful artifact is a sensitivity analysis. A test on the reads
+just before gaps would also have few gaps per record to work with, so its power would be low and
+a non-rejection would read as reassurance it does not give.

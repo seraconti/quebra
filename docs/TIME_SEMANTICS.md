@@ -26,7 +26,7 @@ Canonical Norm frequency keys:
 | Key | Meaning |
 |---|---|
 | `delta_hz` | Ramsey detuning (fitted frequency − mean) |
-| `raw_frequency_hz` | Fitted qubit frequency (absolute) |
+| `raw_frequency_hz` | Fitted Ramsey fringe frequency, of order MHz; not the absolute qubit frequency, which the records do not carry |
 | `rabi_hz` | Rabi drive frequency, declared per record (see below) |
 | `qubit_frequency_hz` | Carrier/qubit frequency (was `qubit_frequency`); no shipped job sets it |
 
