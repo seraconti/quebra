@@ -34,6 +34,8 @@ dependencies = [
   "plotly>=6.0",
   "pandera>=0.20",
   "scikit-learn>=1.5",
+  # The distance correlation of the tellability dependence panel; its merge-sort method.
+  "dcor>=0.7",
   "h5py>=3.11",
   "PyYAML>=6.0",
   "platformdirs>=4.0",

@@ -138,6 +138,16 @@ def test_the_default_normaliser_still_applies_when_no_schema_is_given(tmp_path):
     assert norm["meta"]["run_start_resolution"] == "date_only_midnight"
 
 
+def test_the_frequency_error_travels_with_its_read_through_the_sort(tmp_path):
+    """Oracle: the file's own rows, sorted by time. Each read keeps its own error."""
+    path = tmp_path / "070423_run.csv"
+    path.write_text(
+        "timestamp,frequency,frequency error\n2,5.2,30\n0,5.1,10\n1,5.3,20\n"
+    )
+    norm = _load_dataset(Dataset(path=path, qubit=1, extra={"run_start_unix_s": 1.7e9}))
+    assert norm["frequency_error_hz"].tolist() == [10.0, 20.0, 30.0]
+
+
 def test_the_default_normaliser_names_itself_and_the_way_out(semicolon_csv):
     """A wrong-shape error must point somewhere. The old one said only that the dataset
     "must contain 'timestamp' and 'frequency' columns", which reads as a hard requirement

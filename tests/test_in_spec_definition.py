@@ -72,6 +72,13 @@ NOT_A_METRIC_THRESHOLD = {
         "run",
         "chi < chi_threshold",
     ),
+    # tellability checks the carve's threshold against the one asked for: two settings,
+    # no read
+    (
+        "src/quebra/analyzers/tellability.py",
+        "_check_inputs",
+        "float(rows['threshold_value'].iloc[0]) != float(value)",
+    ),
 }
 
 

@@ -10,8 +10,9 @@ It is a schema, which is what it always was. `job.load` dispatches to
 and none of the requirements below apply to you. See `docs/WRITING_A_SCHEMA.md`.
 
 Nothing about the computation changed in the move. The column names, the sort, the
-`delta_hz` convention (relative to the mean, no Rabi drive synthesised), the three-level
-run-start resolution and the optional passthrough columns are all as they were.
+`delta_hz` convention (relative to the mean, no Rabi drive synthesised) and the three-level
+run-start resolution are as they were. The optional passthrough columns are listed in
+`docs/WRITING_A_SCHEMA.md`.
 """
 
 from __future__ import annotations
@@ -143,5 +144,9 @@ class RamseySeriesSchema:
         if "T2star error" in frame.columns:
             norm["T2star_error_s"] = pd.to_numeric(
                 frame["T2star error"], errors="coerce"
+            ).to_numpy(dtype=float)[valid][order]
+        if "frequency error" in frame.columns:
+            norm["frequency_error_hz"] = pd.to_numeric(
+                frame["frequency error"], errors="coerce"
             ).to_numpy(dtype=float)[valid][order]
         return norm

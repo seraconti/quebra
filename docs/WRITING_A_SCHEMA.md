@@ -67,7 +67,8 @@ It expects a `timestamp` column and a `frequency` column, both numeric, and a re
 start — either `Dataset.extra["run_start_unix_s"]` or a `DDMMYY_` filename prefix, which it
 reads as local midnight and warns about. From those it produces `t_rel_s`, `delta_hz`
 (frequency relative to the mean), `raw_frequency_hz` and `meta`, and passes through
-`normalised chi-square`, `T2star` and `T2star error` when they are present.
+`normalised chi-square`, `T2star`, `T2star error` and `frequency error` (as
+`frequency_error_hz`) when they are present.
 
 Three things in it are worth copying:
 

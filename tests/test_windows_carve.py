@@ -293,6 +293,21 @@ def test_effective_spacing_is_length_biased_and_ignores_the_gap():
     assert obs.effective_spacing_s() == pytest.approx(550.0 / 19.0, rel=1e-15)
 
 
+@pytest.mark.unit
+def test_a_read_is_confident_at_k_sigma_and_never_without_a_sigma():
+    """Oracle: specification. |margin| >= k sigma with sigma finite; equality counts; a read
+    whose sigma is unknown is neither confident nor, in the carve, uncertain."""
+    margin = np.array([2.0, -2.0, 1.99, 5.0, 5.0])
+    sigma = np.array([1.0, 1.0, 1.0, np.nan, np.inf])
+    assert windows.confident_mask(margin, sigma, 2.0).tolist() == [
+        True,
+        True,
+        False,
+        False,
+        False,
+    ]
+
+
 # -------------------- what does and does not move a boundary (8.4a)
 
 
