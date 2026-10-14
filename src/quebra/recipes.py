@@ -372,7 +372,13 @@ def configure_ramsey_job(
     tlf_seed: int = TLF_SEED,
     conf_level: float = CONF_LEVEL,
     figure_prefix: str | None = None,
-) -> None:
+) -> dict[str, object]:
+    """Wire the Ramsey graph onto `job` and return its nodes for further wiring.
+
+    The returned dict holds `final_filtered` (the filtered reads), `gap_mult` (the one gap
+    rule of the graph) and, with fidelity, `fidelity_raw`, `fidelity_windows` and
+    `fidelity_thresholds`, the ladder those windows were carved at.
+    """
     config = _copy_config(profile)
     # Checked before any node is registered, so a mis-declared job fails at build time.
     if rabi_table is not None and not include_fidelity:
@@ -473,6 +479,18 @@ def configure_ramsey_job(
         )
         job.figure(TLFPlot, tlf, targets=["static", "academic"], title=f"{prefix} TLF")
         job.materialize(tlf, name=f"{prefix}_tlf")
+
+    refs: dict[str, object] = {
+        "final_filtered": final_filtered,
+        "gap_mult": RAMSEY_GAP_MULT,
+    }
+    if include_fidelity:
+        refs.update(
+            fidelity_raw=fidelity_raw,
+            fidelity_windows=fidelity_windows,
+            fidelity_thresholds=ladder,
+        )
+    return refs
 
 
 # ---------------------------------------------------------------------------- the T2* family
@@ -604,8 +622,11 @@ def configure_t2star_job(
     shape_min_reads: int = 5,
     xi_seed: int = XI_SEED,
     conf_level: float = CONF_LEVEL,
-) -> None:
+) -> dict[str, object]:
     """Wire the whole T2* within-calibration graph onto `job`: the carve, then the panel.
+
+    Returns the carve's nodes and settings for further wiring: `t2star` (the fit), `windows`
+    (the carve), `thresholds`, `gap_mult` and `k`.
 
     Collapses the family: two job files that were
     byte-identical once the date and the run duration were normalised. What is left in each
@@ -648,3 +669,10 @@ def configure_t2star_job(
         targets=["static", "academic"],
         title=f"{prefix}_t2star",
     )
+    return {
+        "t2star": result,
+        "windows": window_node,
+        "thresholds": ladder,
+        "gap_mult": gap_mult,
+        "k": k,
+    }

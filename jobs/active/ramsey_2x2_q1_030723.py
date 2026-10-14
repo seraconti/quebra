@@ -1,7 +1,8 @@
 """Archetype: 2x2-device Ramsey job - Allan and fidelity via configure_ramsey_job.
 
 Shape: Dataset -> configure_ramsey_job, which loads the record and owns the filter, Allan and
-fidelity wiring. The flags below are exactly what runs: configure_ramsey_job does not
+fidelity wiring, then the infidelity's tellability (`quebra.tellability_recipe`) on the same
+fidelity windows. The flags below are exactly what runs: configure_ramsey_job does not
 override them from the device.
 
 Fidelity uses the record's DECLARED Rabi frequency: one row of the declared table, keyed by
@@ -15,6 +16,7 @@ from quebra.core.dataset import Dataset
 from quebra.core.job import Job
 from quebra.recipes import configure_ramsey_job
 from quebra.schemas.track912 import track912Schema
+from quebra.tellability_recipe import wire_infidelity_tellability
 
 # The logical name and category. `include` resolves JOB_ID, so this
 # file can move without breaking any composite; recategorising costs one string edit.
@@ -37,7 +39,7 @@ rabi_table = Dataset(
     loader_kwargs={"comment": "#"},
 )
 
-configure_ramsey_job(
+refs = configure_ramsey_job(
     job,
     main_ds,
     profile="overnight",
@@ -45,3 +47,4 @@ configure_ramsey_job(
     rabi_table=rabi_table,
     figure_prefix=PREFIX,
 )
+wire_infidelity_tellability(job, refs, prefix=PREFIX)

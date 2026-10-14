@@ -247,9 +247,16 @@ FIDELITY_LADDER: tuple[tuple[str, float, bool], ...] = tuple(
 )
 
 
+# The floor infidelity is clipped at, so that its logarithm stays finite. One value for the
+# panel, the carve and tellability's clipped fraction.
+INFIDELITY_FLOOR = 1e-16
+
+
 def panel_series(result: FidelityResult) -> np.ndarray:
     """The infidelity series the panel and the carve both use (clipped identically)."""
-    return np.clip(result.frame["infidelity"].to_numpy(dtype=float), 1e-16, None)
+    return np.clip(
+        result.frame["infidelity"].to_numpy(dtype=float), INFIDELITY_FLOOR, None
+    )
 
 
 def make_panel_data(
@@ -283,7 +290,9 @@ def make_panel_data(
             ("f−fₘₑₐₙ", infidelity),
             (
                 "f−f₀",
-                np.clip(frame["infidelity_f0"].to_numpy(dtype=float), 1e-16, None),
+                np.clip(
+                    frame["infidelity_f0"].to_numpy(dtype=float), INFIDELITY_FLOOR, None
+                ),
             ),
         ]
 

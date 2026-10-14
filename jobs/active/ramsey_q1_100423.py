@@ -2,8 +2,9 @@
 
 One of the representative jobs kept in jobs/active. Iterate on this file, then fan it out.
 
-Shape: load -> configure_ramsey_job, which owns the filter, Allan and TLF wiring. Every
-analysis reads the filtered reads themselves. The threshold ladder and window carving belong
+Shape: load -> configure_ramsey_job, which owns the filter, Allan and TLF wiring, then the
+fitted frequency's tellability (`quebra.tellability_recipe`, no thresholds). Every analysis
+reads the filtered reads themselves. The threshold ladder and window carving belong
 to the t2star archetype, not here.
 
 No fidelity: an infidelity needs the Rabi frequency of the record, and the 6D2S records carry
@@ -17,6 +18,7 @@ from quebra.core.dataset import Dataset
 from quebra.core.job import Job
 from quebra.recipes import configure_ramsey_job
 from quebra.schemas.track912 import track912Schema
+from quebra.tellability_recipe import wire_frequency_tellability
 
 # The logical name and category. `include` resolves JOB_ID, so this
 # file can move without breaking any composite; recategorising costs one string edit.
@@ -37,7 +39,7 @@ main_ds = Dataset(
 
 main_node = job.load(main_ds)
 
-configure_ramsey_job(
+refs = configure_ramsey_job(
     job,
     main_node,
     profile="overnight",
@@ -46,3 +48,4 @@ configure_ramsey_job(
     allan_fractional=False,
     figure_prefix=PREFIX,
 )
+wire_frequency_tellability(job, refs, prefix=PREFIX)

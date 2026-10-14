@@ -48,6 +48,9 @@ OBSERVED_ANCESTORS = {
     "fidelity_windows",
     # `_ancestors` includes the checked node itself, so each checked kind is listed too.
     "allan",
+    "tellability_t2star",
+    "tellability_frequency",
+    "tellability_infidelity",
 }
 
 
@@ -172,9 +175,18 @@ def _allan_nodes(job: Job) -> list[str]:
     ]
 
 
+def _tellability_nodes(job: Job) -> list[str]:
+    # Same matching rule as `_windows_nodes`, and for the same reason: over-match.
+    return [
+        node_id
+        for node_id, node in job.dag.items()
+        if "tellability" in node.fn_name or "tellability" in node_id
+    ]
+
+
 def _checked_nodes(job: Job) -> list[str]:
     """Every node whose input must be observed reads. ONE selector for test and control."""
-    return _windows_nodes(job) + _allan_nodes(job)
+    return _windows_nodes(job) + _allan_nodes(job) + _tellability_nodes(job)
 
 
 def test_there_are_jobs_to_check() -> None:
@@ -213,6 +225,23 @@ def test_the_check_catches_a_resampled_allan_input() -> None:
 
     assert {node: _unexpected(job, node) for node in _checked_nodes(job)} == {
         "allan": {"interpolate"}
+    }
+
+
+def test_the_check_catches_a_resampled_tellability_input() -> None:
+    """Positive control for the tellability nodes, routed through the real selector."""
+
+    def _passthrough(*xs: object) -> object:
+        return xs[0]
+
+    job = Job("synthetic_bad_tellability_job")
+    job.job_file = REPO_ROOT / "jobs" / "active" / "__init__.py"
+    raw = job.step(_passthrough, name="filter")
+    resampled = job.step(_passthrough, raw, name="interpolate")
+    job.step(_passthrough, resampled, name="tellability_frequency")
+
+    assert {node: _unexpected(job, node) for node in _checked_nodes(job)} == {
+        "tellability_frequency": {"interpolate"}
     }
 
 
@@ -258,6 +287,14 @@ def test_the_guard_actually_matches_something() -> None:
     # The Allan selector can go dead the same way. Both Ramsey archetypes compute one.
     allan = {name: n for name, job in jobs.items() if (n := len(_allan_nodes(job)))}
     assert len(allan) >= 2, f"the allan matcher found fewer than two jobs: {allan}"
+    # So can the tellability selector: both T2* jobs and both Ramsey archetypes wire one.
+    told = {name for name, job in jobs.items() if _tellability_nodes(job)}
+    assert told >= {
+        "t2star_q1_070423",
+        "t2star_q1_100423",
+        "ramsey_q1_100423",
+        "ramsey_2x2_q1_030723",
+    }, f"the tellability matcher found {sorted(told)}"
 
 
 def test_the_check_catches_a_resampled_input_behind_a_dataset_suffix() -> None:
