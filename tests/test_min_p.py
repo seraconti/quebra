@@ -2,12 +2,14 @@
 
 Oracles:
 - hand enumeration of a two-member panel at B = 2, row by row;
-- a duplicated member: perfectly dependent members cost nothing, so the panel's p equals
-  the member's own p exactly, however large B is;
+- a duplicated member: an increasing copy of a member costs nothing, so the panel's p
+  equals the member's own p exactly, however large B is;
 - the checks' own permutation p (`checks._permutation.permutation_p_value`), which every
   member p must reproduce, ties included;
 - the bounds that hold for every input: the smallest member p <= the panel's p <= the
-  member count times it.
+  member count times it;
+- exchangeability: taking each row in turn as the observed one, no more than v (B + 1) rows
+  get a panel p of at most v, for every value v.
 """
 
 from __future__ import annotations
@@ -173,7 +175,7 @@ def test_min_p_is_a_leaf() -> None:
 def test_no_more_than_k_rows_reach_k_over_n(data) -> None:
     """Oracle: exchangeability, made deterministic. Under the null every row is equally
     likely to be the observed one, so the size claim holds iff, taking each row in turn as
-    the observed one, at most k rows get a panel p <= k / (B + 1), for every k."""
+    the observed one, at most v (B + 1) rows get a panel p <= v, for every value v."""
     table = np.array(data, dtype=float).T  # rows x members
     n_rows = table.shape[0]
     panel = []
@@ -181,5 +183,7 @@ def test_no_more_than_k_rows_reach_k_over_n(data) -> None:
         order = [r, *(i for i in range(n_rows) if i != r)]
         stats = {f"m{j}": table[order, j] for j in range(table.shape[1])}
         panel.append(min_p(stats).p_value)
-    for k in range(1, n_rows + 1):
-        assert sum(p <= k / n_rows + 1e-12 for p in panel) <= k
+    # At every value the panel p takes, not only on the 1 / (B + 1) grid: an off-grid p
+    # that rejects too often must fail here on its own.
+    for v in sorted(set(panel)) + [k / n_rows for k in range(1, n_rows + 1)]:
+        assert sum(p <= v + 1e-12 for p in panel) <= v * n_rows + 1e-9
