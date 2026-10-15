@@ -84,6 +84,14 @@ renames this group's columns onto `timestamp`/`frequency`, and `RamseySeriesSche
 result into a `Norm`. It is the default for `Dataset.schema=None` too, but no shipped job
 relies on that.
 
+**Rows a load drops are counted.** `job.load` records in `meta["n_rows_dropped_by_schema"]`
+how many rows a `validate` schema removed (0 when there is no `validate`), and
+`RamseySeriesSchema` records in `meta["n_rows_dropped_invalid"]` the rows it dropped for a
+non-finite timestamp or frequency. `track912Schema` drops every row with a missing fit field,
+the fit errors included. The T2*, fidelity and tellability results repeat both counts, so an
+artifact says how many of the file's rows never reached it. A `to_norm` schema of your own
+records what it drops under the same keys, or the counts read as not recorded.
+
 ## What `Dataset` carries
 
 ```python

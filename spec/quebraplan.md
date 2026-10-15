@@ -934,5 +934,6 @@ It is stated as an assumption, non-informative censoring, and is kept with 9.1.
 **What would have to be settled first.** The same as 9.1: whether anything data-side can be said
 about it, given that right-censoring shows only which of the window's end and the observation's
 stop came first, or whether the useful artifact is a sensitivity analysis. A test on the reads
-just before gaps would also have few gaps per record to work with, so its power would be low and
-a non-rejection would read as reassurance it does not give.
+just before gaps would work with as many gaps as a record has; whether that is enough for any
+power is an open question, not measured here, and a non-rejection would read as reassurance it
+does not give.

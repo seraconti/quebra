@@ -153,6 +153,6 @@ Two consequences for figures:
   counts it as a completed lifetime is wrong. Say which windows were excluded.
 - Nothing is drawn across a gap. The trace breaks; the timeline does not bridge it.
 
-A read whose error bar overlaps the threshold is **uncertain**, drawn in the washed tone
-of its crisp state. Uncertain is a statement about resolution, not about compliance -
+A read whose error bar overlaps the threshold, or that has no error bar, is **uncertain**,
+drawn in the washed tone of its crisp state. Uncertain is a statement about resolution, not about compliance -
 the window boundaries are identical with and without it.

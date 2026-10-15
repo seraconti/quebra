@@ -21,8 +21,9 @@ and the code disagree, the code is right and this page is stale.
   compliance states and damage.
 - **Side**: in spec (`SIDE_IN_SPEC = "in_spec"`) or out of spec (`"out_of_spec"`). The
   strings are the read states, so a side and the state of its reads are spelled one way.
-- The uncertain read states (`|margin| < k * sigma`) annotate reads and never move a window
-  boundary.
+- The uncertain read states (`|margin| < k * sigma`, or no sigma for the read: a read with no
+  sigma is never sure, `windows.confident_mask`) annotate reads and never move a window
+  boundary. The value picks the side: `in_spec_uncertain` or `out_of_spec_uncertain`.
 
 ## Windows
 
