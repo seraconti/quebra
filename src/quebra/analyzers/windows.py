@@ -156,8 +156,12 @@ def spacing(t_rel_s: np.ndarray, gap_mult: float = DEFAULT_GAP_MULT):
     step a gap and destroying every window. With fewer than two reads there is no spacing:
     the median is NaN and nothing is a gap.
 
-    Returns (median_spacing_s, gap_threshold_s, n_gaps, n_nonpositive_steps).
+    Returns (median_spacing_s, gap_threshold_s, n_gaps, n_nonpositive_steps). Raises
+    ValueError unless gap_mult is finite and positive: an infinite one makes the gap
+    threshold infinite, a zero one makes every step a gap.
     """
+    if not (np.isfinite(gap_mult) and gap_mult > 0.0):
+        raise ValueError(f"gap_mult must be finite and positive, got {gap_mult!r}")
     dt = np.diff(np.asarray(t_rel_s, dtype=float))
     if len(dt) == 0:
         return float("nan"), float("inf"), 0, 0
@@ -405,19 +409,29 @@ def margin(
     return threshold_value - values
 
 
+def check_k(k: float) -> float:
+    """Return the confidence level k, or raise ValueError unless it is finite and positive:
+    k = 0 would make every read confident. The one check: `confident_mask` and
+    `windows.run` both ask it."""
+    if not (np.isfinite(k) and k > 0.0):
+        raise ValueError(f"k must be finite and positive, got {k!r}")
+    return float(k)
+
+
 def confident_mask(margin_v: np.ndarray, sigma: np.ndarray, k: float) -> np.ndarray:
     """A read is confident at level k when its sigma is finite and |margin| >= k sigma.
 
     A read whose sigma is unknown is never confident. With `use_uncertainty`, the carve's
     uncertain reads are exactly the reads that are not confident, so a read with no sigma
-    is uncertain, its value picking the side. Raises ValueError unless k is finite and
-    positive: k = 0 would make every read confident.
+    is uncertain, its value picking the side. Raises ValueError on a bad k (`check_k`) and
+    on a negative sigma, which is no error bar.
     """
-    if not (np.isfinite(k) and k > 0.0):
-        raise ValueError(f"k must be finite and positive, got {k!r}")
+    check_k(k)
     m = np.asarray(margin_v, dtype=float)
     s = np.asarray(sigma, dtype=float)
     known = np.isfinite(s)
+    if np.any(s[known] < 0.0):
+        raise ValueError("a reported sigma is negative")
     out = np.zeros(m.shape, dtype=bool)
     out[known] = np.abs(m[known]) >= k * s[known]
     return out
@@ -641,6 +655,9 @@ def run(inputs: WindowsInputs) -> WindowsResult:
     RuntimeError when the windows fail the tiling or accounting check.
     """
     t_all = np.asarray(inputs.t_rel_s, dtype=float)
+    # k is recorded on the windows and read downstream, so it is checked whether or not
+    # this carve draws uncertainty.
+    check_k(inputs.k)
     if inputs.use_uncertainty and inputs.sigma is None:
         raise ValueError(
             "use_uncertainty=True requires a sigma array. A dataset with no error "

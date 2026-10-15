@@ -417,7 +417,11 @@ def test_inputs_that_contradict_themselves_raise_whatever_the_sigma_status(
     elif case == "negative-sigma":
         inputs = _inputs(t, q, -sigma)
     elif case == "zero-k":
-        inputs = _inputs(t, q, None, sigma_status="not declared", unsure_k=0.0)
+        # The carve refuses k = 0 itself, so the windows are carved at 1 and the step is
+        # told 0.
+        inputs = dataclasses.replace(
+            _inputs(t, q, None, sigma_status="not declared"), unsure_k=0.0
+        )
     elif case == "repeated-label":
         inputs = dataclasses.replace(
             _inputs(t, q, sigma), thresholds=(("u0", 0.0, True), ("u0", 0.0, True))

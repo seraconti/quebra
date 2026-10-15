@@ -207,6 +207,24 @@ def test_the_load_counts_reach_the_t2star_and_fidelity_results():
         assert {key: meta[key] for key in counts} == counts
 
 
+def test_a_count_the_load_did_not_record_stays_absent():
+    """Oracle: the norm's own meta. A norm without the load counts gives results without
+    them: absent means "not recorded", and a 0 would claim that nothing was dropped."""
+    from quebra.analyzers import fidelity, t2star
+
+    norm = {
+        "t_rel_s": np.arange(5, dtype=float) * 60.0,
+        "T2star_s": np.full(5, 3e-6),
+        "delta_hz": np.zeros(5),
+        "rabi_hz": np.full(5, 704e3),
+        "meta": {"dataset_id": "unit", "rabi_source": "declared"},
+    }
+    t2 = t2star.run(t2star.make_inputs_from_norm(norm))
+    fid = fidelity.run(fidelity.make_inputs_from_norm(norm, {}))
+    for meta in (t2.meta, fid.meta):
+        assert not {"n_rows_dropped_by_schema", "n_rows_dropped_invalid"} & set(meta)
+
+
 def test_the_default_normaliser_names_itself_and_the_way_out(semicolon_csv):
     """A wrong-shape error must point somewhere. The old one said only that the dataset
     "must contain 'timestamp' and 'frequency' columns", which reads as a hard requirement
