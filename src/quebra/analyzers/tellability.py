@@ -176,8 +176,15 @@ class SpectrumRows:
 
 
 def spectrum_rows(obs: ObservedReads) -> SpectrumRows:
-    """The spectrum on [1 / T, f_e], and its level at the edge (mean over the top 10%)."""
+    """The spectrum on [1 / T, f_e], and its level at the edge (mean over the top 10%).
+
+    Values of zero range have no spectrum: any power computed from them is rounding. The
+    range is read on the reads themselves, before repeated times are averaged, because an
+    average of equal values can differ from them in the last bit.
+    """
     _, edge = band_edges(obs)
+    if np.ptp(obs.values) == 0.0:
+        raise NotComputed("zero variance")
     t, q = collapse_repeated_times(obs.t_rel_s, obs.values)
     span = float(t[-1] - t[0])
     if span * edge < 1.0:
@@ -264,22 +271,22 @@ def second_difference_row(obs: ObservedReads) -> SecondDifferenceRow:
 @dataclass(frozen=True, slots=True)
 class G10Row:
     g10: float
-    alpha_hat: float
 
 
 def g10_row(obs: ObservedReads, rows: SpectrumRows) -> G10Row:
-    """Q2.3: G10 and alpha on the whole record."""
-    _, edge = band_edges(obs)
-    try:
-        ratio, alpha = spectrum.g10(rows.frequency_hz, rows.spectrum_per_hz, edge)
-    except ValueError as exc:
-        raise NotComputed("span shorter than 20 median spacings") from exc
-    return G10Row(g10=ratio, alpha_hat=alpha)
+    """Q2.3: G10 on the whole record. Fewer than ten grid frequencies (a span under 20
+    median spacings) is the one condition the record cannot answer; any other error from
+    `spectrum.g10` is raised."""
+    f = rows.frequency_hz
+    if f[-1] / 10.0 < f[0]:
+        raise NotComputed("span shorter than 20 median spacings")
+    return G10Row(g10=spectrum.g10(f, rows.spectrum_per_hz))
 
 
 def g10_halves(obs: ObservedReads) -> tuple[G10Row, G10Row]:
     """Q2.3 split in time: G10 of the first and second half of the reads, each on its own
-    span but up to the WHOLE record's band edge, so the halves read the same band."""
+    span but up to the WHOLE record's band edge, so the halves read the same band. A half
+    whose reads have zero range is not computed, as the whole record's spectrum is not."""
     _, edge = band_edges(obs)
     t, q = collapse_repeated_times(obs.t_rel_s, obs.values)
     half = (t.size + 1) // 2
@@ -288,10 +295,12 @@ def g10_halves(obs: ObservedReads) -> tuple[G10Row, G10Row]:
         span = float(ts[-1] - ts[0]) if ts.size > 1 else 0.0
         if span * edge < 10.0:
             raise NotComputed("span shorter than 20 median spacings")
+        in_half = (obs.t_rel_s >= ts[0]) & (obs.t_rel_s <= ts[-1])
+        if np.ptp(obs.values[in_half]) == 0.0:
+            raise NotComputed("zero variance")
         f = spectrum.frequency_grid(span, edge)
         s = spectrum.lomb_scargle_spectrum(ts, qs, f, obs.median_spacing_s)
-        ratio, alpha = spectrum.g10(f, s, edge)
-        out.append(G10Row(g10=ratio, alpha_hat=alpha))
+        out.append(G10Row(g10=spectrum.g10(f, s)))
     return out[0], out[1]
 
 
@@ -748,7 +757,7 @@ METRIC_GROUPS: dict[str, tuple[str, ...]] = {
         "value_sd",
         "second_difference_ratio",
     ),
-    "g10": ("g10", "alpha_hat"),
+    "g10": ("g10",),
     "g10_halves": ("g10_first_half", "g10_second_half"),
     "dependence": ("dependence",),
     "self_consistency": ("self_consistency",),
@@ -840,7 +849,6 @@ class MetricTellability(StaleArtifactGuard):
     value_sd: float | None
     second_difference_ratio: float | None
     g10: float | None
-    alpha_hat: float | None
     g10_first_half: float | None
     g10_second_half: float | None
     dependence: DependencePanel | None
@@ -1006,7 +1014,6 @@ def _metric_rows(
         value_sd=second.value_sd if second else None,
         second_difference_ratio=second.second_difference_ratio if second else None,
         g10=g10.g10 if g10 else None,
-        alpha_hat=g10.alpha_hat if g10 else None,
         g10_first_half=halves[0].g10 if halves else None,
         g10_second_half=halves[1].g10 if halves else None,
         dependence=panel,

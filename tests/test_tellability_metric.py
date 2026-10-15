@@ -142,17 +142,63 @@ def test_the_half_records_read_the_whole_records_band_edge() -> None:
     half = (t.size + 1) // 2
     for row, ts, qs in ((first, t[:half], q[:half]), (second, t[half:], q[half:])):
         f = spectrum.frequency_grid(ts[-1] - ts[0], edge)
-        expected, _ = spectrum.g10(
-            f, spectrum.lomb_scargle_spectrum(ts, qs, f, obs.median_spacing_s), edge
+        expected = spectrum.g10(
+            f, spectrum.lomb_scargle_spectrum(ts, qs, f, obs.median_spacing_s)
         )
         assert row.g10 == pytest.approx(expected, rel=1e-12)
     own_edge = 1.0 / (2.0 * 30.0)
     ts, qs = t[half:], q[half:]
     f_own = spectrum.frequency_grid(ts[-1] - ts[0], own_edge)
-    own, _ = spectrum.g10(
-        f_own, spectrum.lomb_scargle_spectrum(ts, qs, f_own, 30.0), own_edge
-    )
+    own = spectrum.g10(f_own, spectrum.lomb_scargle_spectrum(ts, qs, f_own, 30.0))
     assert not math.isclose(second.g10, own, rel_tol=0.05)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", [5.0, 0.1])
+def test_a_constant_record_has_no_spectrum(value: float) -> None:
+    """Oracle: specification. Equal values have a zero spectrum, so the rows read off it
+    are not computed rather than computed from rounding. 0.1 at repeated times also
+    checks the range is read before the repeated reads are averaged: three reads of 0.1
+    average to 0.10000000000000002."""
+    t = np.r_[np.arange(400) * 10.0, np.full(2, 3990.0)]
+    obs = _obs(np.sort(t), np.full(t.size, value))
+    with pytest.raises(tl.NotComputed) as excinfo:
+        tl.spectrum_rows(obs)
+    assert excinfo.value.reason == "zero variance"
+
+
+@pytest.mark.unit
+def test_a_half_with_constant_values_has_no_g10() -> None:
+    """Oracle: specification. The first half of the reads is exactly 0: the halves group
+    is not computed, and nothing escapes as a plain error."""
+    rng = np.random.default_rng(9)
+    t = np.arange(400) * 10.0
+    q = np.r_[np.zeros(200), rng.normal(size=200)]
+    with pytest.raises(tl.NotComputed) as excinfo:
+        tl.g10_halves(_obs(t, q))
+    assert excinfo.value.reason == "zero variance"
+
+
+@pytest.mark.unit
+def test_g10_is_not_computed_only_for_a_short_span(monkeypatch) -> None:
+    """Oracle: specification. Fewer than ten grid frequencies is the record's own limit;
+    any other error from `spectrum.g10` is a bug and is raised as itself."""
+    rng = np.random.default_rng(10)
+    short = _obs(np.arange(15) * 10.0, rng.normal(size=15))
+    with pytest.raises(tl.NotComputed) as excinfo:
+        tl.g10_row(short, tl.spectrum_rows(short))
+    assert excinfo.value.reason == "span shorter than 20 median spacings"
+
+    obs = _obs(np.arange(400) * 10.0, rng.normal(size=400))
+    rows = tl.spectrum_rows(obs)
+
+    def broken(*args, **kwargs):
+        raise ValueError("not a property of the record")
+
+    monkeypatch.setattr(tl.spectrum, "g10", broken)
+    with pytest.raises(ValueError, match="not a property") as excinfo:
+        tl.g10_row(obs, rows)
+    assert not isinstance(excinfo.value, tl.NotComputed)
 
 
 @pytest.mark.unit

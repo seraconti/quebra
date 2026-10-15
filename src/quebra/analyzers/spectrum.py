@@ -11,10 +11,13 @@ record's span T, from 1 / T up to f_e.
 - `lomb_scargle_spectrum(t, q, f, spacing_s)` is S(f) = 2 Delta_bar P(f), with P the
   floating-mean Lomb-Scargle power of the values. For white noise of variance sigma^2, P
   averages sigma^2, so S is the one-sided spectral density 2 sigma^2 Delta_bar, which
-  integrates to sigma^2 over [0, f_e]. Unweighted: the reported error bars do not enter.
+  integrates to sigma^2 over [0, f_e]. For a coloured process on irregular reads, S is the
+  density seen through the spectral window, which leaks power between frequencies; it is not
+  the density itself. Unweighted: the reported error bars do not enter.
 - `derivative_variance(f, S)` is L(f) = integral from 0 to f of (2 pi f')^2 S(f') df', and
-  `g10` is G10 = L(f_e) / L(f_e / 10) with alpha = 3 - log10 G10, which a power law
-  S ∝ f^-alpha (alpha < 3) gives exactly.
+  `g10` is G10 = L(f_top) / L(f_top / 10), f_top the last grid frequency. For the continuous
+  integral, a flat spectrum gives 1000 and S ∝ f^-2 gives 10. No exponent is derived from
+  G10: on irregular reads leakage biases it (see `g10`).
 
 These are the spectral rows of Sera's L0 specification (Q1.1, Q1.2, Q2.3); the specification
 names the estimator of S as a free choice, and Lomb-Scargle without interpolation is a
@@ -45,15 +48,27 @@ def spectral_window(
     - Assumption: none about the signal; W depends on the read times only.
       Diagnostic: not applicable.
       Consequence of violation: not applicable.
-      Reference: Deeming (1975), Fourier analysis with unequally-spaced data, and Shapiro
-      and Silverman (1960), as cited in Sera's L0 specification; no equation locator.
+      Reference: Deeming (1975), Astrophysics and Space Science 36, 137-158; Shapiro and
+      Silverman (1960), Journal of the Society for Industrial and Applied Mathematics 8(2),
+      225-248; Sera's L0 specification, section 3.1. No equation locator.
     """
     t = np.asarray(t_rel_s, dtype=float)
-    if t.size == 0:
-        raise ValueError("the spectral window needs at least one read time")
-    f = np.atleast_1d(np.asarray(frequency_hz, dtype=float))
+    if t.ndim != 1 or t.size == 0 or not np.all(np.isfinite(t)):
+        raise ValueError("the spectral window needs a 1-D array of finite read times")
+    # A scalar frequency is accepted: `window_at_first_alias` asks for one.
+    f = _check_frequencies(np.atleast_1d(np.asarray(frequency_hz, dtype=float)))
     phase = np.exp(-2j * np.pi * np.outer(f, t))
     return np.abs(phase.sum(axis=1)) ** 2 / t.size**2
+
+
+def _check_frequencies(f: np.ndarray) -> np.ndarray:
+    if f.ndim != 1 or f.size == 0:
+        raise ValueError(
+            f"frequencies must be a non-empty 1-D array, got shape {f.shape}"
+        )
+    if not (np.all(np.isfinite(f)) and np.all(f > 0.0)):
+        raise ValueError("frequencies must be finite and positive")
+    return f
 
 
 def frequency_grid(span_s: float, band_edge_hz: float) -> np.ndarray:
@@ -82,10 +97,11 @@ def lomb_scargle_spectrum(
     frequency_hz: np.ndarray,
     spacing_s: float,
 ) -> np.ndarray:
-    """S(f) = 2 Delta_bar P(f), the one-sided spectral density of the values.
+    """S(f) = 2 Delta_bar P(f): for white noise, the one-sided spectral density of the values.
 
     P is `scipy.signal.lombscargle` with a floating mean, evaluated at the angular
-    frequencies 2 pi f. Units: the values' unit squared per hertz.
+    frequencies 2 pi f. Units: the values' unit squared per hertz. Raises ValueError on
+    values of zero range: their spectrum is zero, and any power computed is rounding.
 
     Validity assumptions:
 
@@ -104,13 +120,15 @@ def lomb_scargle_spectrum(
     """
     t = np.asarray(t_rel_s, dtype=float)
     q = np.asarray(values, dtype=float)
-    f = np.asarray(frequency_hz, dtype=float)
+    f = _check_frequencies(np.asarray(frequency_hz, dtype=float))
     if t.shape != q.shape or t.ndim != 1:
         raise ValueError(
             f"times and values must be 1-D and aligned, got {t.shape}, {q.shape}"
         )
     if not (np.all(np.isfinite(t)) and np.all(np.isfinite(q))):
         raise ValueError("the spectrum needs finite times and values")
+    if q.size == 0 or np.ptp(q) == 0.0:
+        raise ValueError("zero variance: the values have zero range")
     if not (math.isfinite(spacing_s) and spacing_s > 0.0):
         raise ValueError(f"the spacing must be finite and positive, got {spacing_s!r}")
     # In chunks of frequencies, so the working arrays stay near _CHUNK_ELEMENTS elements
@@ -136,7 +154,18 @@ def derivative_variance(frequency_hz: np.ndarray, spectrum: np.ndarray) -> np.nd
     """L(f) = integral from 0 to f of (2 pi f')^2 S(f') df', at every grid frequency.
 
     The trapezoid rule over the grid, plus the piece from 0 to the first frequency with S
-    held at its first value. That piece is exact for a spectrum flat below 1 / T.
+    held at its first value.
+
+    Validity assumptions:
+
+    - Assumption: S is flat below the first grid frequency 1 / T.
+      Diagnostic: none shipped.
+      Consequence of violation: the head piece misstates L near the bottom of the grid. For
+      a spectrum falling as f^-2 it gives a third of the true piece, so at the shortest span
+      `g10` accepts (ten grid frequencies) G10 reads 28 where the continuous integral gives
+      10; with thousands of frequencies the error falls below 1e-3 (both pinned in
+      `test_spectrum.py`).
+      Reference: no source located.
     """
     f = np.asarray(frequency_hz, dtype=float)
     s = np.asarray(spectrum, dtype=float)
@@ -148,38 +177,44 @@ def derivative_variance(frequency_hz: np.ndarray, spectrum: np.ndarray) -> np.nd
     return head + np.concatenate(([0.0], np.cumsum(steps)))
 
 
-def g10(
-    frequency_hz: np.ndarray, spectrum: np.ndarray, band_edge_hz: float
-) -> tuple[float, float]:
-    """G10 = L(f_e) / L(f_e / 10) and alpha = 3 - log10 G10.
+def g10(frequency_hz: np.ndarray, spectrum: np.ndarray) -> float:
+    """G10 = L(f_top) / L(f_top / 10), f_top the last grid frequency.
 
-    L is read at the two frequencies by linear interpolation on the grid; the grid ends at
-    the last k / T below f_e, within 1 / T of it, and L(f_e) is read there. Raises
-    ValueError when f_e / 10 lies below the grid's first frequency, which needs a span of
-    at least 10 / f_e, or when L(f_e / 10) is not positive.
+    f_top lies within 1 / T below the band edge, and the decade below it is exact. L at
+    f_top / 10 is read by linear interpolation on the grid. Raises ValueError when f_top / 10
+    lies below the grid's first frequency (fewer than ten grid frequencies), or when
+    L(f_top / 10) is not positive.
+
+    G10 is reported as an indicator, never turned into a spectral exponent.
 
     Validity assumptions:
 
-    - Assumption: S follows a single power law f^-alpha across the top decade of the band,
-      with alpha < 3.
-      Diagnostic: the split-half G10 values beside it.
-      Consequence of violation: alpha is an effective exponent of that decade only; above
-      alpha near 2.5 the estimate saturates (Sera's L0 specification, Q2.3).
-      Reference: Sera's L0 specification, Q2.3; no equation locator.
+    - Assumption: the periodogram does not move power between frequencies, as on evenly
+      spaced reads.
+      Diagnostic: none shipped; W(f_s) measures folding from above the band edge, not
+      leakage inside the band.
+      Consequence of violation: on irregular reads, leakage moves G10 up for a spectrum
+      that falls across the band, so a small G10 means a red spectrum. A large G10 can be a
+      red spectrum read through leakage; on sparse, gappy schedules a red spectrum can read
+      close to white. A near-white spectrum with power near the band edge can read below
+      its truth, but stays large. `test_spectrum.py` pins both directions on a sparse,
+      gapped schedule.
+      Reference: no source located. Sera's L0 specification, section 4.3, reports its own
+      calibration on synthetic series (saturating for spectra steeper than about f^-2.5);
+      the read times of that calibration are not stated, and it is not reproduced here.
     """
-    f = np.asarray(frequency_hz, dtype=float)
-    lower = band_edge_hz / 10.0
+    f = _check_frequencies(np.asarray(frequency_hz, dtype=float))
+    lower = float(f[-1]) / 10.0
     if lower < f[0]:
         raise ValueError(
-            f"f_e / 10 = {lower:.6g} Hz lies below the first frequency {f[0]:.6g} Hz; "
+            f"f_top / 10 = {lower:.6g} Hz lies below the first frequency {f[0]:.6g} Hz; "
             f"the record spans too few read spacings for G10"
         )
     cumulative = derivative_variance(f, spectrum)
-    at_edge = float(cumulative[-1])
+    at_top = float(cumulative[-1])
     at_decade = float(np.interp(lower, f, cumulative))
     if not at_decade > 0.0:
         raise ValueError(
-            f"L(f_e / 10) = {at_decade!r} is not positive; G10 is undefined"
+            f"L(f_top / 10) = {at_decade!r} is not positive; G10 is undefined"
         )
-    ratio = at_edge / at_decade
-    return ratio, 3.0 - math.log10(ratio)
+    return at_top / at_decade
