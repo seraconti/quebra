@@ -20,6 +20,7 @@ from quebra.analyzers.fidelity import FidelityResult
 from quebra.analyzers.t2star import T2StarResult
 from quebra.analyzers.windows import WindowsResult
 from quebra.core.job import Job
+from quebra.core.types import LOAD_COUNT_KEYS
 
 # One seed and one permutation count for every dependence panel. B + 1 = 1000 stays well
 # above the panel's five members over alpha = 0.05 (`min_p`).
@@ -27,6 +28,12 @@ TELLABILITY_SEED = 20261014
 TELLABILITY_PERMUTATIONS = 999
 
 SIGMA_NOT_DERIVED = "not computed: sigma propagation not derived"
+
+
+def _load_counts(meta: Mapping[str, object]) -> dict[str, int]:
+    """The rows the load dropped, as the result or norm it came through recorded them."""
+    counts = {key: meta[key] for key in LOAD_COUNT_KEYS if key in meta}
+    return {key: int(value) for key, value in counts.items()}  # type: ignore[call-overload]
 
 
 def _thresholds(
@@ -65,6 +72,7 @@ def _t2star_tellability(
             clip_floor=None,
             n_permutations=n_permutations,
             seed=seed,
+            load_counts=_load_counts(result.meta),
         )
     )
 
@@ -78,13 +86,19 @@ def _frequency_tellability(
     n_permutations: int,
     seed: int,
 ) -> tellability.TellabilityResult:
-    meta = norm.get("meta", {})
+    meta = norm.get("meta")
+    dataset_id = (
+        str(meta.get("dataset_id") or "").strip() if isinstance(meta, Mapping) else ""
+    )
+    if not dataset_id:
+        raise KeyError(
+            "Tellability requires a non-empty meta['dataset_id'] in the normalized mapping: "
+            "the artifact names the record it describes."
+        )
     sigma = norm.get(sigma_key)
     return tellability.run(
         tellability.TellabilityInputs(
-            dataset_id=str(meta.get("dataset_id", ""))
-            if isinstance(meta, Mapping)
-            else "",
+            dataset_id=dataset_id,
             metric_key="frequency",
             value_key=value_key,
             t_rel_s=np.asarray(norm["t_rel_s"], dtype=float),
@@ -100,6 +114,7 @@ def _frequency_tellability(
             clip_floor=None,
             n_permutations=n_permutations,
             seed=seed,
+            load_counts=_load_counts(meta),
         )
     )
 
@@ -130,6 +145,7 @@ def _infidelity_tellability(
             clip_floor=clip_floor,
             n_permutations=n_permutations,
             seed=seed,
+            load_counts=_load_counts(result.meta),
         )
     )
 
