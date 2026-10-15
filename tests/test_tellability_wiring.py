@@ -7,8 +7,8 @@ Oracles:
 - the job graphs: every tellability node reads the windows its own job carved, at the same
   thresholds and under the same gap rule, is told the floor its metric was clipped at, and
   is materialised under its job's prefix;
-- the step functions: the record's id and the load's counts reach the artifact, and a
-  missing id is refused.
+- the step functions: the record's id and the load's counts reach the artifact (absent
+  counts as None), and a missing or blank id is refused.
 """
 
 from __future__ import annotations
@@ -27,8 +27,6 @@ from quebra.core.job import Job
 from quebra.core.paths import repo_root
 from quebra.recipes import configure_ramsey_job
 
-pytestmark = pytest.mark.policy
-
 TELLABILITY_MODULES = {
     "quebra.tellability_recipe",
     "quebra.analyzers.tellability",
@@ -44,6 +42,7 @@ def _job(stem: str):
     return _module(stem).job
 
 
+@pytest.mark.policy
 @pytest.mark.parametrize("stem", ["check_ledger_6d2s_q1", "km_with_checks_6d2s"])
 def test_jobs_without_tellability_do_not_carry_it_in_their_identity(stem) -> None:
     """Oracle: the identity closure itself. `recipes.py` must never import the tellability
@@ -54,6 +53,7 @@ def test_jobs_without_tellability_do_not_carry_it_in_their_identity(stem) -> Non
     assert not (closure & TELLABILITY_MODULES), sorted(closure & TELLABILITY_MODULES)
 
 
+@pytest.mark.policy
 @pytest.mark.parametrize(
     "stem, node, windows_node",
     [
@@ -73,6 +73,7 @@ def test_tellability_reads_its_own_jobs_windows(stem, node, windows_node) -> Non
     assert told.kwargs["gap_mult"] == carve.kwargs["gap_mult"]
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "stem, node",
     [
@@ -95,12 +96,14 @@ def test_each_tellability_node_is_materialised_under_its_jobs_prefix(
     assert names == {f"{module.PREFIX}_tellability"}
 
 
+@pytest.mark.integration
 def test_the_infidelity_step_is_told_the_floor_fidelity_clips_at() -> None:
     """Oracle: `fidelity.INFIDELITY_FLOOR`, the one constant both clip sites use."""
     told = _job("ramsey_2x2_q1_030723").dag["tellability_infidelity"]
     assert told.kwargs["clip_floor"] == fidelity.INFIDELITY_FLOOR
 
 
+@pytest.mark.integration
 def test_a_value_key_other_than_the_default_reaches_the_step() -> None:
     """Oracle: the caller's argument. A frequency tellability asked to read `delta_hz` is
     labelled with it, under the prefix it was given."""
@@ -135,6 +138,7 @@ def _frequency_norm(meta):
     }
 
 
+@pytest.mark.unit
 def test_the_frequency_step_names_its_record_and_repeats_the_load_counts() -> None:
     """Oracle: the norm's own meta. The record id and the load's counts reach the
     artifact; the value read is the one asked for."""
@@ -157,8 +161,30 @@ def test_the_frequency_step_names_its_record_and_repeats_the_load_counts() -> No
     assert (metric.n_rows_dropped_by_schema, metric.n_rows_dropped_invalid) == (2, 0)
 
 
+@pytest.mark.unit
+def test_a_count_the_load_did_not_record_reaches_the_artifact_as_none() -> None:
+    """Oracle: the norm's own meta, which records no load counts. The artifact says the
+    counts were not recorded; a 0 would claim that the load dropped nothing."""
+    result = tellability_recipe._frequency_tellability(
+        _frequency_norm({"dataset_id": "unit"}),
+        value_key="raw_frequency_hz",
+        sigma_key="frequency_error_hz",
+        gap_mult=10.0,
+        n_permutations=19,
+        seed=1,
+    )
+    metric = result.metric
+    assert (metric.n_rows_dropped_by_schema, metric.n_rows_dropped_invalid) == (
+        None,
+        None,
+    )
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
-    "meta", [{}, {"dataset_id": ""}, None], ids=["absent", "empty", "no-meta"]
+    "meta",
+    [{}, {"dataset_id": ""}, {"dataset_id": "  "}, None],
+    ids=["absent", "empty", "blank", "no-meta"],
 )
 def test_a_frequency_record_with_no_id_is_refused(meta) -> None:
     """Oracle: specification, as fidelity refuses it: an artifact must name its record."""
@@ -173,6 +199,7 @@ def test_a_frequency_record_with_no_id_is_refused(meta) -> None:
         )
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("metric", ["t2star", "infidelity"])
 def test_the_t2star_and_infidelity_steps_repeat_the_load_counts(metric) -> None:
     """Oracle: the result meta the load counts came through. Both steps hand them to the
