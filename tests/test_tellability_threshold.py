@@ -5,12 +5,14 @@ Oracles:
   turn, count kept pairs and down-crossings, average over the offsets; the exponent against
   an in-test least-squares fit. Independent identically distributed reads give gamma = 1 in
   expectation, as a statistical control.
-- Q3.4: a hand classification of every crossing of a built record, at k = 1 and 2.
+- Q3.4: a hand classification of every crossing of two built records, at k = 1 and 2.
 - Q4.1: hand counts of reads with a successor and transitions, in both forms; and 1 / beta
   for a two-state chain, as a ratio of expectations.
 - The in-spec fraction bounds: hand arithmetic, interval by interval; the carve's own
   fraction lies between them.
-- rho_k: (1 - alpha - beta)^k for a stationary two-state chain.
+- rho_k: (1 - alpha - beta)^k for a stationary two-state chain, and hand arithmetic on two
+  segments.
+- The ladder: L0's, section 4.2.
 """
 
 from __future__ import annotations
@@ -89,8 +91,9 @@ def test_the_count_exponent_on_a_hand_built_layout() -> None:
 def test_independent_reads_give_a_count_exponent_of_one() -> None:
     """Oracle: analytic, as a statistical control. Independent reads in spec with
     probability 0.3 have n / P = 0.21 at every m, so gamma = 1 in expectation on any layout.
-    Over 300 seeds of this generator gamma measured 1.0001 with sd 0.0054; 0.02 is about
-    four sd."""
+    Over seeds 0-299, each drawing the layout and the reads from `default_rng(seed)` as this
+    test does, gamma measured 1.0001 with sd 0.0054 and a largest deviation of 0.017; 0.02
+    is about four sd."""
     rng = np.random.default_rng(12)
     times, start = [], 0.0
     for length in rng.integers(50, 300, size=40):
@@ -125,6 +128,43 @@ def test_an_unanswerable_count_exponent_names_its_reason(t, ins, reason) -> None
     with pytest.raises(tl.NotComputed) as caught:
         tl.count_exponent_row(observed_reads(t, np.ones(t.size)), ins)
     assert caught.value.reason == reason
+
+
+@pytest.mark.unit
+def test_rungs_with_no_crossing_or_no_pair_leave_the_fit() -> None:
+    """Oracle: hand counts and an in-test least-squares fit. Three segments of twelve reads
+    alternating in, out, in, ...: a lag-m pair goes from in to out only for odd m, from an
+    even position i with i + m <= 11, so per segment 6, 5 and 4 pairs at m = 1, 3, 5, and
+    none at m = 2 or 8, which keep pairs; m = 13 and 20 keep none. With P_avg(m) =
+    3 (12 - m) / m, n_avg / P_avg is 18 / 33, 5 / 9 and 2.4 / 4.2 on the fitted rungs."""
+    t = np.concatenate([s * 1000.0 + np.arange(12) * 10.0 for s in range(3)])
+    ins = np.tile(np.arange(12) % 2 == 0, 3)
+    row = tl.count_exponent_row(observed_reads(t, np.ones(t.size)), ins)
+    assert row.rungs_excluded == (2, 8, 13, 20)
+    assert row.count_ratio[1] == 0.0 and row.count_ratio[4] == 0.0
+    assert row.count_ratio[5] is None and row.count_ratio[6] is None
+    x = np.log([1.0, 3.0, 5.0])
+    y = np.log([18.0 / 33.0, 5.0 / 9.0, 2.4 / 4.2])
+    slope = float(np.polyfit(x, y, 1)[0])
+    assert row.count_exponent == pytest.approx(1.0 - slope, rel=1e-12)
+
+
+@pytest.mark.unit
+def test_the_ladder_is_l0s() -> None:
+    """Oracle: Sera's L0 specification, section 4.2: fitted over m = 1, 2, 3, 5, 8, 13, 20."""
+    assert tl.DECIMATION_LADDER == (1, 2, 3, 5, 8, 13, 20)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("ladder", [(2, 3, 5), (1, 3, 2), (1, 1, 2), ()])
+def test_a_ladder_must_start_at_one_and_increase(ladder) -> None:
+    """Oracle: specification. The base rung and every ratio assume rung 1 first."""
+    with pytest.raises(ValueError, match="start at 1"):
+        tl.count_exponent_row(
+            observed_reads(np.arange(30.0), np.ones(30)),
+            np.ones(30, dtype=bool),
+            ladder,
+        )
 
 
 # --------------------------------------------------------------------------- Q3.4
@@ -170,6 +210,27 @@ def test_crossings_are_classed_by_their_confident_bracket(k, expected) -> None:
     t, v, sigma = _bracket_record()
     counts = tl.crossing_counts(observed_reads(t, v), v, sigma, k)
     assert (counts.clean, counts.merged, counts.unbracketed) == expected
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("k", [1, 2])
+def test_brackets_on_the_wrong_side_and_at_the_threshold(k) -> None:
+    """Oracle: hand classification, threshold 0, sigma 1, the same at k = 1 and 2.
+
+    G [-3, 0.5, -0.5, 3]: the bracket runs from -3 (out) to 3 (in): UNBRACKETED.
+    H [3, 0.5, -0.5, 3]: the bracket stays in, 3 to 3: UNBRACKETED.
+    I [3, 1.5, -0.5, -3, 3]: the bracket ends at -3, one crossing inside it; the up-crossing
+       after -3 is outside: CLEAN.
+    J [0, -3]: a read at the threshold is in spec, so 0 -> -3 is a crossing, and nothing
+       confident comes before it: UNBRACKETED. Read as out of spec it would be no crossing.
+    """
+    segments = [[-3, 0.5, -0.5, 3], [3, 0.5, -0.5, 3], [3, 1.5, -0.5, -3, 3], [0.0, -3]]
+    t = np.concatenate(
+        [s * 1000.0 + np.arange(len(seg)) * 10.0 for s, seg in enumerate(segments)]
+    )
+    v = np.concatenate([np.asarray(seg, dtype=float) for seg in segments])
+    counts = tl.crossing_counts(observed_reads(t, v), v, np.ones(v.size), k)
+    assert (counts.clean, counts.merged, counts.unbracketed) == (1, 0, 3)
 
 
 # --------------------------------------------------------------------------- Q4.1
@@ -222,7 +283,8 @@ def test_the_mean_run_of_a_chain_is_one_over_beta() -> None:
     """Oracle: analytic, as a ratio of expectations. Each in-spec read with a successor
     leaves with probability beta, so E[reads with successor] / E[exits] = 1 / beta = 10,
     whatever the segment length. An inverted margin reads the out-of-spec runs, 1 / alpha
-    = 3.3. Over 40 seeds the estimate measured 10.005 with sd 0.19; 0.8 is about four sd."""
+    = 3.3. Over seeds 0-39, each drawing the chain from `default_rng(seed)`, the estimate
+    measured 10.005 with sd 0.19 and a largest deviation of 0.40; 0.8 is about four sd."""
     t, x = _stationary_chain(np.random.default_rng(13))
     row = tl.run_length_row(_windows(t, np.where(x, 1.0, -1.0)), x)
     assert abs(row.mean_in_spec_run_reads - 10.0) < 0.8
@@ -258,6 +320,18 @@ def test_the_in_spec_fraction_bounds_by_hand(k, lower, upper) -> None:
 
 
 @pytest.mark.unit
+def test_a_read_with_no_sigma_unsettles_the_interval_it_holds() -> None:
+    """Oracle: hand arithmetic on `_bounds_record` with the first read's sigma unknown: its
+    interval [0, 10), settled in at k = 1, unsettles, so the lower bound loses 10 s and the
+    upper keeps them: 10 / 130 and 100 / 130."""
+    t, v, sigma = _bounds_record()
+    sigma[0] = np.nan
+    b = tl.in_spec_fraction_bounds(observed_reads(t, v), v, sigma, 1.0)
+    assert b.in_spec_fraction_lower == pytest.approx(10.0 / 130.0, rel=1e-15)
+    assert b.in_spec_fraction_upper == pytest.approx(100.0 / 130.0, rel=1e-15)
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("record", ["bounds", "brackets"])
 def test_the_carve_fraction_lies_between_the_bounds(record) -> None:
     """Oracle: the carve's own time-weighted in-spec fraction, its in-spec durations over
@@ -277,15 +351,30 @@ def test_the_carve_fraction_lies_between_the_bounds(record) -> None:
 @pytest.mark.statistical
 def test_rho_k_of_a_stationary_chain_decays_as_a_power() -> None:
     """Oracle: analytic. A stationary two-state chain has rho_k = (1 - alpha - beta)^k, here
-    0.6^k. Restarting every 20-read segment from the stationary law keeps it stationary
-    inside a segment; a pair across a gap pairs independent segments and pulls rho_1 to
-    about 0.57. Over 40 seeds rho_1 measured 0.599 (sd 0.006) and rho_3 0.215 (sd 0.009);
-    0.025 is about four sd at lag 3."""
-    t, x = _stationary_chain(np.random.default_rng(14))
+    0.6^k. Restarting every 5-read segment from the stationary law keeps it stationary
+    inside a segment, and the array stops at lag 4. A pair across a gap pairs independent
+    segments, which short segments make frequent: it moves rho_1 to about 0.48. Over seeds
+    0-39, each drawing the chain from `default_rng(seed)`, the deviation from 0.6^k stayed
+    under 0.012, 0.020 and 0.029 at lags 1-3 (sd up to 0.011), and the cross-gap version's
+    above 0.11 at every lag; 0.045 is about four sd at lag 3."""
+    t, x = _stationary_chain(np.random.default_rng(14), length=5, n_segments=8000)
     rho = tl.in_spec_autocorr(observed_reads(t, np.ones(t.size)), x)
-    assert len(rho) == tl.MAX_AUTOCORR_LAG
+    assert len(rho) == 4
     for lag in (1, 2, 3):
-        assert abs(rho[lag - 1] - 0.6**lag) < 0.025
+        assert abs(rho[lag - 1] - 0.6**lag) < 0.045
+
+
+@pytest.mark.unit
+def test_rho_k_by_hand_on_two_segments() -> None:
+    """Oracle: hand arithmetic. Segments [1, 1, 0] and, after a gap, [0, 0, 0, 1]: A = 3/7,
+    A (1 - A) = 12/49. Centred values 4/7 or -3/7; the within-segment products sum to 10/49
+    over 5 pairs at lag 1, -15/49 over 3 at lag 2, -12/49 over 1 at lag 3; no segment holds a
+    lag-4 pair. So rho = (1/6, -5/12, -1): one record-wide centre and divisor, not one per
+    lag, and the array stops at lag 3."""
+    t = np.r_[np.arange(3) * 10.0, 1000.0 + np.arange(4) * 10.0]
+    x = np.array([1, 1, 0, 0, 0, 0, 1], dtype=bool)
+    rho = tl.in_spec_autocorr(observed_reads(t, np.ones(t.size)), x)
+    np.testing.assert_allclose(rho, [1.0 / 6.0, -5.0 / 12.0, -1.0], rtol=1e-12)
 
 
 @pytest.mark.unit
@@ -315,8 +404,39 @@ def test_the_run_length_ratio_and_rho_1_agree_on_a_chain() -> None:
             ),
             "no in-to-out transition within a segment",
         ),
+        (
+            lambda: tl.in_spec_autocorr(
+                observed_reads(np.arange(4.0) * 10.0, np.ones(4), gap_mult=0.5),
+                np.array([1, 0, 1, 0], dtype=bool),
+            ),
+            "no segment with at least 2 reads",
+        ),
+        (
+            lambda: tl.crossing_counts(
+                observed_reads(np.arange(4.0), np.ones(4)),
+                np.array([1.0, -1.0, 1.0, -1.0]),
+                np.full(4, np.nan),
+                1,
+            ),
+            "no read with a finite sigma",
+        ),
+        (
+            lambda: tl.in_spec_fraction_bounds(
+                observed_reads(np.arange(4.0), np.ones(4)),
+                np.array([1.0, -1.0, 1.0, -1.0]),
+                np.full(4, np.nan),
+                1.0,
+            ),
+            "no read with a finite sigma",
+        ),
     ],
-    ids=["rho-constant", "no-exit"],
+    ids=[
+        "rho-constant",
+        "no-exit",
+        "rho-one-read-segments",
+        "brackets-no-sigma",
+        "bounds-no-sigma",
+    ],
 )
 def test_an_unanswerable_threshold_row_names_its_reason(call, reason) -> None:
     """Oracle: specification."""

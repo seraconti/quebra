@@ -6,10 +6,13 @@ Oracles:
   the spacing on a regular grid and 550 / 19 s on seven 10 s and three 40 s spacings;
 - analytic: the spectral window is 1 at the first alias of a perfect lattice;
 - simulation truth: white noise whose per-read sigma is known gives a noise floor equal to
-  the edge level, and a linear trend plus white noise gives a second-difference scale equal
-  to sigma;
-- hand arithmetic for the gap rule, repeated times, the clipped fraction and the half
-  records' band edge.
+  the edge level (four times it when sigma is reported twice too large), a linear trend plus
+  white noise gives a second-difference scale equal to sigma, and the second-difference
+  ratio is 1 for white noise and small for a slow signal;
+- hand arithmetic for the gap rule, repeated times, a three-read segment, the clipped
+  fraction and the half records' band edge;
+- the convention page for repeated times: the spectrum and the halves average them, the
+  spectral window counts every read, and sigma collapses to the sigma of the mean.
 """
 
 from __future__ import annotations
@@ -73,9 +76,10 @@ def test_the_noise_floor_matches_the_edge_for_white_noise_with_known_sigma() -> 
     S = 2 mean(sigma^2) Delta_bar everywhere, so floor / S(f_e) is 1.
 
     Half the reads have sigma 0.2 and half 2.0, so a floor built from mean(sigma)^2 instead
-    of mean(sigma^2) reads 1.21 / 2.02, about 0.6. Over 60 seeds of this generator the ratio
-    measured 0.9935 on average with sd 0.064 and a largest deviation of 0.21, and that
-    mutant at most 0.71; 0.25 is about four sd. The mean over about 300 edge ordinates also
+    of mean(sigma^2) reads 1.21 / 2.02, about 0.6. Over seeds 0-59, each drawing the times,
+    sigma and the noise from `default_rng(seed)` as this test does, the ratio measured
+    0.9935 on average with sd 0.064 and a largest deviation of 0.21, and that mutant at most
+    0.71; 0.25 is about four sd. The mean over about 300 edge ordinates also
     carries the +1/K bias of a reciprocal, near 0.3% here and inside the tolerance.
     """
     rng = np.random.default_rng(4)
@@ -91,14 +95,132 @@ def test_the_noise_floor_matches_the_edge_for_white_noise_with_known_sigma() -> 
 def test_the_second_difference_scale_recovers_sigma_under_a_steep_trend() -> None:
     """Oracle: simulation truth. Second differences weighted for the spacing are zero on a
     linear trend, so a trend plus white noise of sd 0.5 gives sigma_hat = 0.5. Equal-spacing
-    weights leave part of the trend in on irregular reads: over 100 seeds the right scale
-    measured 0.998 sigma on average (sd 0.013) and the equal-weight one 1.116 sigma; 5% is
-    about four sd."""
+    weights leave part of the trend in on irregular reads: over seeds 0-99, each drawing the
+    times and the noise from `default_rng(seed)` as this test does, the right scale measured
+    0.9989 sigma on average (sd 0.011) and the equal-weight one 1.118 sigma; 5% is about
+    four sd."""
     rng = np.random.default_rng(6)
     n = 6000
     t = np.r_[0.0, np.cumsum(rng.uniform(10.0, 40.0, size=n - 1))]
     obs = _obs(t, 0.05 * t + rng.normal(scale=0.5, size=n))
     assert tl.second_difference_scale(obs) == pytest.approx(0.5, rel=0.05)
+
+
+def _skewed_times(rng: np.random.Generator, n: int) -> np.ndarray:
+    """Spacings of 10 s (70%) and 40 s (30%): median 10 s, Delta_eff about 28.9 s."""
+    return np.r_[0.0, np.cumsum(np.where(rng.random(n - 1) < 0.7, 10.0, 40.0))]
+
+
+@pytest.mark.statistical
+def test_a_sigma_reported_twice_too_large_reads_a_noise_floor_ratio_of_four() -> None:
+    """Oracle: arithmetic on the white level. White noise of sd 1 reported as 2 has a floor
+    of 2 x 4 x Delta_bar against an edge level of 2 x 1 x Delta_bar: a ratio of 4, read
+    the same whatever Delta_bar is, since floor and spectrum share it. Inverted it reads
+    1/4; on these skewed spacings a floor taken on Delta_eff instead of the median spacing
+    reads about 11.6. The tolerance is the white-noise test's 25%."""
+    rng = np.random.default_rng(31)
+    t = _skewed_times(rng, 6000)
+    obs = _obs(t, rng.normal(size=t.size), sigma=np.full(t.size, 2.0))
+    _, ratio = tl.noise_floor_ratio(obs, tl.spectrum_rows(obs), obs.sigma)
+    assert ratio == pytest.approx(4.0, rel=0.25)
+
+
+@pytest.mark.statistical
+def test_the_edge_level_is_the_top_tenth_of_the_band_not_the_whole_band() -> None:
+    """Oracle: arithmetic on a known spectrum. White noise of sd 1, reported as 1, plus a
+    sine of variance 8 on the fifth grid frequency: the top tenth of the band holds the
+    white level alone, so the ratio is near 1, where the band's mean level also holds the
+    sine's variance, (1 + 8) / f_e against 1 / f_e, a ratio near 1/9. The reads are evenly
+    spaced: on irregular reads the sine would leak into the top tenth (`spectrum.g10`)."""
+    rng = np.random.default_rng(32)
+    t = np.arange(6000) * 24.0
+    f0 = 5.0 / (t[-1] - t[0])
+    q = rng.normal(size=t.size) + 4.0 * np.sin(2.0 * np.pi * f0 * t)
+    obs = _obs(t, q, sigma=np.ones(t.size))
+    _, ratio = tl.noise_floor_ratio(obs, tl.spectrum_rows(obs), obs.sigma)
+    assert ratio == pytest.approx(1.0, rel=0.25)
+
+
+@pytest.mark.statistical
+@pytest.mark.parametrize("signal", ["white", "slow"])
+def test_the_second_difference_ratio_reads_where_the_variance_lives(
+    signal: str,
+) -> None:
+    """Oracle: simulation truth. For white noise sigma_hat_D2 estimates sd(q), so the ratio
+    is 1 (5%, the scale test's tolerance). For a slow sine of amplitude 3 plus noise of sd
+    0.1, sigma_hat_D2 is 0.1 and sd(q) about 2.1, a ratio near 0.05; inverted it would read
+    about 21."""
+    rng = np.random.default_rng(33)
+    t = np.r_[0.0, np.cumsum(rng.uniform(10.0, 40.0, size=5999))]
+    if signal == "white":
+        q = rng.normal(size=t.size)
+    else:
+        q = 3.0 * np.sin(2.0 * np.pi * t / 5e4) + rng.normal(scale=0.1, size=t.size)
+    ratio = tl.second_difference_row(_obs(t, q)).second_difference_ratio
+    if signal == "white":
+        assert ratio == pytest.approx(1.0, rel=0.05)
+    else:
+        assert ratio < 0.1
+
+
+@pytest.mark.unit
+def test_a_three_read_segment_gives_its_one_residual() -> None:
+    """Oracle: hand arithmetic. Reads at 0, 10 and 30 s of 0, 5 and 1: a = 20 / 30,
+    b = 10 / 30, residual a 0 + b 1 - 5 = -14/3, weight 1 / (a^2 + b^2 + 1) = 9 / 14, so
+    sigma_hat^2 = (196 / 9) (9 / 14) = 14."""
+    obs = _obs([0.0, 10.0, 30.0], [0.0, 5.0, 1.0])
+    assert tl.second_difference_scale(obs) == pytest.approx(math.sqrt(14.0), rel=1e-12)
+
+
+@pytest.mark.unit
+def test_repeated_times_collapse_for_the_spectrum_and_halves_but_not_the_window() -> (
+    None
+):
+    """Oracle: the convention page. The spectrum and the halves see repeated reads averaged
+    to one; the spectral window counts every read."""
+    rng = np.random.default_rng(15)
+    times = np.r_[0.0, np.cumsum(rng.uniform(10.0, 40.0, size=399))]
+    t = np.sort(np.r_[times, times[::7]])
+    q = rng.normal(size=t.size)
+    obs = _obs(t, q)
+    collapsed = _obs(*tl.collapse_repeated_times(t, q))
+    np.testing.assert_allclose(
+        tl.spectrum_rows(obs).spectrum_per_hz,
+        tl.spectrum_rows(collapsed).spectrum_per_hz,
+        rtol=1e-12,
+    )
+    assert tl.g10_halves(obs) == tl.g10_halves(collapsed)
+    first_alias, _ = tl.band_edges(obs)
+    every_read = spectrum.spectral_window(t, first_alias)[0]
+    assert tl.window_at_first_alias(obs) == every_read
+    assert every_read != spectrum.spectral_window(collapsed.t_rel_s, first_alias)[0]
+
+
+@pytest.mark.unit
+def test_sigma_collapses_to_the_sigma_of_the_mean() -> None:
+    """Oracle: hand arithmetic. Reads of sigma 3 and 4 at one time make a read of sigma
+    sqrt(9 + 16) / 2 = 2.5; a group holding a read with no sigma has none."""
+    t = np.array([0.0, 10.0, 10.0, 20.0, 30.0, 30.0])
+    sigma = np.array([1.0, 3.0, 4.0, 2.0, 1.0, np.nan])
+    out = tl.collapse_repeated_sigma(t, sigma)
+    np.testing.assert_array_equal(out[:3], [1.0, 2.5, 2.0])
+    assert np.isnan(out[3])
+
+
+@pytest.mark.statistical
+def test_doubled_reads_keep_the_noise_floor_and_the_sigma_bound_at_one() -> None:
+    """Oracle: simulation truth. Every time read twice, white noise of sd 1 reported as 1:
+    the averaged reads have sd 1 / sqrt(2), and so does the sigma of their mean, so Q1.2
+    and Q3.3 both read 1 (the white tolerance, 25%). Taking sigma read by read would put
+    Q1.2 near 2 and Q3.3 near 1.4."""
+    rng = np.random.default_rng(34)
+    times = np.r_[0.0, np.cumsum(rng.uniform(10.0, 40.0, size=2999))]
+    t = np.repeat(times, 2)
+    sigma = np.ones(t.size)
+    obs = _obs(t, rng.normal(size=t.size), sigma=sigma)
+    _, ratio = tl.noise_floor_ratio(obs, tl.spectrum_rows(obs), sigma)
+    assert ratio == pytest.approx(1.0, rel=0.25)
+    assert tl.sigma_bound_ratio(obs, sigma) == pytest.approx(1.0, rel=0.1)
 
 
 @pytest.mark.unit

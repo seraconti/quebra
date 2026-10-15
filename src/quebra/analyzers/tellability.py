@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Callable
+import dataclasses
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TypeVar
 
@@ -39,6 +40,7 @@ from quebra.analyzers.windows import (
     observed_reads,
 )
 from quebra.core._artifact_guard import StaleArtifactGuard
+from quebra.core.types import LOAD_COUNT_KEYS
 
 # ---------------------------------------------------------------------------
 # Status vocabulary
@@ -69,7 +71,7 @@ _REASON_PATTERNS = tuple(
 
 def check_reason(reason: str) -> str:
     """Return `reason` if it matches one of `REASON_TEMPLATES`, or raise ValueError."""
-    if not any(pattern.match(reason) for pattern in _REASON_PATTERNS):
+    if not any(pattern.fullmatch(reason) for pattern in _REASON_PATTERNS):
         raise ValueError(
             f"{reason!r} is not a tellability reason; the set is {REASON_TEMPLATES}"
         )
@@ -109,6 +111,23 @@ def collapse_repeated_times(
     sums = np.bincount(inverse, weights=q)
     counts = np.bincount(inverse)
     return unique, sums / counts
+
+
+def collapse_repeated_sigma(t_rel_s: np.ndarray, sigma: np.ndarray) -> np.ndarray:
+    """The sigma of each read `collapse_repeated_times` makes: that of a mean of m reads,
+    sqrt(sum sigma_i^2) / m, and unknown (NaN) when any read of the group has no sigma, as
+    a read with no sigma is never sure (`windows.confident_mask`)."""
+    t = np.asarray(t_rel_s, dtype=float)
+    s = np.asarray(sigma, dtype=float)
+    unique, inverse = np.unique(t, return_inverse=True)
+    if unique.size == t.size:
+        return s
+    known = np.isfinite(s)
+    counts = np.bincount(inverse)
+    sum_sq = np.bincount(inverse, weights=np.where(known, s * s, 0.0))
+    out = np.sqrt(sum_sq) / counts
+    out[np.bincount(inverse, weights=~known) > 0] = np.nan
+    return out
 
 
 def mean_sigma_squared(sigma: np.ndarray) -> float:
@@ -206,9 +225,24 @@ def noise_floor_ratio(
 
     Independent per-read errors of variance sigma_i^2 contribute the flat one-sided density
     2 sigma_bar^2 Delta_bar; a ratio near 1 says the edge is instrument noise, one above 1
-    that the reported sigma exceeds what the spectrum shows there.
+    that the reported sigma exceeds what the spectrum shows there. sigma_bar^2 is taken on
+    the reads the spectrum sees: repeated times are collapsed, each to the sigma of its mean.
+
+    Validity assumptions:
+
+    - Assumption: the per-read errors are independent, with the reported variances.
+      Diagnostic: the self-consistency row (Q3.2) and the dependence panel (Q3.0).
+      Consequence of violation: correlated errors are not flat, and a misreported sigma
+      moves the floor by the same factor as the ratio.
+      Reference: Sera's L0 specification, section 3.2; no equation locator.
+    - Assumption: the edge level is the spectrum at the edge.
+      Diagnostic: none shipped.
+      Consequence of violation: on irregular reads the edge level holds power leaked from
+      lower frequencies (`spectrum.g10`), so a ratio below 1 can be leakage, not signal.
+      Reference: no source located.
     """
-    floor = 2.0 * mean_sigma_squared(sigma) * obs.median_spacing_s
+    sigma_c = collapse_repeated_sigma(obs.t_rel_s, sigma)
+    floor = 2.0 * mean_sigma_squared(sigma_c) * obs.median_spacing_s
     if not rows.edge_level_per_hz > 0.0:
         raise NotComputed("zero variance")
     return floor, floor / rows.edge_level_per_hz
@@ -258,9 +292,10 @@ class SecondDifferenceRow:
 def second_difference_row(obs: ObservedReads) -> SecondDifferenceRow:
     """Q2.1: sigma_hat_D2 / sd(q), the share of the variance between adjacent reads."""
     scale = second_difference_scale(obs)
-    sd = float(np.std(obs.values, ddof=1)) if obs.values.size > 1 else 0.0
-    if not sd > 0.0:
+    # Zero range, not sd > 0: equal values can give an sd of rounding, 1e-17 and not 0.
+    if np.ptp(obs.values) == 0.0:
         raise NotComputed("zero variance")
+    sd = float(np.std(obs.values, ddof=1))
     return SecondDifferenceRow(
         second_difference_scale=scale,
         value_sd=sd,
@@ -305,7 +340,7 @@ def g10_halves(obs: ObservedReads) -> tuple[G10Row, G10Row]:
 
 
 def clipped_fraction(values: np.ndarray, floor: float | None) -> float:
-    """The fraction of reads at the metric's floor (infidelity is clipped at one)."""
+    """The fraction of reads at the metric's floor, the value it is clipped at."""
     if floor is None:
         raise NotComputed("no floor for this metric")
     q = np.asarray(values, dtype=float)
@@ -341,10 +376,13 @@ class DependencePanel:
 def paired_values(
     values: np.ndarray, sigma: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
-    """The (q, sigma) pairs whose sigma is finite."""
+    """The (q, sigma) pairs whose sigma is finite. A negative sigma is refused: it is no
+    error bar, and the decile spread divides by the mean sigma."""
     q = np.asarray(values, dtype=float)
     s = np.asarray(sigma, dtype=float)
     keep = np.isfinite(q) & np.isfinite(s)
+    if np.any(s[keep] < 0.0):
+        raise ValueError("a reported sigma is negative")
     if not np.any(keep):
         raise NotComputed("no read with a finite sigma")
     return q[keep], s[keep]
@@ -371,6 +409,9 @@ def dependence_statistics(
       it measures how far sigma is a function of q (`scipy.stats.chatterjeexi(q, sigma)`).
     - `distance_correlation`: `dcor.distance_correlation`, its O(n log n) merge-sort method.
     - `decile_spread`: (largest - smallest mean sigma over the ten deciles of q) / mean sigma.
+      Its decile means are sums of floats, so two rows that tie as sets of reads can differ
+      in the last bit and a tie is counted against only up to rounding; a continuous sigma,
+      as the records report, does not tie.
     """
     n = q.size
     rows = np.vstack([np.arange(n), np.asarray(permutations, dtype=int)])
@@ -442,7 +483,7 @@ def dependence_panel(
     q, s = paired_values(values, sigma)
     if q.size < 10:
         raise NotComputed("fewer than 10 reads")
-    if not (np.std(q) > 0.0 and np.std(s) > 0.0):
+    if np.ptp(q) == 0.0 or np.ptp(s) == 0.0:
         raise NotComputed("zero variance")
     rng = np.random.default_rng(seed)
     permutations = np.vstack([rng.permutation(q.size) for _ in range(n_permutations)])
@@ -460,17 +501,27 @@ def dependence_panel(
 def self_consistency(values: np.ndarray, sigma: np.ndarray) -> float:
     """Q3.2: (v - mean(sigma^2)) / v, with v the observed variance of q.
 
-    Independent additive noise can only add variance, so a negative value says the reported
-    error bars are larger than the scatter they describe. It is a statement about the
-    reporting, not a measurement of the noise.
+    v is the variance with ddof = 1 over every read with a finite value; mean(sigma^2) is
+    over the reads whose sigma is finite. Independent additive noise can only add
+    variance, so a negative value says the reported error bars are larger than the scatter
+    they describe. It is a statement about the reporting, not a measurement of the noise.
+
+    Validity assumptions:
+
+    - Assumption: sigma is independent of the value it accompanies, and the noise is
+      additive.
+      Diagnostic: the dependence panel (Q3.0).
+      Consequence of violation: the row is computed but not interpretable.
+      Reference: Sera's L0 specification, section 5.3, which makes the row conditional on
+      the independence of sigma (section 5.2); no equation locator.
     """
     q = np.asarray(values, dtype=float)
     q = q[np.isfinite(q)]
     if q.size < 2:
         raise NotComputed("fewer than 2 reads")
-    v = float(np.var(q, ddof=1))
-    if not v > 0.0:
+    if np.ptp(q) == 0.0:
         raise NotComputed("zero variance")
+    v = float(np.var(q, ddof=1))
     return (v - mean_sigma_squared(sigma)) / v
 
 
@@ -478,12 +529,22 @@ def sigma_bound_ratio(obs: ObservedReads, sigma: np.ndarray) -> float:
     """Q3.3: sigma_bar / sigma_hat_D2, with sigma_bar^2 = mean(sigma_i^2).
 
     sigma_hat_D2 counts curvature between reads as noise, so it bounds the error sd from
-    above; a ratio above 1 says the reported sigma exceeds that bound.
+    above; a ratio above 1 says the reported sigma exceeds that bound. Both sides are taken
+    on the reads with repeated times collapsed, each to the sigma of its mean.
+
+    Validity assumptions:
+
+    - Assumption: sigma is independent of the value it accompanies.
+      Diagnostic: the dependence panel (Q3.0).
+      Consequence of violation: the row is computed but not interpretable.
+      Reference: Sera's L0 specification, section 5.4, which makes the row conditional on
+      the independence of sigma (section 5.2); no equation locator.
     """
     bound = second_difference_scale(obs)
-    if not bound > 0.0:
+    if np.ptp(obs.values) == 0.0 or not bound > 0.0:
         raise NotComputed("zero variance")
-    return math.sqrt(mean_sigma_squared(sigma)) / bound
+    sigma_c = collapse_repeated_sigma(obs.t_rel_s, sigma)
+    return math.sqrt(mean_sigma_squared(sigma_c)) / bound
 
 
 # ---------------------------------------------------------------------------
@@ -518,13 +579,15 @@ def count_exponent_row(
     spec to out of spec) / m and P_avg(m) = sum over segments of (L_s - min(m, L_s)) / m.
     gamma = 1 - the least-squares slope of log(n_avg / P_avg) on log m.
 
-    Under independent identically distributed reads n / P is the same at every m, so gamma
-    is 1, exactly in expectation, on any layout. A smooth signal crossing at random points
-    of the within-segment intervals gives 0 in expectation. When every crossing lies at
-    least the largest m reads from both ends of its segment, n_avg(m) is the number of
-    crossings and gamma is the slope of log sum_s (L_s - min(m, L_s)) on log m, which is
-    negative; a crossing nearer a segment end is kept by fewer offsets, which pulls gamma
-    toward 1. On a gapless record gamma equals L0's count exponent up to O(m / N).
+    Under independent identically distributed reads E[n] / P is the same at every m, on any
+    layout, so gamma is 1 to first order: the fit is on the logs of the counts, not of
+    their expectations. A smooth signal whose crossings land at random points of the
+    within-segment intervals, more than the largest m reads apart, gives 0 in the same
+    sense. When every crossing lies at least the largest m reads from both ends of its
+    segment, n_avg(m) is the number of crossings and gamma is the slope of
+    log sum_s (L_s - min(m, L_s)) on log m, which is negative; a crossing nearer a segment
+    end is kept by fewer offsets, which pulls gamma toward 1. On a gapless record gamma
+    equals L0's count exponent up to O(m / N), in expectation.
 
     Validity assumptions:
 
@@ -535,6 +598,11 @@ def count_exponent_row(
       offsets follows subsampling-and-averaging, Ait-Sahalia, Mykland and Zhang (2005), as
       listed in L0's references; no equation locator.
     """
+    rungs = tuple(int(m) for m in ladder)
+    if not rungs or rungs[0] != 1 or any(b <= a for a, b in zip(rungs, rungs[1:])):
+        raise ValueError(
+            f"the ladder must start at 1 and increase strictly, got {tuple(ladder)}"
+        )
     inside = np.asarray(in_spec, dtype=bool)
     lengths = [e - s for s, e in obs.segments()]
     n_avg, p_avg = [], []
@@ -592,8 +660,8 @@ def crossing_counts(
     it and the nearest one at or after it, in the same segment. The crossing is CLEAN when
     that bracket runs from a confident in-spec read to a confident out-of-spec one and holds
     exactly one raw crossing of either direction; MERGED when such a bracket holds more;
-    UNBRACKETED otherwise: a segment edge, a gap or a same-side bracket comes first, and the
-    data does not assert the crossing. It is a reading of resolvability, not an estimator:
+    UNBRACKETED otherwise: a segment edge or a gap comes first, or the bracket stays on one
+    side or runs from out of spec to in spec, and the data does not assert the crossing. It is a reading of resolvability, not an estimator:
     the bracket's ends depend on the process, so it is not Turnbull's interval.
 
     Validity assumptions:
@@ -605,6 +673,8 @@ def crossing_counts(
       Reference: Sera's L0 specification, Q3.4; no equation locator.
     """
     m = np.asarray(margin_v, dtype=float)
+    if not np.any(np.isfinite(np.asarray(sigma, dtype=float))):
+        raise NotComputed("no read with a finite sigma")
     inside = m >= 0.0
     confident = confident_mask(m, sigma, k)
     clean = merged = unbracketed = 0
@@ -684,10 +754,26 @@ def in_spec_fraction_bounds(
 
     Each within-segment interval [t_i, t_(i+1)) is held by its left read, the convention of
     the carve's durations. An interval is UNSETTLED when it holds a crossing (the margin
-    changes sign across it) or its left read is unsure at level k (sigma finite and
-    |margin| < k sigma). The lower bound counts every unsettled interval out of spec, the
-    upper bound counts it in spec; observed time is the sum of the within-segment spacings,
-    so no gap enters. The carve's own in-spec fraction lies between the two.
+    changes sign across it) or its left read is not sure at level k: its sigma is unknown,
+    or |margin| < k sigma (`windows.confident_mask`). The lower bound counts every unsettled
+    interval out of spec, the upper bound counts it in spec; observed time is the sum of
+    the within-segment spacings, so no gap enters. The carve's own in-spec fraction lies
+    between the two. A record with no finite sigma has no bounds.
+
+    Validity assumptions:
+
+    - Assumption: the reported sigma is a Gaussian 1-sigma, so k reads as a confidence
+      level.
+      Diagnostic: the dependence panel (Q3.0) and the self-consistency row (Q3.2).
+      Consequence of violation: the level is nominal.
+      Reference: no source located; the bounds are not an L0 row.
+    - Assumption: no excursion to the other side happens between two reads on the same
+      side.
+      Diagnostic: rho_k and the count exponent beside it.
+      Consequence of violation: the bounds bound the fraction of time held by reads in
+      spec, not the true time-weighted fraction; an excursion between reads lies outside
+      both.
+      Reference: no source located.
     """
     m = np.asarray(margin_v, dtype=float)
     within = obs.within_segment()
@@ -695,9 +781,11 @@ def in_spec_fraction_bounds(
     observed = float(np.sum(delta))
     if not observed > 0.0:
         raise NotComputed("no segment with at least 2 reads")
-    inside = m >= 0.0
     s = np.asarray(sigma, dtype=float)
-    unsure = np.isfinite(s) & ~confident_mask(m, s, k)
+    if not np.any(np.isfinite(s)):
+        raise NotComputed("no read with a finite sigma")
+    inside = m >= 0.0
+    unsure = ~confident_mask(m, s, k)
     left_in, right_in, left_unsure = inside[:-1], inside[1:], unsure[:-1]
     unsettled = ((left_in != right_in) | left_unsure)[within]
     settled_in = (left_in[within]) & ~unsettled
@@ -717,6 +805,15 @@ def in_spec_autocorr(obs: ObservedReads, in_spec: np.ndarray) -> tuple[float, ..
     Centred on the record's per-read fraction A and scaled by A (1 - A); the numerator is
     the mean over the within-segment pairs at lag k. The array stops at the last lag that
     has such a pair, so it never carries an undefined value.
+
+    Validity assumptions:
+
+    - Assumption: the in-spec indicator is stationary across the record, so one A centres
+      every segment.
+      Diagnostic: the split-half G10 and the run-length row beside it.
+      Consequence of violation: segments at different in-spec fractions add a shared
+      offset, which raises rho_k at every lag.
+      Reference: no source located.
     """
     x = np.asarray(in_spec, dtype=float)
     a = float(x.mean()) if x.size else 0.0
@@ -745,10 +842,25 @@ def in_spec_autocorr(obs: ObservedReads, in_spec: np.ndarray) -> tuple[float, ..
 
 # How the dataset declares sigma: given and to be used, absent, or known but not usable.
 SIGMA_DECLARED = "declared"
+# The status a declared sigma takes when no read carries a finite one: decided once, by
+# `run`, so every row that reads sigma says the same.
+NO_FINITE_SIGMA = "not computed: no read with a finite sigma"
+SIGMA_STATUSES = (
+    SIGMA_DECLARED,
+    NOT_DECLARED,
+    "not computed: sigma propagation not derived",
+    NO_FINITE_SIGMA,
+)
 
 # Each field group ships with one status, and its fields are all None unless it is computed.
 METRIC_GROUPS: dict[str, tuple[str, ...]] = {
-    "spacing": ("effective_spacing_s", "mean_spacing_s", "spacing_cv"),
+    "spacing": (
+        "median_spacing_s",
+        "gap_threshold_s",
+        "effective_spacing_s",
+        "mean_spacing_s",
+        "spacing_cv",
+    ),
     "window": ("first_alias_hz", "band_edge_hz", "spectral_window_at_first_alias"),
     "spectrum": ("spectrum_frequency_hz", "spectrum_per_hz", "edge_level_per_hz"),
     "noise_floor": ("noise_floor_per_hz", "edge_noise_ratio"),
@@ -796,14 +908,55 @@ SIGMA_GROUPS = frozenset(
 
 
 def check_sigma_status(status: str) -> str:
-    """`declared`, `not declared`, or `not computed: <reason>` from the reason set."""
-    if status in (SIGMA_DECLARED, NOT_DECLARED):
-        return status
-    prefix = "not computed: "
-    if status.startswith(prefix):
-        check_reason(status[len(prefix) :])
-        return status
-    raise ValueError(f"unknown sigma status {status!r}")
+    """One of `SIGMA_STATUSES`; any other status, a reason from the set included, raises."""
+    if status not in SIGMA_STATUSES:
+        raise ValueError(
+            f"unknown sigma status {status!r}; the set is {SIGMA_STATUSES}"
+        )
+    return status
+
+
+def _finite(value: object) -> bool:
+    """Every number inside `value` is finite. None inside a tuple marks an entry its row
+    defines as absent, as a rung of `count_ratio` that keeps no pair."""
+    if isinstance(value, (str, bool, np.bool_)):
+        return True
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return bool(np.isfinite(value))
+    if isinstance(value, np.ndarray):
+        return bool(np.all(np.isfinite(value)))
+    if isinstance(value, (tuple, list)):
+        return all(item is None or _finite(item) for item in value)
+    if isinstance(value, dict):
+        return all(_finite(item) for item in value.values())
+    if dataclasses.is_dataclass(value):
+        return all(_finite(getattr(value, f.name)) for f in dataclasses.fields(value))
+    raise TypeError(f"no finiteness rule for {type(value).__name__}")
+
+
+def _check_statuses(row: object, groups: Mapping[str, tuple[str, ...]]) -> None:
+    """A row's statuses name exactly its groups, each from the vocabulary; a computed group
+    has every field set and finite, any other has every field None."""
+    status: dict[str, str] = getattr(row, "status")
+    if set(status) != set(groups):
+        raise ValueError(
+            f"statuses {sorted(status)} do not name the groups {sorted(groups)}"
+        )
+    for group, names in groups.items():
+        word = status[group]
+        if word not in (COMPUTED, NOT_DECLARED):
+            if not word.startswith("not computed: "):
+                raise ValueError(f"group {group!r} has an unknown status {word!r}")
+            check_reason(word[len("not computed: ") :])
+        values = [getattr(row, name) for name in names]
+        if word == COMPUTED:
+            bad = [n for n, v in zip(names, values) if v is None or not _finite(v)]
+            if bad:
+                raise ValueError(
+                    f"group {group!r} is computed, but {bad} are missing or not finite"
+                )
+        elif any(v is not None for v in values):
+            raise ValueError(f"group {group!r} is {word!r} but carries a value")
 
 
 @dataclass(frozen=True, slots=True)
@@ -823,6 +976,8 @@ class TellabilityInputs:
     clip_floor: float | None
     n_permutations: int
     seed: int
+    # Rows of the file the load dropped before any step ran, keyed by LOAD_COUNT_KEYS.
+    load_counts: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -832,8 +987,16 @@ class MetricTellability(StaleArtifactGuard):
     sigma_status: str
     n_reads: int
     n_segments: int
-    median_spacing_s: float
-    gap_threshold_s: float
+    # Reads dropped for a non-finite time or value, and reads kept with no finite sigma
+    # (None when no sigma is declared).
+    n_reads_dropped_nonfinite: int
+    n_reads_sigma_unknown: int | None
+    # Rows the load dropped before this step (core.types.LOAD_COUNT_KEYS); None when the
+    # load did not record the count.
+    n_rows_dropped_by_schema: int | None
+    n_rows_dropped_invalid: int | None
+    median_spacing_s: float | None
+    gap_threshold_s: float | None
     effective_spacing_s: float | None
     mean_spacing_s: float | None
     spacing_cv: float | None
@@ -857,6 +1020,9 @@ class MetricTellability(StaleArtifactGuard):
     clipped_fraction: float | None
     # One status per field group, keyed as in METRIC_GROUPS.
     status: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _check_statuses(self, METRIC_GROUPS)
 
 
 @dataclass
@@ -882,6 +1048,9 @@ class ThresholdTellability(StaleArtifactGuard):
     # One status per field group, keyed as in THRESHOLD_GROUPS.
     status: dict[str, str] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        _check_statuses(self, THRESHOLD_GROUPS)
+
 
 @dataclass
 class TellabilityResult(StaleArtifactGuard):
@@ -896,7 +1065,12 @@ T = TypeVar("T")
 
 
 def _attempt(status: dict[str, str], group: str, compute: Callable[[], T]) -> T | None:
-    """Run one group's computation; record `computed` or the reason it was not."""
+    """Run one group's computation; record `computed` or the reason it was not.
+
+    The contract with the row functions: `NotComputed` means the record cannot answer the
+    row, and becomes its status. Any other exception is a contradiction in the inputs or a
+    bug, and is raised; turning it into a status would ship a wrong but plausible row.
+    """
     try:
         value = compute()
     except NotComputed as exc:
@@ -908,6 +1082,26 @@ def _attempt(status: dict[str, str], group: str, compute: Callable[[], T]) -> T 
 
 def _check_inputs(inputs: TellabilityInputs) -> None:
     check_sigma_status(inputs.sigma_status)
+    if not (math.isfinite(inputs.unsure_k) and inputs.unsure_k > 0.0):
+        raise ValueError(
+            f"unsure_k must be finite and positive, got {inputs.unsure_k!r}"
+        )
+    if int(inputs.n_permutations) < 1:
+        raise ValueError(f"n_permutations must be >= 1, got {inputs.n_permutations}")
+    if int(inputs.seed) < 0:
+        raise ValueError(f"seed must be >= 0, got {inputs.seed}")
+    unknown = sorted(set(inputs.load_counts) - set(LOAD_COUNT_KEYS))
+    if unknown:
+        raise ValueError(
+            f"unknown load counts {unknown}; the keys are {LOAD_COUNT_KEYS}"
+        )
+    if inputs.sigma is not None:
+        s = np.asarray(inputs.sigma, dtype=float)
+        if np.any(s[np.isfinite(s)] < 0.0):
+            raise ValueError("a reported sigma is negative")
+    labels = [label for label, _, _ in inputs.thresholds]
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"a threshold label is repeated: {labels}")
     if (inputs.sigma is not None) != (inputs.sigma_status == SIGMA_DECLARED):
         raise ValueError(
             f"sigma is {'given' if inputs.sigma is not None else 'absent'} but its status "
@@ -952,15 +1146,41 @@ def _check_inputs(inputs: TellabilityInputs) -> None:
         )
 
 
+def _check_windows_reads(inputs: TellabilityInputs, obs: ObservedReads) -> None:
+    """The windows must have been carved on these reads: as many, at the same median
+    spacing. Windows of another record, or of part of this one, are refused."""
+    if inputs.windows is None or not inputs.thresholds:
+        return
+    diagnostics = inputs.windows.diagnostics
+    n_carved = int(diagnostics["n_reads_finite"])
+    median = float(diagnostics["median_spacing_s"])
+    same = median == obs.median_spacing_s or (
+        math.isnan(median) and math.isnan(obs.median_spacing_s)
+    )
+    if n_carved != obs.t_rel_s.size or not same:
+        raise ValueError(
+            f"the windows were carved on {n_carved} reads at a median spacing of "
+            f"{median} s, but tellability reads {obs.t_rel_s.size} at "
+            f"{obs.median_spacing_s} s; one record, one set of reads"
+        )
+
+
+def _load_count(inputs: TellabilityInputs, key: str) -> int | None:
+    return int(inputs.load_counts[key]) if key in inputs.load_counts else None
+
+
 def _metric_rows(
-    inputs: TellabilityInputs, obs: ObservedReads, sigma: np.ndarray | None
+    inputs: TellabilityInputs,
+    obs: ObservedReads,
+    sigma: np.ndarray | None,
+    sigma_status: str,
 ) -> MetricTellability:
     st: dict[str, str] = {}
-    declared = inputs.sigma_status == SIGMA_DECLARED
+    declared = sigma_status == SIGMA_DECLARED
 
     def sigma_group(group: str, compute: Callable[[], T]) -> T | None:
         if not declared:
-            st[group] = inputs.sigma_status
+            st[group] = sigma_status
             return None
         return _attempt(st, group, compute)
 
@@ -970,7 +1190,7 @@ def _metric_rows(
     rows = _attempt(st, "spectrum", lambda: spectrum_rows(obs))
     if rows is None:
         # A sigma row says first that it has no sigma, and only then that it has no spectrum.
-        st["noise_floor"] = st["spectrum"] if declared else inputs.sigma_status
+        st["noise_floor"] = st["spectrum"] if declared else sigma_status
         st["g10"] = st["spectrum"]
         floor = g10 = None
     else:
@@ -994,11 +1214,17 @@ def _metric_rows(
     return MetricTellability(
         metric_key=inputs.metric_key,
         value_key=inputs.value_key,
-        sigma_status=inputs.sigma_status,
+        sigma_status=sigma_status,
         n_reads=int(obs.t_rel_s.size),
         n_segments=len(obs.segments()),
-        median_spacing_s=obs.median_spacing_s,
-        gap_threshold_s=obs.gap_threshold_s,
+        n_reads_dropped_nonfinite=int(obs.n_dropped_nonfinite),
+        n_reads_sigma_unknown=(
+            int(np.count_nonzero(~np.isfinite(sigma))) if sigma is not None else None
+        ),
+        n_rows_dropped_by_schema=_load_count(inputs, "n_rows_dropped_by_schema"),
+        n_rows_dropped_invalid=_load_count(inputs, "n_rows_dropped_invalid"),
+        median_spacing_s=obs.median_spacing_s if spacing else None,
+        gap_threshold_s=obs.gap_threshold_s if spacing else None,
         effective_spacing_s=spacing.effective_spacing_s if spacing else None,
         mean_spacing_s=spacing.mean_spacing_s if spacing else None,
         spacing_cv=spacing.spacing_cv if spacing else None,
@@ -1027,7 +1253,9 @@ def _metric_rows(
 def _clean_fraction(
     counts: tuple[CrossingCounts, ...],
 ) -> tuple[tuple[CrossingCounts, ...], float]:
-    first = counts[0]
+    first = next((c for c in counts if c.k == 1), None)
+    if first is None:
+        raise ValueError("the crossing counts hold no k = 1 level")
     total = first.clean + first.merged + first.unbracketed
     if total == 0:
         raise NotComputed("no down-crossing at this threshold")
@@ -1042,9 +1270,10 @@ def _threshold_rows(
     label: str,
     value: float,
     big_values_good: bool,
+    sigma_status: str,
 ) -> ThresholdTellability:
     st: dict[str, str] = {}
-    declared = inputs.sigma_status == SIGMA_DECLARED
+    declared = sigma_status == SIGMA_DECLARED
     margin_v = margin(obs.values, value, big_values_good)
     inside = margin_v >= 0.0
     table = windows_in_spec[windows_in_spec["threshold_label"] == label]
@@ -1065,7 +1294,7 @@ def _threshold_rows(
             lambda: in_spec_fraction_bounds(obs, margin_v, sigma, inputs.unsure_k),
         )
     else:
-        st["crossing_counts"] = st["bounds"] = inputs.sigma_status
+        st["crossing_counts"] = st["bounds"] = sigma_status
         crossings = bounds = None
     runs = _attempt(st, "run_length", lambda: run_length_row(table, inside))
     autocorr = _attempt(st, "autocorr", lambda: in_spec_autocorr(obs, inside))
@@ -1105,11 +1334,15 @@ def run(inputs: TellabilityInputs) -> TellabilityResult:
     obs = observed_reads(
         inputs.t_rel_s, inputs.values, sigma=inputs.sigma, gap_mult=inputs.gap_mult
     )
+    _check_windows_reads(inputs, obs)
     sigma = obs.sigma
-    metric = _metric_rows(inputs, obs, sigma)
+    sigma_status = inputs.sigma_status
+    if sigma_status == SIGMA_DECLARED and not np.any(np.isfinite(sigma)):
+        sigma_status = NO_FINITE_SIGMA
+    metric = _metric_rows(inputs, obs, sigma, sigma_status)
     table = inputs.windows.windows_in_spec if inputs.windows is not None else None
     rows = tuple(
-        _threshold_rows(inputs, obs, sigma, table, label, value, big)
+        _threshold_rows(inputs, obs, sigma, table, label, value, big, sigma_status)
         for label, value, big in inputs.thresholds
         if table is not None
     )
