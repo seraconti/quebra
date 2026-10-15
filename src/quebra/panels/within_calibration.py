@@ -577,9 +577,15 @@ class WithinCalibrationPanel(BasePlot):
                 Patch(facecolor=theme.state_color(state), label=name)
                 for state, name in (
                     ("in_spec", "in spec"),
-                    ("in_spec_uncertain", "in spec, error overlaps threshold"),
+                    (
+                        "in_spec_uncertain",
+                        "in spec, error overlaps threshold, or no error",
+                    ),
                     ("out_of_spec", "out of spec"),
-                    ("out_of_spec_uncertain", "out of spec, error overlaps threshold"),
+                    (
+                        "out_of_spec_uncertain",
+                        "out of spec, error overlaps threshold, or no error",
+                    ),
                 )
             ]
             handles.append(

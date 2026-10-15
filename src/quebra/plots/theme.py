@@ -368,10 +368,10 @@ def state_color(state: str) -> str:
 
     `in_spec_uncertain` / `out_of_spec_uncertain` are their crisp siblings washed toward
     white, so a 4-state timeline still reads as green/red at a glance while marking
-    which reads the error bars cannot separate from the threshold.
+    which reads the error bars cannot separate from the threshold, and which have no
+    error bar at all: a read with no sigma is uncertain on the side its value falls.
 
-    `unresolved` is a different thing and keeps its own hue: it means the read cannot be
-    classified at all (no usable sigma), not that it sits near the threshold.
+    `unresolved` keeps its own hue and is not a read state: no read is drawn in it.
     """
     if state in STATE_COLORS:
         return STATE_COLORS[state]

@@ -251,8 +251,11 @@ def run(inputs: DistinguishBandInputs) -> DistinguishBand:
         )
 
         state = r["state"] if len(r) else pd.Series(dtype=object)
-        n_unresolved = int(
-            state.isin([STATE_IN_SPEC_UNCERTAIN, STATE_OUT_OF_SPEC_UNCERTAIN]).sum()
+        uncertain = state.isin([STATE_IN_SPEC_UNCERTAIN, STATE_OUT_OF_SPEC_UNCERTAIN])
+        # Uncertain reads with a known sigma, the ones inside the shaded band. A read with
+        # no sigma is uncertain too, but it is counted once, under n_unknown.
+        n_unresolved = (
+            int((uncertain & r["sigma_known"].astype(bool)).sum()) if len(r) else 0
         )
         band.state_counts_per_threshold[label] = {
             "n_in": int((state == STATE_IN_SPEC).sum()),

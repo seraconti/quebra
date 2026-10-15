@@ -408,9 +408,13 @@ def margin(
 def confident_mask(margin_v: np.ndarray, sigma: np.ndarray, k: float) -> np.ndarray:
     """A read is confident at level k when its sigma is finite and |margin| >= k sigma.
 
-    The carve's uncertain reads are exactly the reads with a finite sigma that are not
-    confident; a read whose sigma is unknown is neither confident nor uncertain.
+    A read whose sigma is unknown is never confident. With `use_uncertainty`, the carve's
+    uncertain reads are exactly the reads that are not confident, so a read with no sigma
+    is uncertain, its value picking the side. Raises ValueError unless k is finite and
+    positive: k = 0 would make every read confident.
     """
+    if not (np.isfinite(k) and k > 0.0):
+        raise ValueError(f"k must be finite and positive, got {k!r}")
     m = np.asarray(margin_v, dtype=float)
     s = np.asarray(sigma, dtype=float)
     known = np.isfinite(s)
@@ -710,7 +714,8 @@ def run(inputs: WindowsInputs) -> WindowsResult:
 
         state = np.where(ins, STATE_IN_SPEC, STATE_OUT_OF_SPEC).astype(object)
         if inputs.use_uncertainty:
-            uncertain = sigma_known & ~confident_mask(margin_v, sigma, inputs.k)
+            # Not confident, including every read whose sigma is unknown.
+            uncertain = ~confident_mask(margin_v, sigma, inputs.k)
             state[uncertain & ins] = STATE_IN_SPEC_UNCERTAIN
             state[uncertain & ~ins] = STATE_OUT_OF_SPEC_UNCERTAIN
 

@@ -296,7 +296,7 @@ def test_effective_spacing_is_length_biased_and_ignores_the_gap():
 @pytest.mark.unit
 def test_a_read_is_confident_at_k_sigma_and_never_without_a_sigma():
     """Oracle: specification. |margin| >= k sigma with sigma finite; equality counts; a read
-    whose sigma is unknown is neither confident nor, in the carve, uncertain."""
+    whose sigma is unknown is never confident."""
     margin = np.array([2.0, -2.0, 1.99, 5.0, 5.0])
     sigma = np.array([1.0, 1.0, 1.0, np.nan, np.inf])
     assert windows.confident_mask(margin, sigma, 2.0).tolist() == [
@@ -306,6 +306,81 @@ def test_a_read_is_confident_at_k_sigma_and_never_without_a_sigma():
         False,
         False,
     ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("k", [0.0, -1.0, np.nan, np.inf])
+def test_a_confidence_level_must_be_finite_and_positive(k):
+    """Oracle: specification. k = 0 would call every read confident; the one check stands
+    for the carve, the crossing placement and the in-spec bounds, which all ask it."""
+    with pytest.raises(ValueError, match="k must be finite and positive"):
+        windows.confident_mask(np.array([1.0]), np.array([1.0]), k)
+
+
+# A read with no sigma: confident never, so uncertain whenever uncertainty is drawn, on the
+# side its value falls. Reads 0-5 at threshold 1 (big values good), sigma 0.1 except read 2.
+_NO_SIGMA_VALUES = np.array([5.0, 1.05, 5.0, 0.5, 5.0, 5.0])
+_NO_SIGMA_SIGMA = np.array([0.1, 0.1, np.nan, 0.1, 0.1, 0.1])
+
+
+def _no_sigma_carve():
+    return windows.run(
+        windows.WindowsInputs(
+            t_rel_s=np.arange(6) * 10.0,
+            values=_NO_SIGMA_VALUES,
+            thresholds=[("u", 1.0, True)],
+            sigma=_NO_SIGMA_SIGMA,
+            use_uncertainty=True,
+            k=1.0,
+        )
+    )
+
+
+@pytest.mark.unit
+def test_a_read_with_no_sigma_is_uncertain_on_the_side_its_value_falls():
+    """Oracle: specification (Sera, 2026-10-15). Read 1 sits 0.05 above the threshold with
+    sigma 0.1: uncertain, in spec. Read 2 sits 4 above with no sigma: uncertain, in spec,
+    although far from the threshold. Read 3 sits 0.5 below with sigma 0.1: out of spec."""
+    result = _no_sigma_carve()
+    assert result.reads["state"].tolist() == [
+        windows.STATE_IN_SPEC,
+        windows.STATE_IN_SPEC_UNCERTAIN,
+        windows.STATE_IN_SPEC_UNCERTAIN,
+        windows.STATE_OUT_OF_SPEC,
+        windows.STATE_IN_SPEC,
+        windows.STATE_IN_SPEC,
+    ]
+    assert result.diagnostics["n_reads_sigma_unknown"] == 1
+
+
+@pytest.mark.unit
+def test_the_distinguish_band_counts_a_read_with_no_sigma_once():
+    """Oracle: count by hand on the carve above. The shaded band holds the uncertain reads
+    with a KNOWN sigma (read 1); the read with no sigma is counted under n_unknown, not
+    twice. The four-way split counts states, so it holds both."""
+    from quebra.analyzers import distinguish_band
+
+    carved = _no_sigma_carve()
+    band = distinguish_band.run(
+        distinguish_band.make_inputs_from_windows(
+            reads=carved.reads,
+            windows=carved.windows_in_spec,
+            thresholds=[("u", 1.0, True)],
+            median_read_spacing_s=10.0,
+            gap_spans_h=[],
+            sigma_display=_NO_SIGMA_SIGMA,
+            k=1.0,
+            use_uncertainty=True,
+        )
+    )
+    assert band.state_counts_per_threshold["u"] == {
+        "n_in": 3,
+        "n_out": 1,
+        "n_unresolved": 1,
+        "n_unknown": 1,
+        "n_in_uncertain": 2,
+        "n_out_uncertain": 0,
+    }
 
 
 # -------------------- what does and does not move a boundary (8.4a)
