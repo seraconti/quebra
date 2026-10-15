@@ -200,6 +200,7 @@ def test_the_t2star_and_infidelity_steps_repeat_the_load_counts(metric) -> None:
                 values=result.frame["t2star_s"].to_numpy(),
                 thresholds=thresholds,
                 gap_mult=10.0,
+                dataset_id="unit",
             )
         )
         told = tellability_recipe._t2star_tellability(
@@ -220,6 +221,7 @@ def test_the_t2star_and_infidelity_steps_repeat_the_load_counts(metric) -> None:
                 values=fidelity.panel_series(result),
                 thresholds=thresholds,
                 gap_mult=10.0,
+                dataset_id="unit",
             )
         )
         told = tellability_recipe._infidelity_tellability(

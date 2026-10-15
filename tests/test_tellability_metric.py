@@ -127,15 +127,23 @@ def test_a_sigma_reported_twice_too_large_reads_a_noise_floor_ratio_of_four() ->
 
 @pytest.mark.statistical
 def test_the_edge_level_is_the_top_tenth_of_the_band_not_the_whole_band() -> None:
-    """Oracle: arithmetic on a known spectrum. White noise of sd 1, reported as 1, plus a
-    sine of variance 8 on the fifth grid frequency: the top tenth of the band holds the
-    white level alone, so the ratio is near 1, where the band's mean level also holds the
-    sine's variance, (1 + 8) / f_e against 1 / f_e, a ratio near 1/9. The reads are evenly
-    spaced: on irregular reads the sine would leak into the top tenth (`spectrum.g10`)."""
+    """Oracle: arithmetic on a known spectrum. White noise of sd 1, reported as 1, plus two
+    sines of variance 8 on grid frequencies, one at the fifth and one near 0.7 f_e: the top
+    tenth of the band holds the white level alone, so the ratio is near 1. The band's mean
+    level also holds both sines, (1 + 16) / f_e against 1 / f_e, a ratio near 1/17, and a
+    top half of the band holds the second, (1 + 16) / f_e over half the band, near 1/17
+    too. The reads are evenly spaced: on irregular reads a sine would leak into the top
+    tenth (`spectrum.g10`)."""
     rng = np.random.default_rng(32)
     t = np.arange(6000) * 24.0
-    f0 = 5.0 / (t[-1] - t[0])
-    q = rng.normal(size=t.size) + 4.0 * np.sin(2.0 * np.pi * f0 * t)
+    span = t[-1] - t[0]
+    f_low = 5.0 / span
+    f_high = np.floor(0.7 * span / (2.0 * 24.0)) / span
+    q = (
+        rng.normal(size=t.size)
+        + 4.0 * np.sin(2.0 * np.pi * f_low * t)
+        + 4.0 * np.sin(2.0 * np.pi * f_high * t)
+    )
     obs = _obs(t, q, sigma=np.ones(t.size))
     _, ratio = tl.noise_floor_ratio(obs, tl.spectrum_rows(obs), obs.sigma)
     assert ratio == pytest.approx(1.0, rel=0.25)

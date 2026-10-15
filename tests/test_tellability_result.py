@@ -41,10 +41,15 @@ def _record(seed: int = 21, n: int = 1500):
     return t, q, sigma
 
 
-def _carve(t, q, thresholds, gap_mult=10.0, k=1.0):
+def _carve(t, q, thresholds, gap_mult=10.0, k=1.0, dataset_id="synthetic"):
     return windows.run(
         windows.WindowsInputs(
-            t_rel_s=t, values=q, thresholds=list(thresholds), gap_mult=gap_mult, k=k
+            t_rel_s=t,
+            values=q,
+            thresholds=list(thresholds),
+            gap_mult=gap_mult,
+            k=k,
+            dataset_id=dataset_id,
         )
     )
 
@@ -170,8 +175,15 @@ def _degenerate(shape: str):
     sigma = (
         np.full(n, 0.3) if shape == "constant-sigma" else rng.uniform(0.2, 0.6, size=n)
     )
+    if shape == "means-equal":
+        # Every time read twice, at 1 + d and 1 - d (d dyadic, so each mean is exactly 1):
+        # the reads vary, the averaged reads do not.
+        times = t[: n // 2]
+        d = rng.integers(1, 500, size=times.size) / 1024.0
+        return np.repeat(times, 2), np.ravel(np.column_stack([1.0 + d, 1.0 - d])), sigma
     q = {
         "constant": np.full(n, 0.5),
+        "linear": 0.003 * t,
         "constant-inexact": np.full(n, 0.3),
         "constant-sigma": rng.normal(size=n),
         "half-constant": np.r_[np.zeros(n // 2), rng.normal(size=n - n // 2)],
@@ -198,6 +210,8 @@ def _degenerate(shape: str):
         "two",
         "one",
         "forty-one",
+        "linear",
+        "means-equal",
     ],
 )
 def test_a_legal_record_of_any_shape_ships_a_result(shape) -> None:
@@ -232,32 +246,79 @@ def test_a_legal_record_of_any_shape_ships_a_result(shape) -> None:
             assert result.metric.status[group] == zero, group
     if shape == "constant-sigma":
         assert result.metric.status["dependence"] == zero
+    if shape == "linear":
+        # Exactly linear values: sigma_hat_D2 is rounding, so the sigma bound is zero.
+        assert result.metric.status["sigma_bound"] == zero
+    if shape == "means-equal":
+        assert result.metric.status["spectrum"] == zero
+        assert result.metric.status["g10_halves"] == zero
+
+
+def _fields(groups, status) -> set[str]:
+    return {
+        name
+        for group, names in groups.items()
+        if status[group] == tl.COMPUTED
+        for name in names
+    }
+
+
+def _assert_fields(row, expected) -> None:
+    for name, value in expected.items():
+        got = getattr(row, name)
+        if isinstance(value, np.ndarray):
+            assert np.array_equal(got, value), name
+        else:
+            assert got == value, name
 
 
 @pytest.mark.unit
 def test_run_reports_what_the_row_functions_give() -> None:
-    """Oracle: the row functions, called directly on the same observed reads, threshold by
-    threshold and in order, on both sides of the in-spec definition."""
+    """Oracle: the row functions, called directly on the same observed reads, for EVERY
+    field of every computed group, threshold by threshold and in order, on both sides of
+    the in-spec definition. It sees what `run` adds (which value lands in which field,
+    order, side, settings); a bug inside a row function or `observed_reads` is for the
+    row functions' own tests."""
     t, q, sigma = _record()
     result = tl.run(_inputs(t, q, sigma))
     obs = windows.observed_reads(t, q, sigma=sigma, gap_mult=10.0)
     metric = result.metric
-    assert (metric.n_reads, metric.n_segments) == (
-        obs.t_rel_s.size,
-        len(obs.segments()),
-    )
-    assert metric.n_segments == 2
-    assert metric.median_spacing_s == obs.median_spacing_s
-    assert metric.gap_threshold_s == obs.gap_threshold_s
+    assert (metric.n_reads, metric.n_segments) == (obs.t_rel_s.size, 2)
+    assert len(obs.segments()) == 2
+    spacing = tl.spacing_row(obs)
+    first_alias, edge = tl.band_edges(obs)
     rows = tl.spectrum_rows(obs)
-    assert metric.g10 == tl.g10_row(obs, rows).g10
-    assert metric.second_difference_ratio == (
-        tl.second_difference_row(obs).second_difference_ratio
-    )
-    assert metric.self_consistency == tl.self_consistency(obs.values, obs.sigma)
-    assert metric.dependence == tl.dependence_panel(
-        obs.values, obs.sigma, n_permutations=19, seed=5
-    )
+    floor, ratio = tl.noise_floor_ratio(obs, rows, obs.sigma)
+    second = tl.second_difference_row(obs)
+    first_half, second_half = tl.g10_halves(obs)
+    expected = {
+        "median_spacing_s": obs.median_spacing_s,
+        "gap_threshold_s": obs.gap_threshold_s,
+        "effective_spacing_s": spacing.effective_spacing_s,
+        "mean_spacing_s": spacing.mean_spacing_s,
+        "spacing_cv": spacing.spacing_cv,
+        "first_alias_hz": first_alias,
+        "band_edge_hz": edge,
+        "spectral_window_at_first_alias": tl.window_at_first_alias(obs),
+        "spectrum_frequency_hz": rows.frequency_hz,
+        "spectrum_per_hz": rows.spectrum_per_hz,
+        "edge_level_per_hz": rows.edge_level_per_hz,
+        "noise_floor_per_hz": floor,
+        "edge_noise_ratio": ratio,
+        "second_difference_scale": second.second_difference_scale,
+        "value_sd": second.value_sd,
+        "second_difference_ratio": second.second_difference_ratio,
+        "g10": tl.g10_row(obs, rows).g10,
+        "g10_first_half": first_half.g10,
+        "g10_second_half": second_half.g10,
+        "dependence": tl.dependence_panel(
+            obs.values, obs.sigma, n_permutations=19, seed=5
+        ),
+        "self_consistency": tl.self_consistency(obs.values, obs.sigma),
+        "sigma_bound_ratio": tl.sigma_bound_ratio(obs, obs.sigma),
+    }
+    assert set(expected) == _fields(tl.METRIC_GROUPS, metric.status)
+    _assert_fields(metric, expected)
     assert (result.settings["seed"], result.settings["n_permutations"]) == (5, 19)
     assert [row.threshold_label for row in result.thresholds] == [
         label for label, _, _ in THRESHOLDS
@@ -271,17 +332,34 @@ def test_run_reports_what_the_row_functions_give() -> None:
         )
         margin_v = windows.margin(obs.values, value, big)
         inside = margin_v >= 0
-        assert row.read_fraction_in_spec == pytest.approx(float(inside.mean()), abs=0)
-        assert row.count_exponent == tl.count_exponent_row(obs, inside).count_exponent
-        bounds = tl.in_spec_fraction_bounds(obs, margin_v, obs.sigma, 1.0)
-        assert row.in_spec_fraction_lower == bounds.in_spec_fraction_lower
-        runs = tl.run_length_row(table[table["threshold_label"] == label], inside)
-        assert row.run_length_ratio == runs.run_length_ratio
-        assert row.in_spec_autocorr == tl.in_spec_autocorr(obs, inside)
-        k1 = tl.crossing_counts(obs, margin_v, obs.sigma, 1)
-        assert row.clean_fraction_k1 == k1.clean / (
-            k1.clean + k1.merged + k1.unbracketed
+        exponent = tl.count_exponent_row(obs, inside)
+        counts = tuple(
+            tl.crossing_counts(obs, margin_v, obs.sigma, k)
+            for k in tl.CONFIDENCE_LEVELS
         )
+        k1 = counts[tl.CONFIDENCE_LEVELS.index(1)]
+        runs = tl.run_length_row(table[table["threshold_label"] == label], inside)
+        bounds = tl.in_spec_fraction_bounds(obs, margin_v, obs.sigma, 1.0)
+        expected = {
+            "decimation_ladder": exponent.decimation_ladder,
+            "down_crossings": exponent.down_crossings,
+            "kept_pairs": exponent.kept_pairs,
+            "count_ratio": exponent.count_ratio,
+            "count_exponent": exponent.count_exponent,
+            "rungs_excluded": exponent.rungs_excluded,
+            "crossing_counts": counts,
+            "clean_fraction_k1": k1.clean / (k1.clean + k1.merged + k1.unbracketed),
+            "read_fraction_in_spec": runs.read_fraction_in_spec,
+            "mean_in_spec_run_reads": runs.mean_in_spec_run_reads,
+            "run_length_ratio": runs.run_length_ratio,
+            "in_spec_fraction_lower": bounds.in_spec_fraction_lower,
+            "in_spec_fraction_upper": bounds.in_spec_fraction_upper,
+            "unsure_k": bounds.unsure_k,
+            "in_spec_autocorr": tl.in_spec_autocorr(obs, inside),
+        }
+        assert set(expected) == _fields(tl.THRESHOLD_GROUPS, row.status), label
+        _assert_fields(row, expected)
+        assert runs.read_fraction_in_spec == float(inside.mean())
 
 
 @pytest.mark.unit
@@ -353,7 +431,8 @@ def test_the_result_counts_what_was_dropped_before_and_inside_the_step() -> None
     """Oracle: the load's own counts, repeated; one read with a NaN value dropped by the
     step, one kept with no sigma. Counts the load did not record are None, not 0."""
     t, q, sigma = _record(n=300)
-    q[10], sigma[20] = np.nan, np.nan
+    # Read 10 is dropped for its value, its sigma with it; read 20 is kept with no sigma.
+    q[10], sigma[10], sigma[20] = np.nan, np.nan, np.nan
     counts = {"n_rows_dropped_by_schema": 3, "n_rows_dropped_invalid": 0}
     metric = tl.run(_inputs(t, q, sigma, load_counts=counts)).metric
     assert (metric.n_rows_dropped_by_schema, metric.n_rows_dropped_invalid) == (3, 0)
@@ -371,8 +450,6 @@ def test_the_result_counts_what_was_dropped_before_and_inside_the_step() -> None
         ({"windows_result": None}, "without the carve's windows"),
         ({"sigma_status": "unknown"}, "unknown sigma status"),
         ({"sigma_status": "not computed: zero variance"}, "unknown sigma status"),
-        ({"n_permutations": 0}, "n_permutations"),
-        ({"seed": -1}, "seed"),
         ({"load_counts": {"n_rows_lost": 1}}, "unknown load counts"),
     ],
     ids=[
@@ -381,8 +458,6 @@ def test_the_result_counts_what_was_dropped_before_and_inside_the_step() -> None
         "no-windows",
         "bad-status",
         "reason-as-status",
-        "no-permutations",
-        "negative-seed",
         "unknown-count",
     ],
 )
@@ -402,15 +477,21 @@ def test_contradictory_inputs_raise(kwargs, match) -> None:
         ("zero-k", "unsure_k must be finite and positive"),
         ("repeated-label", "repeated"),
         ("other-record", "one set of reads"),
+        ("other-id", "carved on record"),
         ("prefix", "one set of reads"),
+        ("no-permutations", "n_permutations must be"),
+        ("negative-seed", "seed must be"),
+        ("no-finite-sigma-as-input", "set by the step"),
     ],
 )
 def test_inputs_that_contradict_themselves_raise_whatever_the_sigma_status(
     case, match
 ) -> None:
     """Oracle: specification. The checks do not wait for a row that happens to read the
-    input: a negative sigma, a non-positive k or a repeated label is refused up front, and
-    windows carved on other reads, of another record or of part of this one, are refused."""
+    input: a negative sigma, a non-positive k, no permutations, a negative seed or a
+    repeated label is refused up front, with sigma not declared where the panel would never
+    run; and windows carved on other reads, of another record (by its id, or by its reads)
+    or of part of this one, are refused."""
     t, q, sigma = _record(n=300)
     if case == "declared-without-sigma":
         inputs = _inputs(t, q, None)
@@ -429,9 +510,22 @@ def test_inputs_that_contradict_themselves_raise_whatever_the_sigma_status(
     elif case == "other-record":
         t2, q2, _ = _record(seed=22, n=300)
         inputs = _inputs(t, q, sigma, windows_result=_carve(t2, q2, THRESHOLDS))
-    else:
+    elif case == "other-id":
+        other = _carve(t, q, THRESHOLDS, dataset_id="elsewhere")
+        inputs = _inputs(t, q, sigma, windows_result=other)
+    elif case == "prefix":
+        # Evenly spaced, so the prefix has the record's median spacing and only the read
+        # count tells it apart.
+        even = np.arange(300) * 20.0
         inputs = _inputs(
-            t, q, sigma, windows_result=_carve(t[:200], q[:200], THRESHOLDS)
+            even, q, sigma, windows_result=_carve(even[:200], q[:200], THRESHOLDS)
+        )
+    elif case == "no-finite-sigma-as-input":
+        inputs = _inputs(t, q, None, sigma_status=tl.NO_FINITE_SIGMA)
+    else:
+        bad = {"no-permutations": {"n_permutations": 0}, "negative-seed": {"seed": -1}}
+        inputs = dataclasses.replace(
+            _inputs(t, q, None, sigma_status="not declared"), **bad[case]
         )
     with pytest.raises(ValueError, match=match):
         tl.run(inputs)
@@ -457,33 +551,83 @@ def test_windows_carved_at_other_thresholds_are_refused(thresholds, k, match) ->
         tl.run(_inputs(t, q, sigma, thresholds=THRESHOLDS[:2], windows_result=other))
 
 
+NAN = float("nan")
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "change, match",
     [
-        ({"g10": float("nan")}, "missing or not finite"),
-        ({"g10": None}, "missing or not finite"),
-        ({"clipped_fraction": 0.5}, "carries a value"),
-        ({"status": {"spacing": tl.COMPUTED}}, "do not name the groups"),
+        (lambda m: {"g10": NAN}, "missing or not finite"),
+        (lambda m: {"g10": None}, "missing or not finite"),
+        (lambda m: {"clipped_fraction": 0.5}, "carries a value"),
+        (lambda m: {"status": {"spacing": tl.COMPUTED}}, "do not name the groups"),
+        (
+            lambda m: {"status": {**m.status, "clipped": "not computed: banana"}},
+            "not a tellability reason",
+        ),
+        (lambda m: {"sigma_status": "banana"}, "unknown sigma status"),
+        (
+            lambda m: {"dependence": dataclasses.replace(m.dependence, p_value=NAN)},
+            "missing or not finite",
+        ),
+        (
+            lambda m: {
+                "dependence": dataclasses.replace(
+                    m.dependence,
+                    statistics={**m.dependence.statistics, "pearson_abs": NAN},
+                )
+            },
+            "missing or not finite",
+        ),
     ],
-    ids=["nan-computed", "none-computed", "value-not-computed", "missing-group"],
+    ids=[
+        "nan-computed",
+        "none-computed",
+        "value-not-computed",
+        "missing-group",
+        "unknown-reason",
+        "unknown-sigma-status",
+        "nan-panel-p",
+        "nan-panel-statistic",
+    ],
 )
 def test_a_row_that_breaks_its_statuses_cannot_be_built(change, match) -> None:
-    """Oracle: specification, enforced at construction: a row whose numbers contradict its
-    statuses is refused when it is made, not only when a test inspects it."""
+    """Oracle: specification, enforced at construction: a row whose numbers or statuses
+    contradict the vocabulary is refused when it is made, a NaN inside the dependence panel
+    included, not only when a test inspects it."""
     t, q, sigma = _record(n=300)
     metric = tl.run(_inputs(t, q, sigma)).metric
     with pytest.raises(ValueError, match=match):
-        dataclasses.replace(metric, **change)
+        dataclasses.replace(metric, **change(metric))
 
 
 @pytest.mark.unit
-def test_a_nan_inside_a_tuple_cannot_be_shipped_as_computed() -> None:
-    """Oracle: specification. The finiteness rule reaches inside tuples."""
+def test_a_nan_inside_a_tuple_or_a_record_cannot_be_shipped_as_computed() -> None:
+    """Oracle: specification. The finiteness rule reaches inside tuples and the records
+    they hold."""
     t, q, sigma = _record(n=300)
     row = tl.run(_inputs(t, q, sigma)).thresholds[0]
     with pytest.raises(ValueError, match="missing or not finite"):
-        dataclasses.replace(row, in_spec_autocorr=(float("nan"),))
+        dataclasses.replace(row, in_spec_autocorr=(NAN,))
+    bad_count = dataclasses.replace(row.crossing_counts[0], k=NAN)
+    with pytest.raises(ValueError, match="missing or not finite"):
+        dataclasses.replace(row, crossing_counts=(bad_count, *row.crossing_counts[1:]))
+
+
+@pytest.mark.unit
+def test_an_error_a_row_did_not_name_is_raised_not_shipped(monkeypatch) -> None:
+    """Oracle: specification (`_attempt`'s contract). NotComputed becomes a status; any
+    other error is a bug, and `run` raises it rather than ship a plausible status."""
+    t, q, sigma = _record(n=300)
+
+    def broken(obs):
+        raise ValueError("a bug in a row")
+
+    monkeypatch.setattr(tl, "spacing_row", broken)
+    with pytest.raises(ValueError, match="a bug in a row") as excinfo:
+        tl.run(_inputs(t, q, sigma))
+    assert not isinstance(excinfo.value, tl.NotComputed)
 
 
 @pytest.mark.unit

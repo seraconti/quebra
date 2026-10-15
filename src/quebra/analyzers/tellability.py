@@ -116,7 +116,16 @@ def collapse_repeated_times(
 def collapse_repeated_sigma(t_rel_s: np.ndarray, sigma: np.ndarray) -> np.ndarray:
     """The sigma of each read `collapse_repeated_times` makes: that of a mean of m reads,
     sqrt(sum sigma_i^2) / m, and unknown (NaN) when any read of the group has no sigma, as
-    a read with no sigma is never sure (`windows.confident_mask`)."""
+    a read with no sigma is never sure (`windows.confident_mask`).
+
+    Validity assumptions:
+
+    - Assumption: the errors of the reads at one time are independent.
+      Diagnostic: none shipped.
+      Consequence of violation: the sigma of the mean is too small; a row repeated m times
+      lowers the Q1.2 floor by a factor m and the Q3.3 ratio by sqrt(m).
+      Reference: no source located.
+    """
     t = np.asarray(t_rel_s, dtype=float)
     s = np.asarray(sigma, dtype=float)
     unique, inverse = np.unique(t, return_inverse=True)
@@ -202,9 +211,11 @@ def spectrum_rows(obs: ObservedReads) -> SpectrumRows:
     average of equal values can differ from them in the last bit.
     """
     _, edge = band_edges(obs)
-    if np.ptp(obs.values) == 0.0:
-        raise NotComputed("zero variance")
     t, q = collapse_repeated_times(obs.t_rel_s, obs.values)
+    # Both ways round: equal reads can average to values one bit apart, and reads that
+    # differ can average, time by time, to one value.
+    if np.ptp(obs.values) == 0.0 or np.ptp(q) == 0.0:
+        raise NotComputed("zero variance")
     span = float(t[-1] - t[0])
     if span * edge < 1.0:
         raise NotComputed("span shorter than 2 median spacings")
@@ -335,7 +346,7 @@ def g10_halves(obs: ObservedReads) -> tuple[G10Row, G10Row]:
         if not spectrum.has_decade(f):
             raise NotComputed("span shorter than 20 median spacings")
         in_half = (obs.t_rel_s >= ts[0]) & (obs.t_rel_s <= ts[-1])
-        if np.ptp(obs.values[in_half]) == 0.0:
+        if np.ptp(obs.values[in_half]) == 0.0 or np.ptp(qs) == 0.0:
             raise NotComputed("zero variance")
         s = spectrum.lomb_scargle_spectrum(ts, qs, f, obs.median_spacing_s)
         out.append(G10Row(g10=spectrum.g10(f, s)))
@@ -535,6 +546,9 @@ def sigma_bound_ratio(obs: ObservedReads, sigma: np.ndarray) -> float:
     above; a ratio above 1 says the reported sigma exceeds that bound. Both sides are taken
     on the reads with repeated times collapsed, each to the sigma of its mean.
 
+    A scale below the rounding of the values (1e-12 of their largest magnitude) is zero:
+    the reads then lie on a line within each segment, and the ratio would be rounding.
+
     Validity assumptions:
 
     - Assumption: sigma is independent of the value it accompanies.
@@ -542,9 +556,17 @@ def sigma_bound_ratio(obs: ObservedReads, sigma: np.ndarray) -> float:
       Consequence of violation: the row is computed but not interpretable.
       Reference: Sera's L0 specification, section 5.4, which makes the row conditional on
       the independence of sigma (section 5.2); no equation locator.
+    - Assumption: the signal is locally linear over three consecutive reads, and the noise
+      is additive and independent from read to read.
+      Diagnostic: the second-difference ratio (Q2.1) beside it.
+      Consequence of violation: curvature between reads enters sigma_hat_D2, so the bound
+      is loose and a ratio below 1 says less.
+      Reference: Sera's L0 specification, section 4.1, where sigma_hat_D2 is introduced; no
+      equation locator.
     """
     bound = second_difference_scale(obs)
-    if np.ptp(obs.values) == 0.0 or not bound > 0.0:
+    rounding = 1e-12 * float(np.max(np.abs(obs.values))) if obs.values.size else 0.0
+    if np.ptp(obs.values) == 0.0 or not bound > rounding:
         raise NotComputed("zero variance")
     sigma_c = collapse_repeated_sigma(obs.t_rel_s, sigma)
     return math.sqrt(mean_sigma_squared(sigma_c)) / bound
@@ -664,8 +686,9 @@ def crossing_counts(
     that bracket runs from a confident in-spec read to a confident out-of-spec one and holds
     exactly one raw crossing of either direction; MERGED when such a bracket holds more;
     UNBRACKETED otherwise: a segment edge or a gap comes first, or the bracket stays on one
-    side or runs from out of spec to in spec, and the data does not assert the crossing. It is a reading of resolvability, not an estimator:
-    the bracket's ends depend on the process, so it is not Turnbull's interval.
+    side or runs from out of spec to in spec, and the data does not assert the crossing. It
+    is a reading of resolvability, not an estimator: the bracket's ends depend on the
+    process, so it is not Turnbull's interval.
 
     Validity assumptions:
 
@@ -1025,6 +1048,7 @@ class MetricTellability(StaleArtifactGuard):
     status: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        check_sigma_status(self.sigma_status)
         _check_statuses(self, METRIC_GROUPS)
 
 
@@ -1085,6 +1109,11 @@ def _attempt(status: dict[str, str], group: str, compute: Callable[[], T]) -> T 
 
 def _check_inputs(inputs: TellabilityInputs) -> None:
     check_sigma_status(inputs.sigma_status)
+    if inputs.sigma_status == NO_FINITE_SIGMA:
+        raise ValueError(
+            f"{NO_FINITE_SIGMA!r} is set by the step when a declared sigma is finite on no "
+            f"read; a caller declares the sigma, or says it is absent or not derived"
+        )
     if not (math.isfinite(inputs.unsure_k) and inputs.unsure_k > 0.0):
         raise ValueError(
             f"unsure_k must be finite and positive, got {inputs.unsure_k!r}"
@@ -1150,10 +1179,17 @@ def _check_inputs(inputs: TellabilityInputs) -> None:
 
 
 def _check_windows_reads(inputs: TellabilityInputs, obs: ObservedReads) -> None:
-    """The windows must have been carved on these reads: as many, at the same median
-    spacing. Windows of another record, or of part of this one, are refused."""
+    """The windows must have been carved on these reads: the same record id, as many reads,
+    at the same median spacing. Windows of another record, or of part of this one, are
+    refused."""
     if inputs.windows is None or not inputs.thresholds:
         return
+    carved_id = str(inputs.windows.meta["dataset_id"])
+    if carved_id != inputs.dataset_id:
+        raise ValueError(
+            f"the windows were carved on record {carved_id!r}, but tellability reads "
+            f"{inputs.dataset_id!r}; one record, one set of reads"
+        )
     diagnostics = inputs.windows.diagnostics
     n_carved = int(diagnostics["n_reads_finite"])
     median = float(diagnostics["median_spacing_s"])

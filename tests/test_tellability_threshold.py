@@ -3,11 +3,11 @@
 Oracles:
 - Q2.2: the definition, enumerated by hand: thin every segment from each of the m offsets in
   turn, count kept pairs and down-crossings, average over the offsets; the exponent against
-  an in-test least-squares fit. Independent identically distributed reads give gamma = 1 in
-  expectation, as a statistical control.
+  an in-test least-squares fit. Independent identically distributed reads give gamma = 1 to
+  first order (E[n] / P is the same at every m), as a statistical control.
 - Q3.4: a hand classification of every crossing of two built records, at k = 1 and 2.
 - Q4.1: hand counts of reads with a successor and transitions, in both forms; and 1 / beta
-  for a two-state chain, as a ratio of expectations.
+  for a two-state chain, as a ratio of expectations, and 1 / alpha with the margin inverted.
 - The in-spec fraction bounds: hand arithmetic, interval by interval; the carve's own
   fraction lies between them.
 - rho_k: (1 - alpha - beta)^k for a stationary two-state chain, and hand arithmetic on two
@@ -90,7 +90,8 @@ def test_the_count_exponent_on_a_hand_built_layout() -> None:
 @pytest.mark.statistical
 def test_independent_reads_give_a_count_exponent_of_one() -> None:
     """Oracle: analytic, as a statistical control. Independent reads in spec with
-    probability 0.3 have n / P = 0.21 at every m, so gamma = 1 in expectation on any layout.
+    probability 0.3 have E[n] / P = 0.21 at every m, on any layout, so gamma = 1 to first
+    order: the fit is on the logs of the counts, not of their expectations.
     Over seeds 0-299, each drawing the layout and the reads from `default_rng(seed)` as this
     test does, gamma measured 1.0001 with sd 0.0054 and a largest deviation of 0.017; 0.02
     is about four sd."""
@@ -282,12 +283,17 @@ def _stationary_chain(rng, alpha=0.3, beta=0.1, length=20, n_segments=2000):
 def test_the_mean_run_of_a_chain_is_one_over_beta() -> None:
     """Oracle: analytic, as a ratio of expectations. Each in-spec read with a successor
     leaves with probability beta, so E[reads with successor] / E[exits] = 1 / beta = 10,
-    whatever the segment length. An inverted margin reads the out-of-spec runs, 1 / alpha
-    = 3.3. Over seeds 0-39, each drawing the chain from `default_rng(seed)`, the estimate
-    measured 10.005 with sd 0.19 and a largest deviation of 0.40; 0.8 is about four sd."""
+    whatever the segment length. The margin inverted (small values good) reads the
+    out-of-spec runs, 1 / alpha = 3.33. Over seeds 0-39, each drawing the chain from
+    `default_rng(seed)`, the estimate measured 10.005 with sd 0.19 and a largest deviation
+    of 0.40, and the inverted one 3.326 with sd 0.061 and a largest deviation of 0.13; 0.8
+    and 0.3 are about four sd, and each mean lies far outside the other's band."""
     t, x = _stationary_chain(np.random.default_rng(13))
-    row = tl.run_length_row(_windows(t, np.where(x, 1.0, -1.0)), x)
+    v = np.where(x, 1.0, -1.0)
+    row = tl.run_length_row(_windows(t, v), x)
     assert abs(row.mean_in_spec_run_reads - 10.0) < 0.8
+    inverted = tl.run_length_row(_windows(t, v, big_values_good=False), ~x)
+    assert abs(inverted.mean_in_spec_run_reads - 1.0 / 0.3) < 0.3
 
 
 # --------------------------------------------------------------------------- bounds
@@ -356,7 +362,8 @@ def test_rho_k_of_a_stationary_chain_decays_as_a_power() -> None:
     segments, which short segments make frequent: it moves rho_1 to about 0.48. Over seeds
     0-39, each drawing the chain from `default_rng(seed)`, the deviation from 0.6^k stayed
     under 0.012, 0.020 and 0.029 at lags 1-3 (sd up to 0.011), and the cross-gap version's
-    above 0.11 at every lag; 0.045 is about four sd at lag 3."""
+    stayed at 0.11 or more at every lag (0.1096 at its closest, at lag 1); 0.045 is about
+    four sd at lag 3."""
     t, x = _stationary_chain(np.random.default_rng(14), length=5, n_segments=8000)
     rho = tl.in_spec_autocorr(observed_reads(t, np.ones(t.size)), x)
     assert len(rho) == 4
