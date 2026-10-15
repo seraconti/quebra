@@ -77,6 +77,37 @@ def test_one_segment_matches_the_allantools_reference() -> None:
 
 
 @pytest.mark.unit
+def test_a_large_constant_offset_leaves_the_deviation_unchanged() -> None:
+    """Oracle: `allantools.oadev` on the same series, which subtracts the mean before it
+    forms the phase. On a detuning of 1e9 Hz plus noise, the running phase sum keeps its
+    precision only if each segment's mean is subtracted first."""
+    import allantools
+
+    rng = np.random.default_rng(4)
+    y = rng.normal(size=2000) + 1e9
+    t = np.arange(2000, dtype=float) * 24.0
+    frame = allan.run(_norm(t, y), _config(taus_mode="octave")).modes["raw"]
+    taus, adev, _, _ = allantools.oadev(
+        y, rate=1.0 / 24.0, data_type="freq", taus=frame["tau_s"].to_numpy()
+    )
+    shared = frame.set_index("tau_s").loc[taus]
+    np.testing.assert_allclose(shared["adev_hz"].to_numpy(), adev, rtol=1e-9)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "t, y",
+    [(np.array([]), np.array([])), (np.arange(5.0) * 10.0, np.full(5, np.nan))],
+    ids=["empty", "all-nan"],
+)
+def test_a_record_with_no_finite_read_names_what_it_lacks(t, y) -> None:
+    """Oracle: specification. The refusal counts what is there: no segment, none longer
+    than 0 reads."""
+    with pytest.raises(ValueError, match=r"0 segment\(s\), the longest of 0 reads"):
+        allan.run(_norm(t, y), _config())
+
+
+@pytest.mark.unit
 def test_two_segments_pool_by_term_count_with_one_tau0() -> None:
     """Oracle: the explicit loops in `_hand_terms`. At m = 1 segment A holds four terms
     and B two; at m = 2 only A holds any. adev_err_hz is the pooled adev over the square
@@ -243,7 +274,11 @@ def test_tau0_and_the_spacing_diagnostics_on_a_layout_with_a_lone_read() -> None
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("nu0_hz", [True, "5.5e9"], ids=["bool", "string"])
+@pytest.mark.parametrize(
+    "nu0_hz",
+    [True, np.True_, "5.5e9", b"5.5e9"],
+    ids=["bool", "numpy-bool", "string", "bytes"],
+)
 def test_a_nu0_that_is_not_a_number_is_refused(nu0_hz: object) -> None:
     """Oracle: specification. `True` would read as 1 Hz and a string as a number."""
     with pytest.raises(TypeError, match="number of hertz"):
@@ -277,4 +312,21 @@ def test_the_figure_prints_the_spacing_and_what_it_dropped() -> None:
     assert "3 segments, 1 too short; spacing CV within segments 0.09" in text
     assert (
         "dropped: 0 non-finite reads, 0 non-positive or non-finite ADEV points" in text
+    )
+
+
+@pytest.mark.unit
+def test_the_figure_counts_a_dropped_read_and_the_zero_deviations() -> None:
+    """Oracle: the layout, by hand. Segment A has five reads, one NaN, so four remain and
+    reach m = 2; segment B is twelve equal reads, alone at m = 3 to 6, where every second
+    difference is 0: one non-finite read and four ADEV points of 0."""
+    t = np.r_[np.arange(5.0) * 10.0, 1040.0 + np.arange(12.0) * 10.0]
+    y = np.r_[[1.0, 3.0, np.nan, 5.0, 4.0], np.full(12, 2.0)]
+    figure = AllanPlot("unit").build_matplotlib(allan.run(_norm(t, y), _config()))
+    try:
+        text = "\n".join(x.get_text() for ax in figure.axes for x in ax.texts)
+    finally:
+        plt.close(figure)
+    assert (
+        "dropped: 1 non-finite reads, 4 non-positive or non-finite ADEV points" in text
     )

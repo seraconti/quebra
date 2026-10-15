@@ -70,8 +70,9 @@ def min_p(statistics: Mapping[str, Sequence[float] | np.ndarray]) -> MinPResult:
     test is conservative, not exact. The panel's p is also never below d / (B + 1), with d,
     at most the member count, the number of rows that hold some member's largest value
     alone, since each such row has min-p 1 / (B + 1). When the K members' largest values
-    sit in K different rows, as they typically do under the null for independent members,
-    the panel's p is at least K / (B + 1), so choose B + 1 well above K / alpha.
+    sit in K different rows, each alone, as they typically do under the null for
+    independent members, the panel's p is at least K / (B + 1), so choose B + 1 well above
+    K / alpha.
 
     Validity assumptions:
 

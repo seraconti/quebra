@@ -47,9 +47,9 @@ def check_nu0_hz(nu0_hz: object) -> float:
 
     A non-positive or non-finite value has no fractional meaning, and dividing by it would
     give a series of the right shape and the wrong size. A bool or a string is refused
-    before conversion: `True` would read as 1 Hz.
+    before conversion: `True` would read as 1 Hz, and so would numpy's `True`.
     """
-    if isinstance(nu0_hz, (bool, str, bytes)):
+    if isinstance(nu0_hz, (bool, np.bool_, str, bytes)):
         raise TypeError(f"nu0_hz must be a number of hertz, got {nu0_hz!r}")
     try:
         value = float(nu0_hz)  # type: ignore[arg-type]
