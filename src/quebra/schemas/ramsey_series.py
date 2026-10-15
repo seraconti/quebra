@@ -74,6 +74,7 @@ class RamseySeriesSchema:
                 "device": dataset.device,
                 "duration_h": dataset.duration_h,
                 "n_points": int(len(t_rel_s)),
+                "n_rows_dropped_invalid": int(np.count_nonzero(~valid)),
             }
         )
         # Determine run_start_unix_s via three resolution levels (see docs/TIME_SEMANTICS.md):

@@ -139,13 +139,72 @@ def test_the_default_normaliser_still_applies_when_no_schema_is_given(tmp_path):
 
 
 def test_the_frequency_error_travels_with_its_read_through_the_sort(tmp_path):
-    """Oracle: the file's own rows, sorted by time. Each read keeps its own error."""
+    """Oracle: the file's own rows, sorted by time. Each read keeps its own error, also
+    when a row with no frequency is dropped ahead of it, and the drop is counted."""
     path = tmp_path / "070423_run.csv"
     path.write_text(
-        "timestamp,frequency,frequency error\n2,5.2,30\n0,5.1,10\n1,5.3,20\n"
+        "timestamp,frequency,frequency error\n2,5.2,30\n0,5.1,10\n3,,99\n1,5.3,20\n"
     )
     norm = _load_dataset(Dataset(path=path, qubit=1, extra={"run_start_unix_s": 1.7e9}))
     assert norm["frequency_error_hz"].tolist() == [10.0, 20.0, 30.0]
+    assert norm["meta"]["n_rows_dropped_invalid"] == 1
+    assert norm["meta"]["n_rows_dropped_by_schema"] == 0
+
+
+_TRACK912_HEADER = (
+    "timestamp,amp,amp error,offset,offset error,T2star,T2star error,frequency,"
+    "frequency error,phase,phase_error,normalised chi-square\n"
+)
+
+
+def _track912_row(t: float, t2star_error: str) -> str:
+    return f"{t:.1f},1.0,0.02,0.5,0.005,3e-6,{t2star_error},2.1e6,6e3,0.1,0.03,0.1\n"
+
+
+def test_the_rows_a_validate_schema_drops_are_counted_on_the_record(tmp_path):
+    """Oracle: the file's own rows. `track912Schema` drops a row with no T2* error before
+    any step runs; the load records that one row is gone."""
+    from quebra.schemas.track912 import track912Schema
+
+    path = tmp_path / "070423_run.csv"
+    path.write_text(
+        _TRACK912_HEADER
+        + _track912_row(0, "4e-7")
+        + _track912_row(20, "")
+        + _track912_row(40, "5e-7")
+    )
+    norm = _load_dataset(
+        Dataset(
+            path=path,
+            schema=track912Schema,
+            qubit=1,
+            device="6D2S",
+            extra={"run_start_unix_s": 1.7e9},
+        )
+    )
+    assert norm["t_rel_s"].tolist() == [0.0, 40.0]
+    assert norm["meta"]["n_rows_dropped_by_schema"] == 1
+    assert norm["meta"]["n_rows_dropped_invalid"] == 0
+
+
+def test_the_load_counts_reach_the_t2star_and_fidelity_results():
+    """Oracle: the norm's own meta. Both results that describe a record repeat how many of
+    its rows the load dropped, so neither describes fewer reads than the file holds
+    unannounced."""
+    from quebra.analyzers import fidelity, t2star
+
+    counts = {"n_rows_dropped_by_schema": 3, "n_rows_dropped_invalid": 2}
+    norm = {
+        "t_rel_s": np.arange(5, dtype=float) * 60.0,
+        "T2star_s": np.full(5, 3e-6),
+        "delta_hz": np.zeros(5),
+        "rabi_hz": np.full(5, 704e3),
+        "meta": {"dataset_id": "unit", "rabi_source": "declared", **counts},
+    }
+    t2 = t2star.run(t2star.make_inputs_from_norm(norm))
+    fid = fidelity.run(fidelity.make_inputs_from_norm(norm, {}))
+    for meta in (t2.meta, fid.meta):
+        assert {key: meta[key] for key in counts} == counts
 
 
 def test_the_default_normaliser_names_itself_and_the_way_out(semicolon_csv):

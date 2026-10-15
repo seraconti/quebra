@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from quebra.analyzers.kaplan_meier import KaplanMeierSet
+from quebra.core.types import LOAD_COUNT_KEYS
 
 
 @dataclass(slots=True)
@@ -27,6 +28,8 @@ class FidelityInputs:
     dataset_id: str = ""
     rabi_source: str = ""
     rabi_declared_key: str = ""
+    # Rows the load dropped before this step (LOAD_COUNT_KEYS), copied onto the result.
+    load_counts: dict[str, int] = field(default_factory=dict)
 
 
 def make_inputs_from_norm(
@@ -77,6 +80,7 @@ def make_inputs_from_norm(
         dataset_id=dataset_id,
         rabi_source=rabi_source,
         rabi_declared_key=str(meta.get("rabi_declared_key", "")),
+        load_counts={key: int(meta[key]) for key in LOAD_COUNT_KEYS if key in meta},
     )
 
 
@@ -135,6 +139,7 @@ def run(inputs: FidelityInputs) -> FidelityResult:
         "dataset_id": inputs.dataset_id,
         "rabi_source": inputs.rabi_source,
         "rabi_declared_key": inputs.rabi_declared_key,
+        **inputs.load_counts,
     }
 
     if inputs.profile == "longrun":
