@@ -17,7 +17,8 @@ Every number here is computed on the reads as observed. Nothing is resampled ont
 - **One record, one gap rule.** Tellability segments the reads with the carve's rule. It
   refuses windows carved under another `gap_mult`, at another confidence level `k`, or without
   one of its thresholds, compared by label, value and side, and windows carved on other reads,
-  of another record or of part of this one, compared by read count and median spacing.
+  of another record or of part of this one, compared by record id, read count and median
+  spacing.
 - **A row's numbers agree with its statuses when it is built.** A row whose computed field is
   missing or not finite, or whose not-computed field carries a value, cannot be constructed.
 
@@ -85,9 +86,10 @@ A read with no sigma is never sure. The carve, when it draws uncertainty, marks 
 the side its value falls (`in_spec_uncertain` or `out_of_spec_uncertain`); the crossing
 placement (Q3.4) never takes it as confident; the in-spec fraction bounds count the interval it
 holds as unsettled. One rule, `windows.confident_mask`. It changes no read in the current
-records: the T2* and Ramsey loads (`track912Schema`) drop every row with a missing fit error
-before any step runs, and the count of dropped rows is on the artifact
-(`n_rows_dropped_by_schema`).
+records: the T2* and Ramsey loads (`track912Schema`) drop every row missing one of the fit
+fields the schema lists, `T2star error` among them, before any step runs, and the count of
+dropped rows is on the artifact (`n_rows_dropped_by_schema`). The `frequency error` is not on
+that list: a row missing it makes the load raise.
 
 ## Spectral quantities (`analyzers/spectrum.py`)
 
@@ -226,9 +228,9 @@ not acted on; whether to act on it is an open question for issue #4.
 | L10 | `sigma_bar` | `sigma_bar^2 = mean(sigma_i^2)` |
 | L11 | ADEV on the fractional series, with intervals | per segment and pooled; fractional only with a declared `nu0_hz`; `adev_err_hz` is adev over the square root of the pooled terms, which treats them as independent and so understates the uncertainty |
 | L12 | sigma rows for the metrics it tabulates (frequency, T2*, offset, amplitude) | infidelity's sigma rows: `sigma propagation not derived` |
-| L16 | Q2.3: `alpha = 3 - log10 G10`, quoted beside G10 | G10 only, read one way; no exponent, since leakage on irregular reads biases it |
 | L14 | the article's PSD, by interpolation and a Fourier transform (Supplementary notes, "PSD from frequency calibration data", p. 18) | Lomb-Scargle, no interpolation |
 | L15 | the article's filtering | the chi-square guard (the released records are already filtered); no sigma clip |
+| L16 | Q2.3: `alpha = 3 - log10 G10`, quoted beside G10 | G10 only, read one way; no exponent, since leakage on irregular reads biases it |
 
 L13 is the definition of the check battery's panel rows, which do not exist yet; it is written
 with them.
