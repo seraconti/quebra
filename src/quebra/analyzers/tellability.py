@@ -313,7 +313,7 @@ def g10_row(obs: ObservedReads, rows: SpectrumRows) -> G10Row:
     median spacings) is the one condition the record cannot answer; any other error from
     `spectrum.g10` is raised."""
     f = rows.frequency_hz
-    if f[-1] / 10.0 < f[0]:
+    if not spectrum.has_decade(f):
         raise NotComputed("span shorter than 20 median spacings")
     return G10Row(g10=spectrum.g10(f, rows.spectrum_per_hz))
 
@@ -328,12 +328,15 @@ def g10_halves(obs: ObservedReads) -> tuple[G10Row, G10Row]:
     out = []
     for ts, qs in ((t[:half], q[:half]), (t[half:], q[half:])):
         span = float(ts[-1] - ts[0]) if ts.size > 1 else 0.0
-        if span * edge < 10.0:
+        if span * edge < 1.0:
+            raise NotComputed("span shorter than 20 median spacings")
+        f = spectrum.frequency_grid(span, edge)
+        # The decade test is g10's own, so a half `g10` would refuse never reaches it.
+        if not spectrum.has_decade(f):
             raise NotComputed("span shorter than 20 median spacings")
         in_half = (obs.t_rel_s >= ts[0]) & (obs.t_rel_s <= ts[-1])
         if np.ptp(obs.values[in_half]) == 0.0:
             raise NotComputed("zero variance")
-        f = spectrum.frequency_grid(span, edge)
         s = spectrum.lomb_scargle_spectrum(ts, qs, f, obs.median_spacing_s)
         out.append(G10Row(g10=spectrum.g10(f, s)))
     return out[0], out[1]

@@ -161,10 +161,10 @@ def derivative_variance(frequency_hz: np.ndarray, spectrum: np.ndarray) -> np.nd
     - Assumption: S is flat below the first grid frequency 1 / T.
       Diagnostic: none shipped.
       Consequence of violation: the head piece misstates L near the bottom of the grid. For
-      a spectrum falling as f^-2 it gives a third of the true piece, so at the shortest span
-      `g10` accepts (ten grid frequencies) G10 reads 28 where the continuous integral gives
-      10; with thousands of frequencies the error falls below 1e-3 (both pinned in
-      `test_spectrum.py`).
+      a spectrum falling as f^-2 it gives a third of the true piece, so on n grid
+      frequencies G10 reads 10 (n - 2/3) / (n - 20/3) where the continuous integral gives
+      10: 28 at the shortest grid `g10` accepts (n = 10), within 1% from n of about 600, and
+      6e-4 high at n = 10,000 (the first and last pinned in `test_spectrum.py`).
       Reference: no source located.
     """
     f = np.asarray(frequency_hz, dtype=float)
@@ -175,6 +175,15 @@ def derivative_variance(frequency_hz: np.ndarray, spectrum: np.ndarray) -> np.nd
     head = (2.0 * np.pi) ** 2 * s[0] * f[0] ** 3 / 3.0
     steps = 0.5 * (integrand[1:] + integrand[:-1]) * np.diff(f)
     return head + np.concatenate(([0.0], np.cumsum(steps)))
+
+
+def has_decade(frequency_hz: np.ndarray) -> bool:
+    """Whether the grid holds a full decade below its top frequency, f_top / 10 >= f[0]:
+    ten frequencies or more. Ten frequencies k / T make the two equal in exact arithmetic,
+    and rounding can put f_top / 10 a bit below f[0], so the comparison allows the last
+    bits. The one test of that condition: `g10` and the tellability rows all ask it."""
+    f = np.asarray(frequency_hz, dtype=float)
+    return bool(f[-1] / 10.0 >= f[0] * (1.0 - 1e-12))
 
 
 def g10(frequency_hz: np.ndarray, spectrum: np.ndarray) -> float:
@@ -189,8 +198,7 @@ def g10(frequency_hz: np.ndarray, spectrum: np.ndarray) -> float:
 
     Validity assumptions:
 
-    - Assumption: the periodogram does not move power between frequencies, as on evenly
-      spaced reads.
+    - Assumption: the periodogram does not move power between frequencies.
       Diagnostic: none shipped; W(f_s) measures folding from above the band edge, not
       leakage inside the band.
       Consequence of violation: on irregular reads, leakage moves G10 up for a spectrum
@@ -205,7 +213,7 @@ def g10(frequency_hz: np.ndarray, spectrum: np.ndarray) -> float:
     """
     f = _check_frequencies(np.asarray(frequency_hz, dtype=float))
     lower = float(f[-1]) / 10.0
-    if lower < f[0]:
+    if not has_decade(f):
         raise ValueError(
             f"f_top / 10 = {lower:.6g} Hz lies below the first frequency {f[0]:.6g} Hz; "
             f"the record spans too few read spacings for G10"

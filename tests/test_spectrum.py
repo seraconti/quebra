@@ -120,6 +120,32 @@ def test_g10_on_the_shortest_grid_is_exactly_28_for_an_inverse_square_spectrum()
 
 
 @pytest.mark.unit
+def test_g10_interpolates_the_lower_point_between_grid_frequencies() -> None:
+    """Oracle: hand arithmetic. Twelve frequencies k / T (an edge at 12.5 / T); S = f^-2
+    makes (2 pi f)^2 S constant, c. L(1 / T) = c / (3 T) and L(2 / T) = (1/3 + 1) c / T, so
+    at f_top / 10 = 1.2 / T the linear reading is (1/3 + 0.2) c / T; L(f_top) = (12 - 2/3)
+    c / T; G10 = (34 / 3) / (8 / 15) = 21.25. Reading the grid point below or above instead
+    gives 34 or 8.5."""
+    f = sp.frequency_grid(1000.0, 0.0125)
+    assert f.size == 12
+    assert sp.g10(f, f**-2.0) == pytest.approx(21.25, rel=1e-12)
+
+
+@pytest.mark.unit
+def test_ten_grid_frequencies_hold_a_decade_whatever_the_rounding() -> None:
+    """Oracle: exact arithmetic. Ten frequencies k / T give f_top / 10 = 1 / T = f_0. In
+    floating point f_top / 10 lands a bit below f_0 for some spans (78 of these 500 at
+    f704c18), and a test that compares them exactly would refuse a grid that holds its
+    decade."""
+    spans = np.random.default_rng(2).uniform(100.0, 1e6, size=500)
+    for span in spans:
+        f = sp.frequency_grid(float(span), 10.5 / float(span))
+        assert f.size == 10
+        assert sp.has_decade(f), span
+        assert sp.g10(f, f**-2.0) == pytest.approx(28.0, rel=1e-9)
+
+
+@pytest.mark.unit
 def test_the_grid_runs_from_one_over_t_to_the_last_frequency_below_the_edge() -> None:
     """Oracle: the definition. k / T from k = 1, the last within 1 / T below f_e, at a
     span that holds a non-integer number of frequencies."""
@@ -132,9 +158,10 @@ def test_the_grid_runs_from_one_over_t_to_the_last_frequency_below_the_edge() ->
 
 @pytest.mark.unit
 def test_a_large_constant_offset_leaves_the_spectrum_unchanged() -> None:
-    """Oracle: the floating mean. The spectrum of q + 2e6 (the size of a fitted Ramsey
-    frequency in hertz) is the spectrum of q; without a floating mean the offset's power
-    leaks across the band."""
+    """Oracle: invariance to a constant offset. The spectrum of q + 2e6 (the size of a
+    fitted Ramsey frequency in hertz) is the spectrum of q; with the offset kept, its power
+    leaks across the band. This pins the removal of the mean: centring the values once
+    would pass it too, so it does not tell the floating mean from a single centring."""
     rng = np.random.default_rng(6)
     t = _gapped_irregular_times(rng, 2000)
     q = rng.normal(size=t.size) + np.sin(2.0 * np.pi * t / 5e4)
@@ -157,39 +184,43 @@ def _sparse_gapped_times(rng: np.random.Generator, n: int = 700) -> np.ndarray:
     return np.r_[0.0, np.cumsum(steps)]
 
 
-def _ou(t: np.ndarray, tau: float, rng: np.random.Generator) -> np.ndarray:
+def _ou(t_rel_s: np.ndarray, tau_s: float, rng: np.random.Generator) -> np.ndarray:
     """An Ornstein-Uhlenbeck process of variance 1, exact at any read times."""
-    x = np.empty(t.size)
+    x = np.empty(t_rel_s.size)
     x[0] = rng.normal()
-    a = np.exp(-np.diff(t) / tau)
-    z = rng.normal(size=t.size - 1)
-    for i in range(1, t.size):
+    a = np.exp(-np.diff(t_rel_s) / tau_s)
+    z = rng.normal(size=t_rel_s.size - 1)
+    for i in range(1, t_rel_s.size):
         x[i] = a[i - 1] * x[i - 1] + math.sqrt(1.0 - a[i - 1] ** 2) * z[i - 1]
     return x
 
 
-def _g10_truth(t: np.ndarray, f_top: float, process: str) -> float:
+# The line of the near-white case, as a fraction of the top grid frequency: near the edge.
+_LINE_AT = 0.9
+
+
+def _g10_truth(t_rel_s: np.ndarray, f_top_hz: float, process: str) -> float:
     """G10 of the process's own spectrum, by the analytic L(F) = integral of (2 pi f)^2 S.
 
     OU of variance 1 and time tau: S = 4 tau / (1 + (2 pi f tau)^2), L = (2 / (pi tau^2))
     (X - atan X), X = 2 pi F tau. Random walk: S ∝ f^-2, L ∝ F. White noise of variance 1
     on the median spacing d: S = 2 d, L = (2 pi)^2 2 d F^3 / 3. A line of variance 1 at f0
     adds (2 pi f0)^2 to L for F >= f0."""
-    span = float(t[-1] - t[0])
-    d = float(np.median(np.diff(t)))
-    tau = span / 10.0
-    f0 = 0.15 * f_top
+    span_s = float(t_rel_s[-1] - t_rel_s[0])
+    spacing_s = float(np.median(np.diff(t_rel_s)))
+    tau_s = span_s / 10.0
+    f0_hz = _LINE_AT * f_top_hz
 
-    def L(F: float) -> float:
+    def L(f_hz: float) -> float:
         if process == "ou":
-            x = 2.0 * math.pi * F * tau
-            return 2.0 / (math.pi * tau**2) * (x - math.atan(x))
+            x = 2.0 * math.pi * f_hz * tau_s
+            return 2.0 / (math.pi * tau_s**2) * (x - math.atan(x))
         if process == "random walk":
-            return F
-        white = (2.0 * math.pi) ** 2 * 2.0 * d * F**3 / 3.0
-        return white + ((2.0 * math.pi * f0) ** 2 if F >= f0 else 0.0)
+            return f_hz
+        white = (2.0 * math.pi) ** 2 * 2.0 * spacing_s * f_hz**3 / 3.0
+        return white + ((2.0 * math.pi * f0_hz) ** 2 if f_hz >= f0_hz else 0.0)
 
-    return L(f_top) / L(f_top / 10.0)
+    return L(f_top_hz) / L(f_top_hz / 10.0)
 
 
 @pytest.mark.statistical
@@ -201,27 +232,32 @@ def test_leakage_moves_g10_up_for_red_spectra_on_a_sparse_gapped_schedule(
 
     On a sparse, gapped schedule every run of a red process (OU with tau = T / 10, a random
     walk) reads a G10 at or above its truth of about 10: leakage moves it up. A near-white
-    process with a line near the band edge is the exception: every run reads below its
-    truth of about 1070, but stays far above the red truths. Ten seeds per process; on 30
-    seeds of this schedule the red runs read 24 to 54 times their truth and the line runs
-    0.43 to 0.85 of it, so neither assertion sits near its margin.
+    process with a line at 0.9 of the top grid frequency is the exception: every run reads
+    below its truth of about 3430, but stays far above the red truths. Ten seeds per
+    process. Over seeds 0-29 of this recipe, each drawing from `default_rng(seed)` as the
+    test does, the OU runs read 25.8 to 54.2 times their truth, the random walk 24.5 to
+    46.5, and the line runs 0.43 to 0.70 of theirs (estimates 1460 to 2395), so neither
+    assertion sits near its margin.
     """
-    t = _sparse_gapped_times(np.random.default_rng(0))
-    spacing = float(np.median(np.diff(t)))
-    f = sp.frequency_grid(float(t[-1] - t[0]), 1.0 / (2.0 * spacing))
-    truth = _g10_truth(t, float(f[-1]), process)
+    t_rel_s = _sparse_gapped_times(np.random.default_rng(0))
+    spacing_s = float(np.median(np.diff(t_rel_s)))
+    f_hz = sp.frequency_grid(float(t_rel_s[-1] - t_rel_s[0]), 1.0 / (2.0 * spacing_s))
+    truth = _g10_truth(t_rel_s, float(f_hz[-1]), process)
     ratios = []
     for seed in range(10):
         rng = np.random.default_rng(seed)
         if process == "ou":
-            q = _ou(t, float(t[-1] - t[0]) / 10.0, rng)
+            q = _ou(t_rel_s, float(t_rel_s[-1] - t_rel_s[0]) / 10.0, rng)
         elif process == "random walk":
-            q = np.r_[0.0, np.cumsum(rng.normal(size=t.size - 1) * np.sqrt(np.diff(t)))]
+            steps = rng.normal(size=t_rel_s.size - 1) * np.sqrt(np.diff(t_rel_s))
+            q = np.r_[0.0, np.cumsum(steps)]
         else:
             phase = rng.uniform(0.0, 2.0 * math.pi)
-            line = math.sqrt(2.0) * np.sin(2.0 * math.pi * 0.15 * f[-1] * t + phase)
-            q = rng.normal(size=t.size) + line
-        ratios.append(sp.g10(f, sp.lomb_scargle_spectrum(t, q, f, spacing)) / truth)
+            f0_hz = _LINE_AT * f_hz[-1]
+            line = math.sqrt(2.0) * np.sin(2.0 * math.pi * f0_hz * t_rel_s + phase)
+            q = rng.normal(size=t_rel_s.size) + line
+        estimate = sp.g10(f_hz, sp.lomb_scargle_spectrum(t_rel_s, q, f_hz, spacing_s))
+        ratios.append(estimate / truth)
     if process == "white and edge line":
         assert max(ratios) < 1.0
         assert min(ratios) * truth > 100.0
@@ -262,6 +298,8 @@ def test_leakage_moves_g10_up_for_red_spectra_on_a_sparse_gapped_schedule(
         ),
         (lambda: sp.spectral_window(np.array([0.0, np.nan]), 0.1), "finite read times"),
         (lambda: sp.spectral_window(np.arange(3.0), [[0.1]]), "1-D"),
+        (lambda: sp.spectral_window(np.arange(3.0), np.inf), "finite and positive"),
+        (lambda: sp.spectral_window(np.ones((2, 2)), 0.1), "finite read times"),
     ],
     ids=[
         "no-frequency",
@@ -273,6 +311,8 @@ def test_leakage_moves_g10_up_for_red_spectra_on_a_sparse_gapped_schedule(
         "no-frequencies",
         "nan-time",
         "2d-frequencies",
+        "infinite-frequency",
+        "2d-times",
     ],
 )
 def test_an_unanswerable_spectrum_raises(call, match) -> None:

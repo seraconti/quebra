@@ -197,6 +197,7 @@ def _degenerate(shape: str):
         "no-gap",
         "two",
         "one",
+        "forty-one",
     ],
 )
 def test_a_legal_record_of_any_shape_ships_a_result(shape) -> None:
@@ -207,6 +208,12 @@ def test_a_legal_record_of_any_shape_ships_a_result(shape) -> None:
         t, q, sigma = np.array([0.0, 10.0]), np.array([0.1, 0.9]), np.array([0.2, 0.2])
     elif shape == "one":
         t, q, sigma = np.array([0.0]), np.array([0.1]), np.array([0.2])
+    elif shape == "forty-one":
+        # Halves of 21 and 20 reads: the first holds exactly ten grid frequencies, and at
+        # this spacing rounding puts f_top / 10 a bit below f_0.
+        rng = np.random.default_rng(41)
+        t = np.arange(41) * 42.8899947017729
+        q, sigma = rng.normal(size=41), rng.uniform(0.2, 0.6, size=41)
     else:
         t, q, sigma = _degenerate(shape)
     result = tl.run(_inputs(t, q, sigma))
