@@ -50,12 +50,6 @@ _COMPREHENSIONS = ast.ListComp | ast.SetComp | ast.GeneratorExp | ast.DictComp
 # and a different comparison in the same scope does not inherit it. Scope names classes too.
 _DIVERGENCE = "ordered['p_signed_diff_mean'].abs() > threshold"
 NOT_A_METRIC_THRESHOLD = {
-    # which rungs of the nines ladder the data spans; it picks thresholds
-    (
-        "src/quebra/analyzers/fidelity.py",
-        "panel_thresholds",
-        "inf_min < inf_thr < inf_max",
-    ),
     # divergence thresholds on p-value differences
     (
         "src/quebra/analyzers/instrument_validation.py",
@@ -72,11 +66,18 @@ NOT_A_METRIC_THRESHOLD = {
         "main",
         "sub['p_signed_diff_mean'].abs() > DIVERGENCE_THRESHOLD",
     ),
-    # the chi-squared fit-quality filter
+    # the chi-square guard: it refuses a record, it never classifies a read
     (
         "src/quebra/transforms/filter.py",
         "run",
-        "np.asarray(current['chi_squared'], dtype=float) < chi_threshold",
+        "chi < chi_threshold",
+    ),
+    # tellability checks the carve's threshold against the one asked for: two settings,
+    # no read
+    (
+        "src/quebra/analyzers/tellability.py",
+        "_check_inputs",
+        "float(rows['threshold_value'].iloc[0]) != float(value)",
     ),
 }
 

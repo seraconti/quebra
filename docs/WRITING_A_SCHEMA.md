@@ -67,7 +67,8 @@ It expects a `timestamp` column and a `frequency` column, both numeric, and a re
 start — either `Dataset.extra["run_start_unix_s"]` or a `DDMMYY_` filename prefix, which it
 reads as local midnight and warns about. From those it produces `t_rel_s`, `delta_hz`
 (frequency relative to the mean), `raw_frequency_hz` and `meta`, and passes through
-`normalised chi-square`, `T2star` and `T2star error` when they are present.
+`normalised chi-square`, `T2star`, `T2star error` and `frequency error` (as
+`frequency_error_hz`) when they are present.
 
 Three things in it are worth copying:
 
@@ -82,6 +83,17 @@ the route every Ramsey job in `jobs/active/` actually takes: they name `track912
 renames this group's columns onto `timestamp`/`frequency`, and `RamseySeriesSchema` turns the
 result into a `Norm`. It is the default for `Dataset.schema=None` too, but no shipped job
 relies on that.
+
+**Rows a load drops are counted.** On the `validate` path and on the default path (no
+schema), `job.load` records in `meta["n_rows_dropped_by_schema"]` how many rows the
+`validate` removed (0 on the default path). `RamseySeriesSchema` records in
+`meta["n_rows_dropped_invalid"]` the rows it dropped for a non-finite timestamp or frequency.
+`track912Schema` drops every row missing one of the fit fields it lists (`T2star error`
+among them; a missing `frequency error` is not on the list and makes the load raise). The
+T2*, fidelity and tellability results repeat both counts, so an artifact says how many of the
+file's rows never reached it. A schema with its own `to_norm` returns its norm as it built it,
+`RamseySeriesSchema` named explicitly included, so `n_rows_dropped_by_schema` is set only if
+that schema sets it; an absent count reads as not recorded.
 
 ## What `Dataset` carries
 

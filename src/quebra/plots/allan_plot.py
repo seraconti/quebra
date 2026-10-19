@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 
 from quebra.analyzers.allan import AllanResult
 from quebra.plots.base import BasePlot
-from quebra.plots.theme import mix_with_white, qubit_color, style_context
+from quebra.plots.theme import CAPTION, mix_with_white, qubit_color, style_context
 
 
 class AllanPlot(BasePlot):
@@ -61,7 +61,7 @@ class AllanPlot(BasePlot):
             for index, mode_name in enumerate(mode_names):
                 frame = result.modes[mode_name]
                 tau_s = frame["tau_s"].to_numpy(dtype=float)
-                adev = frame["adev"].to_numpy(dtype=float)
+                adev = frame["adev_hz"].to_numpy(dtype=float)
                 color = base_color if index == 0 else accent_color
                 ax_main.loglog(
                     tau_s,
@@ -89,8 +89,9 @@ class AllanPlot(BasePlot):
                 if len(tau) > 0:
                     tau0 = float(tau[0])
                     y0 = float(y[0])
-                    for alpha in [0.5, 1.0, -0.5, -1.0]:
-                        guide = y0 * (tau / tau0) ** alpha
+                    # Guide slopes of log ADEV on log tau, not spectral exponents.
+                    for slope_guide in [0.5, 1.0, -0.5, -1.0]:
+                        guide = y0 * (tau / tau0) ** slope_guide
                         ax_main.loglog(
                             tau,
                             guide,
@@ -149,6 +150,7 @@ class AllanPlot(BasePlot):
                             & (tau_f > 0.0)
                             & (frac_f > 0.0)
                         )
+                        n_frac_dropped = int(np.sum(~frac_mask))
                         if np.any(frac_mask):
                             ax_frac.loglog(
                                 tau_f[frac_mask],
@@ -161,10 +163,12 @@ class AllanPlot(BasePlot):
                                 label="Fractional ADEV",
                             )
 
-                            carrier = getattr(result, "carrier_hz", None)
-                            if carrier is not None and np.isfinite(float(carrier)):
+                            nu0 = result.nu0_hz
+                            if nu0 is not None and np.isfinite(float(nu0)):
                                 ax_frac.annotate(
-                                    f"normalization: ADEV / {carrier / 1e9:.5f} GHz",
+                                    f"normalization: ADEV / nu0 = {nu0 / 1e9:.5f} GHz"
+                                    f"; dropped: {n_frac_dropped} non-positive or "
+                                    f"non-finite points",
                                     xy=(0.98, 0.98),
                                     xycoords="axes fraction",
                                     ha="right",
@@ -179,14 +183,28 @@ class AllanPlot(BasePlot):
                             )
                             ax_frac.legend(frameon=False)
 
-                fs_hz = meta.get("acquisition_frequency_hz")
-                if fs_hz is not None and np.isfinite(float(fs_hz)):
-                    title = f"Allan - {meta.get('dataset_id')} | avg f_acq={float(fs_hz):.5f} Hz"
+                tau0_s = meta.get("tau0_s")
+                if tau0_s is not None and np.isfinite(float(tau0_s)):
+                    title = f"Allan - {meta.get('dataset_id')} | tau0 = {float(tau0_s):.4g} s"
                 else:
                     title = f"Allan - {meta.get('dataset_id')}"
                 ax_main.set_title(title)
+                diag = result.diagnostics
+                ax_main.annotate(
+                    f"{diag['n_segments']} segments, {diag['n_segments_too_short']} too "
+                    f"short; spacing CV within segments "
+                    f"{diag['spacing_cv_within_segments']:.2f} (tau is nominal when it is "
+                    f"large); a tau is kept with >= {diag['min_terms_per_tau']} pooled terms"
+                    f"\ndropped: {diag['n_dropped_nonfinite']} non-finite reads, "
+                    f"{int(np.sum(~tau_mask))} non-positive or non-finite ADEV points",
+                    xy=(0.02, 0.02),
+                    xycoords="axes fraction",
+                    ha="left",
+                    va="bottom",
+                    **CAPTION,
+                )
 
-            ax_main.set_ylabel("ADEV")
+            ax_main.set_ylabel("ADEV (Hz)")
             ax_main.grid(True, which="major", color="lightgray", alpha=0.4)
             ax_main.legend(frameon=False)
 
@@ -198,9 +216,9 @@ class AllanPlot(BasePlot):
                 ax_frac.tick_params(axis="x", which="both", labelbottom=True)
 
             ax_slope.set_xlabel("Tau (s)")
-            ax_slope.set_ylabel("Local slope")
+            ax_slope.set_ylabel("d log ADEV / d log tau")
             ax_slope.set_title(
-                "Local slope from consecutive log-log finite differences"
+                "Local slope of log ADEV on log tau (mu / 2, not the spectral alpha)"
             )
             ax_slope.axhline(0.0, color="gray", alpha=0.4, linewidth=0.8)
             ax_slope.grid(True, which="major", color="lightgray", alpha=0.4)

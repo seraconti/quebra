@@ -31,4 +31,4 @@ class Dataset:
 
     def __post_init__(self) -> None:
         self.path = Path(self.path)
-        # keep path normalized; a companion path is a separate Dataset
+        # keep path normalized; a side table is a separate Dataset

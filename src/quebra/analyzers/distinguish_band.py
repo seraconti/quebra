@@ -57,9 +57,9 @@ class DistinguishBand(StaleArtifactGuard):
     reads_per_window_per_threshold: dict[str, list[int]] = field(default_factory=dict)
     median_duration_over_read_spacing: dict[str, float] = field(default_factory=dict)
     # Half-width of the band around a threshold that the per-read errors cannot
-    # separate: k * median sigma over the reads actually classified. Computed here so
-    # the shaded region and the unresolved COUNT come from the same definition -
-    # taking a median of the data at draw time made them disagree.
+    # separate: k * median sigma over the reads actually classified, computed here rather
+    # than at draw time. The unresolved count uses each read's own sigma, so the two
+    # agree only when sigma is constant.
     unresolved_band_half_per_threshold: dict[str, float] = field(default_factory=dict)
     frac_windows_ge_3_reads: dict[str, float] = field(default_factory=dict)
 
@@ -251,8 +251,11 @@ def run(inputs: DistinguishBandInputs) -> DistinguishBand:
         )
 
         state = r["state"] if len(r) else pd.Series(dtype=object)
-        n_unresolved = int(
-            state.isin([STATE_IN_SPEC_UNCERTAIN, STATE_OUT_OF_SPEC_UNCERTAIN]).sum()
+        uncertain = state.isin([STATE_IN_SPEC_UNCERTAIN, STATE_OUT_OF_SPEC_UNCERTAIN])
+        # Uncertain reads with a known sigma, |margin| < k sigma. A read with no sigma is
+        # uncertain too, but it is counted once, under n_unknown.
+        n_unresolved = (
+            int((uncertain & r["sigma_known"].astype(bool)).sum()) if len(r) else 0
         )
         band.state_counts_per_threshold[label] = {
             "n_in": int((state == STATE_IN_SPEC).sum()),

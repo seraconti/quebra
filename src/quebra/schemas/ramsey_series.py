@@ -10,8 +10,9 @@ It is a schema, which is what it always was. `job.load` dispatches to
 and none of the requirements below apply to you. See `docs/WRITING_A_SCHEMA.md`.
 
 Nothing about the computation changed in the move. The column names, the sort, the
-`delta_hz` convention (relative to the mean, no Rabi drive synthesised), the three-level
-run-start resolution and the optional passthrough columns are all as they were.
+`delta_hz` convention (relative to the mean, no Rabi drive synthesised) and the three-level
+run-start resolution are as they were. The optional passthrough columns are listed in
+`docs/WRITING_A_SCHEMA.md`.
 """
 
 from __future__ import annotations
@@ -73,6 +74,7 @@ class RamseySeriesSchema:
                 "device": dataset.device,
                 "duration_h": dataset.duration_h,
                 "n_points": int(len(t_rel_s)),
+                "n_rows_dropped_invalid": int(np.count_nonzero(~valid)),
             }
         )
         # Determine run_start_unix_s via three resolution levels (see docs/TIME_SEMANTICS.md):
@@ -97,8 +99,8 @@ class RamseySeriesSchema:
                     warnings.warn(
                         f"[{meta['dataset_id']}] run_start_unix_s derived from DDMMYY filename prefix "
                         f"as midnight local time (resolution: date_only_midnight). Intra-day "
-                        f"precision is lost; a calibration from earlier the same day or late "
-                        f"the previous day may be selected incorrectly. "
+                        f"precision is lost, so nothing that needs the time of day may rely "
+                        f"on it. "
                         f"Provide Dataset.extra['run_start_unix_s'] for precision.",
                         UserWarning,
                         # 3, not 2: after the move out of `_load_dataset` there is one more
@@ -143,5 +145,9 @@ class RamseySeriesSchema:
         if "T2star error" in frame.columns:
             norm["T2star_error_s"] = pd.to_numeric(
                 frame["T2star error"], errors="coerce"
+            ).to_numpy(dtype=float)[valid][order]
+        if "frequency error" in frame.columns:
+            norm["frequency_error_hz"] = pd.to_numeric(
+                frame["frequency error"], errors="coerce"
             ).to_numpy(dtype=float)[valid][order]
         return norm

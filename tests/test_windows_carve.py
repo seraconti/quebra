@@ -207,6 +207,213 @@ def test_equality_is_not_a_gap() -> None:
     assert n_gaps == 0
 
 
+@pytest.mark.unit
+def test_observed_reads_segments_follow_the_strict_gap_rule_and_match_the_carve():
+    """Oracle: the strict `>` rule by hand. Median spacing 1 s, threshold 10 s: the 10 s
+    step stays inside a segment and the 25 s step opens one. The carve's gap spans must be
+    the same boundary, because both read one rule."""
+    t = np.array([0.0, 1.0, 2.0, 3.0, 13.0, 14.0, 15.0, 40.0, 41.0, 42.0])
+    obs = windows.observed_reads(t, np.full(t.size, 2.0), gap_mult=10.0)
+    assert obs.segments() == [(0, 7), (7, 10)]
+    assert obs.within_segment().tolist() == [True] * 6 + [False] + [True] * 2
+
+    carved = windows.run(
+        windows.WindowsInputs(
+            t_rel_s=t,
+            values=np.full(t.size, 2.0),
+            thresholds=[("u", 1.0, True)],
+            gap_mult=10.0,
+        )
+    )
+    spans = [(float(t[s - 1]), float(t[s])) for s, _ in obs.segments()[1:]]
+    assert carved.diagnostics["gap_spans_s"] == spans == [(15.0, 40.0)]
+
+
+@pytest.mark.unit
+def test_dropped_nonfinite_reads_leave_a_gap_where_they_were():
+    """Oracle: unit-spaced reads at t = 0..20 with values NaN at t = 4..14. Dropped, they
+    leave a 12 s step against a 1 s median, which is a gap; kept, they would fill it and the
+    record would be one segment."""
+    t = np.arange(21, dtype=float)
+    values = np.where((t >= 4) & (t <= 14), np.nan, 1.0)
+    obs = windows.observed_reads(t, values, gap_mult=10.0)
+    assert obs.n_dropped_nonfinite == 11
+    assert obs.t_rel_s.tolist() == [0.0, 1.0, 2.0, 3.0, *range(15, 21)]
+    assert obs.segments() == [(0, 4), (4, 10)]
+    assert obs.n_gaps == 1
+
+
+@pytest.mark.unit
+def test_sigma_stays_with_its_read_when_a_read_is_dropped():
+    """Oracle: each read's own sigma, by index. The read at t = 2 has a NaN value, so the
+    kept sigmas are the other four, in order."""
+    t = np.arange(5, dtype=float)
+    obs = windows.observed_reads(
+        t,
+        np.array([1.0, 1.0, np.nan, 1.0, 1.0]),
+        sigma=np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
+    )
+    assert obs.sigma.tolist() == [0.1, 0.2, 0.4, 0.5]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "t, values, segments",
+    [
+        (np.array([]), np.array([]), []),
+        (np.array([7.0]), np.array([1.0]), [(0, 1)]),
+        (np.array([0.0, 1.0]), np.array([np.nan, np.nan]), []),
+    ],
+    ids=["no-read", "one-read", "all-nonfinite"],
+)
+def test_a_record_too_short_to_space_has_no_spacing(t, values, segments):
+    """Oracle: specification. No pair of reads, no spacing: the median is NaN rather than a
+    made-up scale, nothing is a gap, and an empty record has no segment at all."""
+    obs = windows.observed_reads(t, values)
+    assert obs.segments() == segments
+    assert obs.within_segment().tolist() == []
+    assert math.isnan(obs.median_spacing_s)
+    assert math.isnan(obs.effective_spacing_s())
+
+
+@pytest.mark.unit
+def test_effective_spacing_is_length_biased_and_ignores_the_gap():
+    """Oracle: sum(delta^2) / sum(delta) by hand. A regular 10 s grid with a gap gives 10 s
+    exactly; seven 10 s and three 40 s spacings give 5500 / 190 = 550 / 19 s, which their
+    plain mean (19 s) does not. The 1000 s gap is in neither."""
+    regular = np.r_[np.arange(8) * 10.0, 1070.0 + np.arange(5) * 10.0]
+    assert (
+        windows.observed_reads(regular, np.ones(regular.size)).effective_spacing_s()
+        == 10.0
+    )
+    steps = [10.0] * 4 + [40.0] * 2 + [1000.0] + [10.0] * 3 + [40.0]
+    t = np.r_[0.0, np.cumsum(steps)]
+    obs = windows.observed_reads(t, np.ones(t.size))
+    assert obs.n_gaps == 1
+    assert obs.effective_spacing_s() == pytest.approx(550.0 / 19.0, rel=1e-15)
+
+
+@pytest.mark.unit
+def test_a_read_is_confident_at_k_sigma_and_never_without_a_sigma():
+    """Oracle: specification. |margin| >= k sigma with sigma finite; equality counts; a read
+    whose sigma is unknown is never confident."""
+    margin = np.array([2.0, -2.0, 1.99, 5.0, 5.0])
+    sigma = np.array([1.0, 1.0, 1.0, np.nan, np.inf])
+    assert windows.confident_mask(margin, sigma, 2.0).tolist() == [
+        True,
+        True,
+        False,
+        False,
+        False,
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("k", [0.0, -1.0, np.nan, np.inf])
+def test_a_confidence_level_must_be_finite_and_positive(k):
+    """Oracle: specification. k = 0 would call every read confident; the one check stands
+    for the carve, the crossing placement and the in-spec bounds, which all ask it. The
+    carve asks it even when it draws no uncertainty, since the windows record k."""
+    with pytest.raises(ValueError, match="k must be finite and positive"):
+        windows.confident_mask(np.array([1.0]), np.array([1.0]), k)
+    with pytest.raises(ValueError, match="k must be finite and positive"):
+        windows.run(
+            windows.WindowsInputs(
+                t_rel_s=np.arange(4) * 10.0,
+                values=np.array([1.0, -1.0, 1.0, -1.0]),
+                thresholds=[("u", 0.0, True)],
+                k=k,
+            )
+        )
+
+
+@pytest.mark.unit
+def test_a_negative_sigma_is_no_error_bar():
+    """Oracle: specification. A negative sigma is refused where a sigma is read as an error
+    bar, as tellability refuses it; it would otherwise make a read confident."""
+    with pytest.raises(ValueError, match="negative"):
+        windows.confident_mask(np.array([0.05]), np.array([-0.1]), 1.0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("gap_mult", [0.0, -1.0, np.inf, np.nan])
+def test_the_gap_rule_needs_a_finite_positive_multiple(gap_mult):
+    """Oracle: specification. An infinite multiple makes no step a gap and an infinite
+    threshold; a zero one makes every step a gap. The one gap rule refuses both."""
+    with pytest.raises(ValueError, match="gap_mult must be finite and positive"):
+        windows.observed_reads(np.arange(4) * 10.0, np.ones(4), gap_mult=gap_mult)
+
+
+# A read with no sigma: confident never, so uncertain whenever uncertainty is drawn, on the
+# side its value falls. Reads 0-6 at threshold 1 (big values good), sigma 0.1 except reads 2
+# and 6, one above the threshold and one below it.
+_NO_SIGMA_VALUES = np.array([5.0, 1.05, 5.0, 0.5, 5.0, 5.0, 0.2])
+_NO_SIGMA_SIGMA = np.array([0.1, 0.1, np.nan, 0.1, 0.1, 0.1, np.nan])
+
+
+def _no_sigma_carve():
+    return windows.run(
+        windows.WindowsInputs(
+            t_rel_s=np.arange(7) * 10.0,
+            values=_NO_SIGMA_VALUES,
+            thresholds=[("u", 1.0, True)],
+            sigma=_NO_SIGMA_SIGMA,
+            use_uncertainty=True,
+            k=1.0,
+        )
+    )
+
+
+@pytest.mark.unit
+def test_a_read_with_no_sigma_is_uncertain_on_the_side_its_value_falls():
+    """Oracle: specification (Sera, 2026-10-15). Read 1 sits 0.05 above the threshold with
+    sigma 0.1: uncertain, in spec. Read 2 sits 4 above with no sigma: uncertain, in spec,
+    although far from the threshold. Read 3 sits 0.5 below with sigma 0.1: out of spec.
+    Read 6 sits 0.8 below with no sigma: uncertain, out of spec."""
+    result = _no_sigma_carve()
+    assert result.reads["state"].tolist() == [
+        windows.STATE_IN_SPEC,
+        windows.STATE_IN_SPEC_UNCERTAIN,
+        windows.STATE_IN_SPEC_UNCERTAIN,
+        windows.STATE_OUT_OF_SPEC,
+        windows.STATE_IN_SPEC,
+        windows.STATE_IN_SPEC,
+        windows.STATE_OUT_OF_SPEC_UNCERTAIN,
+    ]
+    assert result.diagnostics["n_reads_sigma_unknown"] == 2
+
+
+@pytest.mark.unit
+def test_the_distinguish_band_counts_a_read_with_no_sigma_once():
+    """Oracle: count by hand on the carve above. The unresolved count holds the uncertain
+    reads with a KNOWN sigma, |margin| < k sigma (read 1); the reads with no sigma (2 and 6)
+    are counted under n_unknown, not twice. The four-way split counts states, so it holds
+    all three."""
+    from quebra.analyzers import distinguish_band
+
+    carved = _no_sigma_carve()
+    band = distinguish_band.run(
+        distinguish_band.make_inputs_from_windows(
+            reads=carved.reads,
+            windows=carved.windows_in_spec,
+            thresholds=[("u", 1.0, True)],
+            median_read_spacing_s=10.0,
+            gap_spans_h=[],
+            sigma_display=_NO_SIGMA_SIGMA,
+            k=1.0,
+            use_uncertainty=True,
+        )
+    )
+    assert band.state_counts_per_threshold["u"] == {
+        "n_in": 3,
+        "n_out": 1,
+        "n_unresolved": 1,
+        "n_unknown": 2,
+        "n_in_uncertain": 2,
+        "n_out_uncertain": 1,
+    }
+
+
 # -------------------- what does and does not move a boundary (8.4a)
 
 

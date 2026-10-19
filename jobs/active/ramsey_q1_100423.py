@@ -1,12 +1,15 @@
-"""Archetype: full Ramsey job - Allan, fidelity and TLF via configure_ramsey_job.
+"""Archetype: 6D2S Ramsey job - Allan and TLF via configure_ramsey_job.
 
-One of four representative jobs kept in jobs/active. The rest of the historical fleet
-lives in jobs_old/ as reference only; those files predate the current contracts and do
-not run. Iterate on this file, then fan it out.
+One of the representative jobs kept in jobs/active. Iterate on this file, then fan it out.
 
-Shape: load -> lookup_prior (enrich with calibration frequencies) -> configure_ramsey_job.
-`configure_ramsey_job` owns the filter/interpolate/Allan/fidelity/TLF wiring; the
-threshold ladder and window carving belong to the t2star archetype, not here.
+Shape: load -> configure_ramsey_job, which owns the filter, Allan and TLF wiring, then the
+fitted frequency's tellability (`quebra.tellability_recipe`, no thresholds). Every analysis
+reads the filtered reads themselves. The threshold ladder and window carving belong
+to the t2star archetype, not here.
+
+No fidelity: an infidelity needs the Rabi frequency of the record, and the 6D2S records carry
+no declared one. Fractional Allan is off for the same kind of reason: it needs a reference
+frequency this job does not declare.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from quebra.core.dataset import Dataset
 from quebra.core.job import Job
 from quebra.recipes import configure_ramsey_job
 from quebra.schemas.track912 import track912Schema
-from quebra.transforms.lookup_prior import lookup_prior
+from quebra.tellability_recipe import wire_frequency_tellability
 
 # The logical name and category. `include` resolves JOB_ID, so this
 # file can move without breaking any composite; recategorising costs one string edit.
@@ -33,29 +36,16 @@ main_ds = Dataset(
     duration_h=13,
     extra={"run_name": PREFIX},
 )
-comp_ds = Dataset(path="data/real_private/companion/qubit1.pickle", schema=None)
 
 main_node = job.load(main_ds)
-comp_node = job.load_df(comp_ds)
 
-# Source columns keep their published names and map to the canonical unit-suffixed
-# keys the analyzers expect.
-enriched = job.step(
-    lookup_prior,
-    main_node,
-    comp_node,
-    fields=["frequency", "Rabi_frequency"],
-    aliases={"frequency": "qubit_frequency_hz", "Rabi_frequency": "rabi_hz"},
-    name="lookup_prior",
-)
-
-configure_ramsey_job(
+refs = configure_ramsey_job(
     job,
-    enriched,
+    main_node,
     profile="overnight",
-    include_fidelity=True,
+    include_fidelity=False,
     include_tlf=True,
-    allan_fractional=True,
-    allan_carrier_col="qubit_frequency_hz",
+    allan_fractional=False,
     figure_prefix=PREFIX,
 )
+wire_frequency_tellability(job, refs, prefix=PREFIX)

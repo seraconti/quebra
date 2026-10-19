@@ -27,6 +27,7 @@ from quebra.analyzers.within_calibration_compute import (
     build_within_calibration_panel_data,
 )
 from quebra.analyzers.within_calibration_data import WithinCalibrationPanelData
+from quebra.core.types import LOAD_COUNT_KEYS
 
 
 @dataclass(slots=True)
@@ -42,6 +43,8 @@ class T2StarInputs:
     t2star_s: np.ndarray
     t2star_error_s: np.ndarray | None = None
     dataset_id: str = ""
+    # Rows the load dropped before this step (LOAD_COUNT_KEYS), copied onto the result.
+    load_counts: dict[str, int] = field(default_factory=dict)
 
 
 def make_inputs_from_norm(
@@ -72,6 +75,7 @@ def make_inputs_from_norm(
         t2star_s=np.asarray(norm["T2star_s"], dtype=float),
         t2star_error_s=t2star_error_s,
         dataset_id=dataset_id,
+        load_counts={key: int(meta[key]) for key in LOAD_COUNT_KEYS if key in meta},
     )
 
 
@@ -110,7 +114,12 @@ def run(inputs: T2StarInputs) -> T2StarResult:
     )
     return T2StarResult(
         frame=pd.DataFrame(cols),
-        meta={"dataset_id": inputs.dataset_id, "mean_us": mean_us, "std_us": std_us},
+        meta={
+            "dataset_id": inputs.dataset_id,
+            "mean_us": mean_us,
+            "std_us": std_us,
+            **inputs.load_counts,
+        },
         diagnostics=diag,
     )
 

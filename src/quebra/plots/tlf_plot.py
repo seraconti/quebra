@@ -15,9 +15,11 @@ class TLFPlot(BasePlot):
         with style_context(style):
             result = payload["result"]
             values_hz = np.asarray(payload["values_hz"], dtype=float)
+            t_rel_s = np.asarray(payload["t_rel_s"], dtype=float)
             meta = dict(payload.get("meta", {}))
 
-            values_hz = values_hz[np.isfinite(values_hz)]
+            # The reads the fit used: a finite time AND a finite value, as in `tlf.run`.
+            values_hz = values_hz[np.isfinite(values_hz) & np.isfinite(t_rel_s)]
             if len(values_hz) == 0:
                 raise ValueError("TLFPlot requires finite values_hz")
 
@@ -126,11 +128,11 @@ class TLFPlot(BasePlot):
                     xytext=(left, y_marker),
                     arrowprops={"arrowstyle": "<->", "color": "0.25", "lw": 1.0},
                 )
-                if result.lobe_separation_ppm is not None:
+                if result.lobe_separation_hz is not None:
                     ax.text(
                         0.5 * (left + right),
                         y_marker * 1.03,
-                        f"lobe distance = {abs(right - left):.3f} kHz",
+                        f"lobe distance = {result.lobe_separation_hz / 1e3:.3f} kHz",
                         ha="center",
                         va="bottom",
                         fontsize=8,
@@ -140,13 +142,13 @@ class TLFPlot(BasePlot):
             ax_info.set_facecolor("white")
             ax_info.axis("off")
             lobe_khz = (
-                abs(float(np.max(means2_axis)) - float(np.min(means2_axis)))
-                if len(means2_axis) >= 2
+                float(result.lobe_separation_hz) / 1e3
+                if result.lobe_separation_hz is not None
                 else np.nan
             )
             sigma_khz = (
-                float(result.within_lobe_spread_ppm * np.mean(values_hz) / 1e9)
-                if result.within_lobe_spread_ppm is not None
+                float(result.within_lobe_spread_hz) / 1e3
+                if result.within_lobe_spread_hz is not None
                 else np.nan
             )
             if len(means2_axis) >= 2:
@@ -185,60 +187,55 @@ class TLFPlot(BasePlot):
                 if getattr(result, "normalized_bic_delta", None) is not None
                 else None
             )
-            within_ppm = (
-                float(result.within_lobe_spread_ppm)
-                if getattr(result, "within_lobe_spread_ppm", None) is not None
-                else None
-            )
             lobe_snr = (
                 float(result.lobe_snr)
                 if getattr(result, "lobe_snr", None) is not None
                 else None
             )
 
-            dynamics_lines = []
-            # Group 2: dynamics metrics (may be None if timestamps not provided)
-            n_trans = getattr(result, "n_transitions", None)
-            sw_rate = getattr(result, "switching_rate_per_hour", None)
-            md_s0 = getattr(result, "mean_dwell_s0", None)
-            md_s1 = getattr(result, "mean_dwell_s1", None)
-            cv_s0 = getattr(result, "dwell_cv_s0", None)
-            cv_s1 = getattr(result, "dwell_cv_s1", None)
-            dynamics_lines.append("")
-            dynamics_lines.append("Dynamics (from timestamps):")
-            dynamics_lines.append(
+            # Group 2: dynamics, within segments. Every count printed beside its statistic.
+            n_trans = result.n_transitions
+            sw_rate = result.switching_rate_per_hour
+            dynamics_lines = [
+                "",
+                "Dynamics (within segments):",
                 f"  n_transitions: {int(n_trans)}"
                 if n_trans is not None
-                else "  n_transitions: n/a"
-            )
-            dynamics_lines.append(
+                else "  n_transitions: n/a",
                 f"  switching_rate_per_hour: {sw_rate:.3f} /h"
                 if sw_rate is not None
-                else "  switching_rate_per_hour: n/a"
-            )
-            dynamics_lines.append(
-                f"  mean_dwell_s0: {md_s0:.2f} s"
-                if md_s0 is not None
-                else "  mean_dwell_s0: n/a"
-            )
-            dynamics_lines.append(
-                f"  mean_dwell_s1: {md_s1:.2f} s"
-                if md_s1 is not None
-                else "  mean_dwell_s1: n/a"
-            )
-            dynamics_lines.append(
-                f"  dwell_cv_s0: {cv_s0:.3f}"
-                if cv_s0 is not None
-                else "  dwell_cv_s0: n/a"
-            )
-            dynamics_lines.append(
-                f"  dwell_cv_s1: {cv_s1:.3f}"
-                if cv_s1 is not None
-                else "  dwell_cv_s1: n/a"
-            )
+                else "  switching_rate_per_hour: n/a",
+            ]
+            for k in (0, 1):
+                dwell = getattr(result, f"mean_dwell_state{k}_s")
+                cv = getattr(result, f"dwell_cv_state{k}")
+                exits = getattr(result, f"n_exits_state{k}")
+                exposure = getattr(result, f"exposure_state{k}_s")
+                complete = getattr(result, f"n_complete_runs_state{k}")
+                cut = getattr(result, f"n_cut_runs_state{k}")
+                if fit_failed:
+                    dynamics_lines += [
+                        f"  mean dwell, state {k}: n/a (fit failed)",
+                        f"  dwell CV, state {k}: n/a (fit failed)",
+                    ]
+                    continue
+                dynamics_lines.append(
+                    f"  mean dwell, state {k}: {dwell:.2f} s ({exits} exits)"
+                    if dwell is not None
+                    else f"  mean dwell, state {k}: n/a ({exits} exits, "
+                    f"{exposure:.0f} s exposure)"
+                )
+                dynamics_lines.append(
+                    f"  dwell CV, state {k}: {cv:.3f} ({complete} complete, {cut} cut runs)"
+                    if cv is not None
+                    else f"  dwell CV, state {k}: n/a ({complete} complete, {cut} cut runs)"
+                )
 
+            n_used = result.diagnostics["n_reads"]
+            n_dropped = result.diagnostics["n_dropped_nonfinite"]
             summary_lines = [
                 "TLF Summary",
+                f"reads: {n_used} used, {n_dropped} dropped (non-finite time or value)",
                 "",
                 f"is_bimodal: {bool(result.is_bimodal)}"
                 if not fit_failed
@@ -257,9 +254,6 @@ class TLFPlot(BasePlot):
                 f"lobe distance (kHz): {lobe_khz:.3f}"
                 if np.isfinite(lobe_khz)
                 else "lobe distance (kHz): n/a",
-                f"lobe_separation_ppm: {float(result.lobe_separation_ppm):.3f} ppm"
-                if getattr(result, "lobe_separation_ppm", None) is not None
-                else "lobe_separation_ppm: n/a",
                 "  |mu2 - mu1| from GMM(2)",
                 "",
                 *lobe_lines,
@@ -267,9 +261,6 @@ class TLFPlot(BasePlot):
                 f"within_lobe_spread: {sigma_khz:.3f} kHz"
                 if np.isfinite(sigma_khz)
                 else "within_lobe_spread: n/a",
-                f"within_lobe_spread_ppm: {within_ppm:.3f} ppm"
-                if within_ppm is not None
-                else "within_lobe_spread_ppm: n/a",
                 "  weighted Gaussian width",
                 f"lobe_snr: {lobe_snr:.3f}"
                 if lobe_snr is not None

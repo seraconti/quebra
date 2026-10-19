@@ -11,6 +11,11 @@ Parameter = (
     Any  # 1-D np.ndarray broadcast-constant (scalar value repeated to match t_rel_s)
 )
 
+# Rows of the file that the load drops before any step runs, recorded in `norm["meta"]`
+# and copied onto the results that describe the record: by a schema's `validate`, and by
+# the default normaliser's finite timestamp and frequency mask.
+LOAD_COUNT_KEYS = ("n_rows_dropped_by_schema", "n_rows_dropped_invalid")
+
 
 @dataclass
 class Measurement:

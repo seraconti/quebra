@@ -176,18 +176,25 @@ def _load_dataset(dataset: Dataset) -> Norm:
         frame["device"] = dataset.device
 
     schema = dataset.schema
+    n_dropped_by_schema = 0
     if schema is not None:
         if hasattr(schema, "to_norm"):
             return schema.to_norm(frame, dataset)
         if hasattr(schema, "validate"):
+            n_rows = len(frame)
             frame = schema.validate(frame, dataset=dataset)
+            # A row the schema cleans away never reaches a step; the count goes on the
+            # record so no result describes fewer reads than the file holds unannounced.
+            n_dropped_by_schema = n_rows - len(frame)
         else:
             raise TypeError(
                 f"{schema!r} is not a usable schema: it needs a to_norm(frame, dataset) "
                 f"or a validate(frame, dataset=...) method. See docs/WRITING_A_SCHEMA.md."
             )
 
-    return RamseySeriesSchema.to_norm(frame, dataset)
+    norm = RamseySeriesSchema.to_norm(frame, dataset)
+    norm["meta"]["n_rows_dropped_by_schema"] = int(n_dropped_by_schema)
+    return norm
 
 
 def _load_dataframe_raw(dataset: Dataset) -> pd.DataFrame:
@@ -412,7 +419,7 @@ class Job:
         )
 
     def load_df(self, dataset: Dataset) -> LocalRef:
-        """Load a dataset as a raw pandas.DataFrame node (for companion/auxiliary files).
+        """Load a dataset as a raw pandas.DataFrame node (for side tables and auxiliary files).
 
         This registers a node that yields a DataFrame (not the normalized mapping).
         """

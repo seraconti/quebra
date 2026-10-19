@@ -2,15 +2,17 @@
 
 Oracle: a two-state chain observed on a read grid. Sampled at spacing `dt`, a state left
 with per-read probability `p` has run lengths exactly Geometric(p) on {1, 2, ...}. `tlf.run`
-measures dwells on the ASSIGNED READ SEQUENCE - `tlf.py` run-length encodes the per-read
-state assignment and multiplies by the median read spacing - so the quantities it reports
-converge to
+measures dwells on the ASSIGNED READ SEQUENCE: a state's mean dwell is its exposure (the
+forward spacings whose left read is in the state) over its exits (observed changes out of
+it), and its CV is over complete runs. On a uniform grid a complete run of L reads lasts
+L * dt, so the quantities it reports converge to
 
     mean dwell -> dt / p            dwell CV -> sqrt(1 - p)
 
-and NOT to the continuous-time `1/lambda` and `CV = 1`. Those are the `dt -> 0` limits of the
-same quantities and they are measurably different here: state 0's sampled mean is 6.67 read
-intervals against a continuous 6.15, and its sampled CV is 0.922 against 1.0. An earlier
+and NOT to the continuous-time `1/lambda` and `CV = 1` of the two-state chain this sampled
+one embeds, whose rates satisfy p01 + p10 = 1 - exp(-(lambda0 + lambda1) dt) and split it in
+the ratio p01 : p10. They are measurably different here: state 0's sampled mean is 6.67 read
+intervals against a continuous 4.37, and its sampled CV is 0.922 against 1.0. An earlier
 draft of `spec/spectests06.md` asserted the continuous values; it was wrong, and the
 assertions below are written so that version of the test would fail.
 
@@ -57,7 +59,7 @@ LOW, HIGH = 0.0, 10.0
 # depending on the statistic, and a maximum observed 2.40%. A 2% tolerance is therefore only
 # about 3 sd and would go red on roughly 1 redraw in 110 - a failure carrying no information
 # about the code. 5% is about 7 sd and costs nothing: the discriminating assertions are the
-# sampled-versus-continuous comparisons below, which carry 12x to 24x margin.
+# sampled-versus-continuous comparisons below, whose margins are several times this tolerance.
 REL_TOL = 0.05
 
 
@@ -83,12 +85,13 @@ def result():
 def test_mean_dwell_recovers_the_sampled_law_not_the_continuous_one(result) -> None:
     """Oracle: `dt / p`, the mean of Geometric(p) in read intervals, per state."""
     for state, measured, p in (
-        ("s0", result.mean_dwell_s0, P01),
-        ("s1", result.mean_dwell_s1, P10),
+        ("s0", result.mean_dwell_state0_s, P01),
+        ("s1", result.mean_dwell_state1_s, P10),
     ):
         sampled = DT_S / p
-        # the continuous rate behind this per-read probability, for the same state
-        lam = -np.log(1.0 - p) / DT_S
+        # the embedded continuous-time chain: the two rates share -ln(1 - p01 - p10) / dt in
+        # the ratio of the per-read probabilities
+        lam = p / (P01 + P10) * -np.log(1.0 - P01 - P10) / DT_S
         continuous = 1.0 / lam
 
         assert measured == pytest.approx(sampled, rel=REL_TOL), (
@@ -100,7 +103,7 @@ def test_mean_dwell_recovers_the_sampled_law_not_the_continuous_one(result) -> N
         )
 
     # The states must not be interchangeable: a swapped label map fails here.
-    assert result.mean_dwell_s0 > result.mean_dwell_s1 * 2.0, (
+    assert result.mean_dwell_state0_s > result.mean_dwell_state1_s * 2.0, (
         "state 0 leaves with probability p01 < p10, so it must dwell markedly longer; "
         "if these are close the label map has been inverted or the draw is symmetric"
     )
@@ -113,8 +116,8 @@ def test_dwell_cv_recovers_the_sampled_law_not_unity(result) -> None:
     measuring true sojourn times would give. Here the pair is (0.922, 0.742) against 1.0.
     """
     for state, measured, p in (
-        ("s0", result.dwell_cv_s0, P01),
-        ("s1", result.dwell_cv_s1, P10),
+        ("s0", result.dwell_cv_state0, P01),
+        ("s1", result.dwell_cv_state1, P10),
     ):
         sampled = float(np.sqrt(1.0 - p))
         assert measured == pytest.approx(sampled, rel=REL_TOL), (
@@ -157,5 +160,5 @@ def test_the_two_states_are_ordered_low_then_high(result) -> None:
     # so `s0` must carry the longer mean. An earlier symmetric version of this fixture made
     # the two dwell laws identical, and inverting `tlf.py`'s label map then left the whole
     # suite green - the assertion below is what makes that mutation fail.
-    assert result.mean_dwell_s0 == pytest.approx(DT_S / P01, rel=REL_TOL)
-    assert result.mean_dwell_s1 == pytest.approx(DT_S / P10, rel=REL_TOL)
+    assert result.mean_dwell_state0_s == pytest.approx(DT_S / P01, rel=REL_TOL)
+    assert result.mean_dwell_state1_s == pytest.approx(DT_S / P10, rel=REL_TOL)

@@ -209,8 +209,8 @@ Timeline bars are colored by per-read spec state through `plots/theme.py::state_
 not by the threshold color: `in_spec`, `out_of_spec`, and - when the carve ran with
 `use_uncertainty=True` - `in_spec_uncertain` / `out_of_spec_uncertain`, which are the
 crisp colors washed toward white. A read is uncertain when
-`abs(value - threshold) < k * sigma`. Uncertainty is an annotation only: it never moves
-a window boundary.
+`abs(value - threshold) < k * sigma`, or when its sigma is unknown. Uncertainty is an
+annotation only: it never moves a window boundary.
 
 ---
 

@@ -10,7 +10,7 @@ are set from what the real data showed, measured before the bench was written; t
 dependence grid is a sweep, not a calibration to a record:
 
 - `N_GRID` starts at 20 because below that `lag_layout` runs out of pairs, and ends at 1000
-  because the 6D2S check-ledger records (`jobs/active/check_ledger_6d2s_q*.py`) reach 935
+  because the 6D2S check-ledger records (`jobs/active/check_ledger_6d2s_q*.py`) reach 936
   events; above 355 the points are spaced so every one of their event counts is within 150
   of a grid point. 35 is included because it is roughly the count at the thresholds that
   matter most. A cell's seed is its index in `all_cells()`, so a new n goes at the END:

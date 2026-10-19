@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
 
 from quebra.analyzers.kaplan_meier import KaplanMeierSet
+from quebra.core.types import LOAD_COUNT_KEYS
 
 
 @dataclass(slots=True)
@@ -25,6 +26,10 @@ class FidelityInputs:
     raw_frequency_hz: np.ndarray | None = None
     use_angular_frequency: bool = False
     dataset_id: str = ""
+    rabi_source: str = ""
+    rabi_declared_key: str = ""
+    # Rows the load dropped before this step (LOAD_COUNT_KEYS), copied onto the result.
+    load_counts: dict[str, int] = field(default_factory=dict)
 
 
 def make_inputs_from_norm(
@@ -37,8 +42,8 @@ def make_inputs_from_norm(
         )
     if "rabi_hz" not in norm:
         raise KeyError(
-            "Fidelity requires 'rabi_hz' in the normalized mapping. "
-            "Add it via lookup_prior(..., fields=['Rabi_frequency'], aliases={'Rabi_frequency': 'rabi_hz'}) "
+            "Fidelity requires 'rabi_hz' in the normalized mapping. Declare the record's "
+            "Rabi frequency (configure_ramsey_job(..., rabi_table=Dataset(...))) "
             "or disable fidelity for this job."
         )
     fidelity_cfg = config.get("fidelity", {})
@@ -52,6 +57,14 @@ def make_inputs_from_norm(
             "the panel caption names the record it draws."
         )
     profile = str(meta.get("profile", config.get("dataset_profile", "")))
+    # The artifact must say where its Rabi frequency came from, so a value with no named
+    # source is refused rather than recorded as "" or "missing".
+    rabi_source = str(meta.get("rabi_source") or "").strip()
+    if rabi_source in ("", "missing"):
+        raise KeyError(
+            "Fidelity requires meta['rabi_source'] naming where 'rabi_hz' came from; the "
+            "declared join sets it to 'declared'."
+        )
     raw_frequency_hz = (
         np.asarray(norm["raw_frequency_hz"], dtype=float)
         if "raw_frequency_hz" in norm
@@ -65,6 +78,9 @@ def make_inputs_from_norm(
         raw_frequency_hz=raw_frequency_hz,
         use_angular_frequency=bool(fidelity_cfg.get("use_angular_frequency", False)),
         dataset_id=dataset_id,
+        rabi_source=rabi_source,
+        rabi_declared_key=str(meta.get("rabi_declared_key", "")),
+        load_counts={key: int(meta[key]) for key in LOAD_COUNT_KEYS if key in meta},
     )
 
 
@@ -78,6 +94,21 @@ def _to_angular_frequency(
 
 
 def gate_fidelity(delta: np.ndarray, rabi_drive: np.ndarray) -> np.ndarray:
+    """Average gate fidelity of an X_pi/2 rotation under a quasi-static detuning `delta`.
+
+    F = (1/3) [1 + Omega^2/lambda^2 + (Delta^2/lambda^2) cos^2(lambda pi / 4 Omega)
+               + (Omega/lambda) sin(lambda pi / 2 Omega)],  lambda = sqrt(Delta^2 + Omega^2),
+
+    transcribed from Capannelli et al., "Tracking spin qubit frequency variations over 912
+    days", Supplementary notes, section V, Eq. (9) (lambda from Eq. (6)). It depends on
+    `delta` and `rabi_drive` only through their ratio, so both must share one unit, hertz or
+    radians per second alike.
+
+    Validity assumptions:
+    - Assumption: the detuning is constant over the rotation (quasi-static) and the rotation
+      is otherwise ideal (Supplementary section V). Diagnostic: none computed here. Consequence
+      of violation: the fidelity is optimistic. Reference: Supplementary notes, section V.
+    """
     delta = np.asarray(delta, dtype=float)
     rabi_drive = np.asarray(rabi_drive, dtype=float)
     lam = np.sqrt(delta**2 + rabi_drive**2)
@@ -102,6 +133,14 @@ def run(inputs: FidelityInputs) -> FidelityResult:
 
     rabi_drive = _to_angular_frequency(rabi_hz, inputs.use_angular_frequency)
     rabi_base_hz = float(np.median(rabi_hz))
+    result_meta = {
+        "profile": inputs.profile,
+        "rabi_base_hz": rabi_base_hz,
+        "dataset_id": inputs.dataset_id,
+        "rabi_source": inputs.rabi_source,
+        "rabi_declared_key": inputs.rabi_declared_key,
+        **inputs.load_counts,
+    }
 
     if inputs.profile == "longrun":
         if inputs.raw_frequency_hz is None:
@@ -159,11 +198,7 @@ def run(inputs: FidelityInputs) -> FidelityResult:
         )
         return FidelityResult(
             frame=frame,
-            meta={
-                "profile": inputs.profile,
-                "rabi_base_hz": rabi_base_hz,
-                "dataset_id": inputs.dataset_id,
-            },
+            meta=dict(result_meta),
             diagnostics=diag,
         )
 
@@ -192,11 +227,7 @@ def run(inputs: FidelityInputs) -> FidelityResult:
     )
     return FidelityResult(
         frame=frame,
-        meta={
-            "profile": inputs.profile,
-            "rabi_base_hz": rabi_base_hz,
-            "dataset_id": inputs.dataset_id,
-        },
+        meta=dict(result_meta),
         diagnostics=diag,
     )
 
@@ -210,31 +241,27 @@ def run(inputs: FidelityInputs) -> FidelityResult:
 # ---------------------------------------------------------------------------
 
 
-def panel_thresholds(infidelity: np.ndarray) -> list[tuple[str, float, bool]]:
-    """Nines thresholds (infidelity units, big_values_good=False) that the data crosses.
+# The nines ladder, in infidelity: 1e-2 (99%) to 1e-9 (99.9999999%), small values good.
+# DECLARED, not chosen from the record: every rung is carved whether or not the record
+# crosses it, so two records are carved against the same rungs and a rung the data never
+# reaches gives one-sided windows rather than disappearing. The recipe passes this one tuple
+# to both the carve and the panel-data step.
+FIDELITY_LADDER: tuple[tuple[str, float, bool], ...] = tuple(
+    ("99" + ("." + "9" * n if n > 0 else "") + "%", 10.0 ** (-(n + 2)), False)
+    for n in range(8)
+)
 
-    Data-derived, so the windows step and the panel-data step must both call this on the
-    SAME series to carve and to render the same ladder. It is pure, so they agree.
-    """
-    inf = np.asarray(infidelity, dtype=float)
-    inf_finite = inf[np.isfinite(inf) & (inf > 0)]
-    if len(inf_finite) == 0:
-        return []
-    inf_min, inf_max = float(np.min(inf_finite)), float(np.max(inf_finite))
-    thresholds: list[tuple[str, float, bool]] = []
-    for n in range(0, 8):
-        # n=0 → infidelity<0.01 = 99% fidelity; n=1 → infidelity<0.001 = 99.9%; ...
-        inf_thr = 10.0 ** (-(n + 2))
-        label = "99" + ("." + "9" * n if n > 0 else "") + "%"
-        if inf_min < inf_thr < inf_max:
-            # big_values_good=False: above this infidelity threshold = out-of-spec
-            thresholds.append((label, inf_thr, False))
-    return thresholds
+
+# The floor infidelity is clipped at, so that its logarithm stays finite. One value for the
+# panel, the carve and tellability's clipped fraction.
+INFIDELITY_FLOOR = 1e-16
 
 
 def panel_series(result: FidelityResult) -> np.ndarray:
     """The infidelity series the panel and the carve both use (clipped identically)."""
-    return np.clip(result.frame["infidelity"].to_numpy(dtype=float), 1e-16, None)
+    return np.clip(
+        result.frame["infidelity"].to_numpy(dtype=float), INFIDELITY_FLOOR, None
+    )
 
 
 def make_panel_data(
@@ -243,6 +270,7 @@ def make_panel_data(
     reads: pd.DataFrame,
     gap_spans_s: list[tuple[float, float]],
     kaplan_meier: KaplanMeierSet,
+    thresholds: Sequence[tuple[str, float, bool]],
     shape_min_reads: int = 5,
     xi_seed: int = 0,
     k: float = 1.0,
@@ -267,7 +295,9 @@ def make_panel_data(
             ("f−fₘₑₐₙ", infidelity),
             (
                 "f−f₀",
-                np.clip(frame["infidelity_f0"].to_numpy(dtype=float), 1e-16, None),
+                np.clip(
+                    frame["infidelity_f0"].to_numpy(dtype=float), INFIDELITY_FLOOR, None
+                ),
             ),
         ]
 
@@ -290,7 +320,7 @@ def make_panel_data(
         t_h=t_h,
         primary_series=infidelity,
         primary_label=primary_label,
-        thresholds=panel_thresholds(infidelity),
+        thresholds=list(thresholds),
         meta=meta,
         windows=windows,
         reads=reads,

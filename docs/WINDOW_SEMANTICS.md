@@ -21,14 +21,16 @@ and the code disagree, the code is right and this page is stale.
   compliance states and damage.
 - **Side**: in spec (`SIDE_IN_SPEC = "in_spec"`) or out of spec (`"out_of_spec"`). The
   strings are the read states, so a side and the state of its reads are spelled one way.
-- The uncertain read states (`|margin| < k * sigma`) annotate reads and never move a window
-  boundary.
+- The uncertain read states (`|margin| < k * sigma`, or no sigma for the read: a read with no
+  sigma is never sure, `windows.confident_mask`) annotate reads and never move a window
+  boundary. The value picks the side: `in_spec_uncertain` or `out_of_spec_uncertain`.
 
 ## Windows
 
-A **window** is a maximal run of consecutive same-side reads inside one gap-free stretch. A
-gap is a read step longer than `gap_mult` times the median positive spacing
-(`windows.spacing`).
+A **window** is a maximal run of consecutive same-side reads inside one segment, a maximal
+gap-free run of reads. A gap is a read step longer than `gap_mult` times the median positive
+spacing (`windows.spacing`). `windows.observed_reads` applies this rule, after dropping
+non-finite reads, for the carve and for every other step that segments a record.
 
 `windows.run` returns two tables with one schema:
 
@@ -67,11 +69,11 @@ true length lies in the closed interval `[age_lo, age_hi]`:
 - **Death:** `age_lo = t[e-1] - t[s]` and `age_hi = t[e] - t[s-1]`.
 - **Censored window:** `age_lo = t[e-1] - t[s]` and `age_hi = inf`.
 
-Duplicate timestamps are common (`windows.spacing`). A duplicate at one crossing pins that
-crossing exactly, and the length still ranges over the whole interval. A duplicate at both
-crossings makes the interval a single point, `age_lo == age_hi`: the length is known
-exactly. `EventTable` holds the same closed interval and checks that the
-Kaplan-Meier age lies in it.
+A duplicate timestamp, two reads at one time, is legal (`windows.spacing` leaves its zero
+step out of the median). A duplicate at one crossing pins that crossing exactly, and the
+length still ranges over the whole interval. A duplicate at both crossings makes the
+interval a single point, `age_lo == age_hi`: the length is known exactly. `EventTable`
+holds the same closed interval and checks that the Kaplan-Meier age lies in it.
 
 One reader departs from the closed reading. `survival.turnbull` reads a non-degenerate
 interval half-open, `(age_lo, age_hi]`, as R's `Surv(type = "interval2")` does, and a point
