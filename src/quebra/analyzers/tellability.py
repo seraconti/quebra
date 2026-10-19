@@ -254,7 +254,9 @@ def noise_floor_ratio(
     """
     sigma_c = collapse_repeated_sigma(obs.t_rel_s, sigma)
     floor = 2.0 * mean_sigma_squared(sigma_c) * obs.median_spacing_s
-    if not rows.edge_level_per_hz > 0.0:
+    # An edge level below 1e-12 of the spectrum's peak is the residue of a signal with no
+    # power at the edge, a noiseless one: the ratio would be that residue's reciprocal.
+    if not rows.edge_level_per_hz > 1e-12 * float(np.max(rows.spectrum_per_hz)):
         raise NotComputed("zero variance")
     return floor, floor / rows.edge_level_per_hz
 
@@ -546,8 +548,9 @@ def sigma_bound_ratio(obs: ObservedReads, sigma: np.ndarray) -> float:
     above; a ratio above 1 says the reported sigma exceeds that bound. Both sides are taken
     on the reads with repeated times collapsed, each to the sigma of its mean.
 
-    A scale below the rounding of the values (1e-12 of their largest magnitude) is zero:
-    the reads then lie on a line within each segment, and the ratio would be rounding.
+    A scale below a resolution floor, 1e-12 of the values' largest magnitude (about 4500
+    times their last bit), is treated as zero: the reads then lie on a line within each
+    segment to that resolution, and the ratio would be dividing by residue.
 
     Validity assumptions:
 
@@ -560,7 +563,10 @@ def sigma_bound_ratio(obs: ObservedReads, sigma: np.ndarray) -> float:
       is additive and independent from read to read.
       Diagnostic: the second-difference ratio (Q2.1) beside it.
       Consequence of violation: curvature between reads enters sigma_hat_D2, so the bound
-      is loose and a ratio below 1 says less.
+      is loose and a ratio below 1 says less. Serially correlated errors shrink
+      sigma_hat_D2 below the error sd, so a ratio above 1 can appear with sigma reported
+      correctly: for errors with lag-1 correlation rho on even spacing it is
+      1 / sqrt(1 - 4 rho / 3 + rho^2 / 3), 1.55 at rho = 0.5.
       Reference: Sera's L0 specification, section 4.1, where sigma_hat_D2 is introduced; no
       equation locator.
     """

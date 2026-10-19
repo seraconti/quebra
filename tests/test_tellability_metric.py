@@ -136,13 +136,13 @@ def test_the_edge_level_is_the_top_tenth_of_the_band_not_the_whole_band() -> Non
     tenth (`spectrum.g10`)."""
     rng = np.random.default_rng(32)
     t = np.arange(6000) * 24.0
-    span = t[-1] - t[0]
-    f_low = 5.0 / span
-    f_high = np.floor(0.7 * span / (2.0 * 24.0)) / span
+    span_s = t[-1] - t[0]
+    f_low_hz = 5.0 / span_s
+    f_high_hz = np.floor(0.7 * span_s / (2.0 * 24.0)) / span_s
     q = (
         rng.normal(size=t.size)
-        + 4.0 * np.sin(2.0 * np.pi * f_low * t)
-        + 4.0 * np.sin(2.0 * np.pi * f_high * t)
+        + 4.0 * np.sin(2.0 * np.pi * f_low_hz * t)
+        + 4.0 * np.sin(2.0 * np.pi * f_high_hz * t)
     )
     obs = _obs(t, q, sigma=np.ones(t.size))
     _, ratio = tl.noise_floor_ratio(obs, tl.spectrum_rows(obs), obs.sigma)

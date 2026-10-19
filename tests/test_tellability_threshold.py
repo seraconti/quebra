@@ -287,7 +287,7 @@ def test_the_mean_run_of_a_chain_is_one_over_beta() -> None:
     out-of-spec runs, 1 / alpha = 3.33. Over seeds 0-39, each drawing the chain from
     `default_rng(seed)`, the estimate measured 10.005 with sd 0.19 and a largest deviation
     of 0.40, and the inverted one 3.326 with sd 0.061 and a largest deviation of 0.13; 0.8
-    and 0.3 are about four sd, and each mean lies far outside the other's band."""
+    is about four sd and 0.3 about five, and each mean lies far outside the other's band."""
     t, x = _stationary_chain(np.random.default_rng(13))
     v = np.where(x, 1.0, -1.0)
     row = tl.run_length_row(_windows(t, v), x)
@@ -362,7 +362,7 @@ def test_rho_k_of_a_stationary_chain_decays_as_a_power() -> None:
     segments, which short segments make frequent: it moves rho_1 to about 0.48. Over seeds
     0-39, each drawing the chain from `default_rng(seed)`, the deviation from 0.6^k stayed
     under 0.012, 0.020 and 0.029 at lags 1-3 (sd up to 0.011), and the cross-gap version's
-    stayed at 0.11 or more at every lag (0.1096 at its closest, at lag 1); 0.045 is about
+    stayed at about 0.11 or more at every lag (0.1096 at its closest, at lag 1); 0.045 is about
     four sd at lag 3."""
     t, x = _stationary_chain(np.random.default_rng(14), length=5, n_segments=8000)
     rho = tl.in_spec_autocorr(observed_reads(t, np.ones(t.size)), x)

@@ -175,6 +175,11 @@ def _degenerate(shape: str):
     sigma = (
         np.full(n, 0.3) if shape == "constant-sigma" else rng.uniform(0.2, 0.6, size=n)
     )
+    if shape == "noiseless-sine":
+        # Evenly spaced, so nothing leaks: the edge holds only rounding. On irregular reads
+        # the same sine leaks a genuine edge level, and the ratio is a real number.
+        even = np.arange(n) * 10.0
+        return even, np.sin(2.0 * np.pi * 3.0 * even / even[-1]), sigma
     if shape == "means-equal":
         # Every time read twice, at 1 + d and 1 - d (d dyadic, so each mean is exactly 1):
         # the reads vary, the averaged reads do not.
@@ -212,6 +217,7 @@ def _degenerate(shape: str):
         "forty-one",
         "linear",
         "means-equal",
+        "noiseless-sine",
     ],
 )
 def test_a_legal_record_of_any_shape_ships_a_result(shape) -> None:
@@ -252,6 +258,10 @@ def test_a_legal_record_of_any_shape_ships_a_result(shape) -> None:
     if shape == "means-equal":
         assert result.metric.status["spectrum"] == zero
         assert result.metric.status["g10_halves"] == zero
+    if shape == "noiseless-sine":
+        # No power at the edge: the edge level is residue, and floor / edge would be its
+        # reciprocal, of order 1e23.
+        assert result.metric.status["noise_floor"] == zero
 
 
 def _fields(groups, status) -> set[str]:
@@ -280,7 +290,10 @@ def test_run_reports_what_the_row_functions_give() -> None:
     order, side, settings); a bug inside a row function or `observed_reads` is for the
     row functions' own tests."""
     t, q, sigma = _record()
-    result = tl.run(_inputs(t, q, sigma))
+    # One read with no value, which the step drops, and a floor inside the values' range, so
+    # the clipped group is computed and compared too, on the observed reads only.
+    q[5] = np.nan
+    result = tl.run(_inputs(t, q, sigma, clip_floor=-0.5))
     obs = windows.observed_reads(t, q, sigma=sigma, gap_mult=10.0)
     metric = result.metric
     assert (metric.n_reads, metric.n_segments) == (obs.t_rel_s.size, 2)
@@ -316,10 +329,20 @@ def test_run_reports_what_the_row_functions_give() -> None:
         ),
         "self_consistency": tl.self_consistency(obs.values, obs.sigma),
         "sigma_bound_ratio": tl.sigma_bound_ratio(obs, obs.sigma),
+        "clipped_fraction": tl.clipped_fraction(obs.values, -0.5),
     }
     assert set(expected) == _fields(tl.METRIC_GROUPS, metric.status)
     _assert_fields(metric, expected)
-    assert (result.settings["seed"], result.settings["n_permutations"]) == (5, 19)
+    assert result.settings == {
+        "gap_mult": 10.0,
+        "unsure_k": 1.0,
+        "clip_floor": -0.5,
+        "n_permutations": 19,
+        "seed": 5,
+        "decimation_ladder": tl.DECIMATION_LADDER,
+        "confidence_levels": tl.CONFIDENCE_LEVELS,
+        "max_autocorr_lag": tl.MAX_AUTOCORR_LAG,
+    }
     assert [row.threshold_label for row in result.thresholds] == [
         label for label, _, _ in THRESHOLDS
     ]

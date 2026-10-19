@@ -243,6 +243,19 @@ def test_a_negative_sigma_is_no_error_bar() -> None:
         tl.dependence_panel(q, q - 5.0, n_permutations=9, seed=0)
 
 
+@pytest.mark.statistical
+def test_sigma_meets_its_bound_on_a_large_offset_with_small_noise() -> None:
+    """Oracle: simulation truth. A 6e9 Hz qubit frequency with noise of sd 0.6 Hz, 1e-10 of
+    the value, reported as it is: the second-difference scale recovers 0.6 (within 5%, the
+    Q2.1 tolerance), far above the bound's resolution floor of 1e-12 of the value (6e-3 Hz),
+    so the ratio is computed and is 1. A floor a thousand times higher would refuse it."""
+    rng = np.random.default_rng(16)
+    n = 6000
+    t = np.r_[0.0, np.cumsum(rng.uniform(10.0, 40.0, size=n - 1))]
+    obs = observed_reads(t, 6e9 + rng.normal(scale=0.6, size=n))
+    assert tl.sigma_bound_ratio(obs, np.full(n, 0.6)) == pytest.approx(1.0, rel=0.05)
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "values, sigma, reason",

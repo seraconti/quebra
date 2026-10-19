@@ -38,7 +38,7 @@ Each field group of the result carries one status:
   | `no down-crossing at this threshold` | count exponent, crossing counts |
   | `no in-to-out transition within a segment` | run length |
   | `fewer than two rungs with a down-crossing` | count exponent |
-  | `zero variance` | values of zero range (spectrum, G10 halves, second differences, self-consistency, sigma bound, dependence), a sigma of zero range (dependence), an in-spec indicator that never changes (rho_k), no positive spacing (spacing), an edge level that is not positive (noise floor) |
+  | `zero variance` | values of zero range (spectrum, G10 halves, second differences, self-consistency, sigma bound, dependence), a sigma of zero range (dependence), an in-spec indicator that never changes (rho_k), no positive spacing (spacing), an edge level below 1e-12 of the spectrum's peak, a noiseless signal (noise floor) |
   | `no floor for this metric` | clipped |
   | `no read with a finite sigma` | every sigma group, when sigma is declared and no read carries a finite one |
 
