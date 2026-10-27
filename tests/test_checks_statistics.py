@@ -24,6 +24,8 @@ unobserved read gaps is invisible to inspection.
 
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 import pytest
 
@@ -48,6 +50,11 @@ from quebra.analyzers.checks._permutation import (
     block_permutations,
     permutation_p_value,
     resolve_perm,
+)
+from quebra.analyzers.checks._rank_serial import (
+    autocorrelations,
+    global_ranks,
+    lag_layout,
 )
 from quebra.analyzers.checks.battery import ROW_KEYS, row_key, run_battery
 from quebra.analyzers.checks.result import (
@@ -344,6 +351,185 @@ def test_c5_and_c6_find_a_strongly_ordered_sequence():
     perm = block_permutations([len(x)], 999, np.random.default_rng(2))
     assert c5.run([segment], perm=perm).p_value <= 0.01
     assert c6.run([segment], perm=perm).p_value <= 0.01
+
+
+# ------------------------------------------------- C5 and C6: the null moments of r_h
+
+
+def _every_within_segment_order(values: np.ndarray, sizes: list[int]) -> np.ndarray:
+    """`values` under every within-segment permutation, one row each: the exact null."""
+    blocks = []
+    offset = 0
+    for size in sizes:
+        blocks.append(list(itertools.permutations(range(offset, offset + size))))
+        offset += size
+    rows = [sum(combo, ()) for combo in itertools.product(*blocks)]
+    return np.asarray(values, dtype=float)[np.array(rows)]
+
+
+def _closed_form_null_mean(ranks: np.ndarray, sizes: list[int], lags) -> np.ndarray:
+    """`mu_h = (1/D) sum_s m_hs (a_s^2 - W_s / (n_s (n_s - 1)))`, from the definition.
+
+    With `c` the ranks centred on the whole record and `D = sum c^2`: a within-segment
+    permutation puts an ordered pair of distinct members of segment `s` at any two of its
+    positions with equal probability, so each of the `m_hs` lag-`h` pairs in `s` has mean
+    `(S_s^2 - sum_s c^2) / (n_s (n_s - 1))`, which is `a_s^2 - W_s / (n_s (n_s - 1))` with
+    `a_s` the segment's mean of `c` and `W_s` its sum of squares about `a_s`.
+    """
+    centred = ranks - ranks.mean()
+    denominator = float((centred**2).sum())
+    out = []
+    for lag in lags:
+        total, offset = 0.0, 0
+        for size in sizes:
+            segment = centred[offset : offset + size]
+            offset += size
+            pairs = max(size - lag, 0)
+            if pairs:
+                level = segment.mean()
+                spread = float(((segment - level) ** 2).sum())
+                total += pairs * (level**2 - spread / (size * (size - 1)))
+        out.append(total / denominator)
+    return np.array(out)
+
+
+@pytest.mark.statistical
+@pytest.mark.parametrize(
+    "values, tied",
+    [
+        (np.array([3.0, 1.0, 4.0, 1.5, 5.0]), False),
+        (np.array([3.0, 1.0, 4.0, 1.0, 3.0]), True),
+        (np.array([2.0, 7.0, 1.0, 8.0, 2.5, 6.0]), False),
+        (np.array([2.0, 7.0, 2.0, 8.0, 7.0, 7.0]), True),
+    ],
+    ids=["n5", "n5-tied", "n6", "n6-tied"],
+)
+def test_the_gap_free_null_mean_is_dufour_and_roy_eq_2_2(values, tied):
+    """Oracle: Dufour and Roy (1985), Eq. (2.2), confirmed by full enumeration.
+
+    On one unbroken exchangeable series, `E[r_h] = -(n-h)/(n(n-1))` at every lag, and the
+    proof uses only exchangeability, so midranks with ties obey it too. The mean of
+    `autocorrelations` over all `n!` orderings must equal it at every usable lag.
+    """
+    n = len(values)
+    assert (len(np.unique(values)) < n) == tied, (
+        "the case does not have the ties it names"
+    )
+    layout = lag_layout([n])
+    every = _every_within_segment_order(global_ranks(values), [n])
+    mean = autocorrelations(every, layout).mean(axis=0)
+    expected = np.array([-(n - h) / (n * (n - 1)) for h in layout.lags])
+    np.testing.assert_allclose(mean, expected, rtol=0.0, atol=1e-12)
+
+
+@pytest.mark.statistical
+@pytest.mark.parametrize(
+    "values, sizes",
+    [
+        (np.array([7.0, 9.0, 7.0, 1.0, 2.0, 2.0]), [3, 3]),
+        (np.array([5.0, 9.0, 5.0, 7.0, 1.0, 1.0, 2.0, 9.0, 3.0]), [4, 2, 3]),
+    ],
+    ids=["3+3-tied", "4+2+3-tied"],
+)
+def test_the_gapped_null_mean_is_the_closed_form(values, sizes):
+    """Oracle: the analytic within-segment mean, `_closed_form_null_mean`.
+
+    Across a gap only each segment is exchangeable, and Eq. (2.2) no longer applies: a
+    segment whose ranks sit high or low adds `m_hs a_s^2` whatever its order. The mean over
+    every within-segment permutation must equal the closed form, and must differ from the
+    gap-free value, or the case could not tell a pairing that ignores the gaps from one that
+    respects them.
+    """
+    assert len(np.unique(values)) < len(values), "the case is meant to carry ties"
+    ranks = global_ranks(values)
+    layout = lag_layout(sizes)
+    mean = autocorrelations(_every_within_segment_order(ranks, sizes), layout).mean(
+        axis=0
+    )
+    expected = _closed_form_null_mean(ranks, sizes, layout.lags)
+    np.testing.assert_allclose(mean, expected, rtol=0.0, atol=1e-12)
+    n = len(values)
+    gap_free = np.array([-(n - h) / (n * (n - 1)) for h in layout.lags])
+    assert np.all(np.abs(expected - gap_free) > 0.05)
+
+
+@pytest.mark.statistical
+def test_two_segments_at_two_levels_match_their_hand_values():
+    """Oracle: the hand computation on ranks {4,5,6} then {1,2,3}, one segment each.
+
+    `D = 17.5`, segment levels `a = +1.5, -1.5`, within-segment spread `W = 2` each, and
+    `n_s (n_s - 1) = 6`. Lag 1 has two pairs per segment and lag 2 one, so the null means are
+    `2 * 2 * (9/4 - 1/3) / 17.5 = 46/105` and `2 * 1 * (9/4 - 1/3) / 17.5 = 23/105`, against
+    `-5/30` and `-4/30` for an unbroken series of six. The observed order gives lag-1 products
+    0.75, 3.75, 3.75, 0.75 and lag-2 products 1.25, 1.25, so `r = (9/17.5, 2.5/17.5)`.
+    """
+    ranks = np.array([4.0, 5.0, 6.0, 1.0, 2.0, 3.0])
+    layout = lag_layout([3, 3])
+    assert layout.lags == (1, 2)
+    observed = autocorrelations(ranks, layout)[0]
+    np.testing.assert_allclose(observed, [18 / 35, 1 / 7], rtol=0.0, atol=1e-12)
+    null_mean = autocorrelations(
+        _every_within_segment_order(ranks, [3, 3]), layout
+    ).mean(axis=0)
+    np.testing.assert_allclose(null_mean, [46 / 105, 23 / 105], rtol=0.0, atol=1e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("level", [1.0, 4.0], ids=["gapped", "gapped-level-shifted"])
+def test_c6_reports_its_z_and_sums_their_squares(level):
+    """Oracle: the definition, `z_h = (r_h - mean_h) / std_h` over the augmented rows.
+
+    The augmented rows are the observed `r` and its permuted copies together, and the
+    moments are recomputed here in plain numpy, not through `studentize`, so a C6 that
+    stopped centring or scaling disagrees with this. `extra["z"]` must be that `z`, and the
+    statistic must be its sum of squares. The second case raises the middle segment's
+    level, which moves the lag-1 centre well above zero: the case where centring decides Q.
+    """
+    rng = np.random.default_rng(2710)
+    sizes = [12, 7, 15]
+    gaps = [rng.exponential(size=n) for n in sizes]
+    gaps[1] = gaps[1] * level
+    segments = [Segment(x=g, tau=float(g.sum() + g.mean())) for g in gaps]
+    perm = block_permutations(sizes, 199, rng)
+    result = c6.run(segments, perm=perm)
+
+    ranks = global_ranks(np.concatenate(gaps))
+    layout = lag_layout(sizes)
+    observed = autocorrelations(ranks, layout)[0]
+    augmented = np.vstack([observed, autocorrelations(perm.apply(ranks), layout)])
+    z = (observed - augmented.mean(axis=0)) / augmented.std(axis=0)
+
+    np.testing.assert_allclose(result.extra["z"], z, rtol=0.0, atol=1e-12)
+    assert result.statistic == pytest.approx(float(np.sum(z**2)), rel=1e-12)
+    if level != 1.0:
+        assert augmented.mean(axis=0)[0] > 0.1, (
+            "the shift did not move the lag-1 centre"
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("n_perm", [199, 999])
+def test_a_lag_with_no_spread_raises_in_c5_and_c6_at_any_b(n_perm):
+    """Analytic: inside a constant segment every permutation is the identity, so each lag's
+    null is one value and there is nothing to studentize.
+
+    The standard deviation of those equal values can round to a small positive number,
+    which would make every `z_h` +/-1 and the p-value 1: a computed non-rejection on a
+    record where nothing can be computed. The raise has to hold at every B.
+    """
+    segments = [
+        Segment(x=np.array([1.0, 1.0, 1.0, 1.0]), tau=5.0),
+        Segment(x=np.array([2.0, 2.0, 2.0]), tau=7.0),
+    ]
+    runs = {
+        "c5": lambda perm: c5.run(segments, variant=c5.VARIANT_STUDENTIZED, perm=perm),
+        "c6": lambda perm: c6.run(segments, perm=perm),
+    }
+    for name, run in runs.items():
+        perm = block_permutations([4, 3], n_perm, np.random.default_rng(0))
+        with pytest.raises(ValueError, match="no spread"):
+            run(perm)
+            pytest.fail(f"{name} returned a result on a null with no spread")
 
 
 @pytest.mark.unit

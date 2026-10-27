@@ -55,7 +55,7 @@ DIRECTED_AT = {
     "c1_lewis_robinson": (ARM_D, "b", "monotone trend in the intensity"),
     "c2_anderson_darling": (ARM_D, "b", "departure from a renewal process"),
     "c5_rank_autocorr": (ARM_E, "rho", "serial dependence between durations"),
-    "c6_exchangeability": (ARM_E, "rho", "any departure from exchangeability"),
+    "c6_exchangeability": (ARM_E, "rho", "serial dependence spread across lags 1-5"),
     # CvM is scored against Arm D like C2: it is the same class of
     # alternative - a departure from a renewal process - because CvM and C2 are two
     # functionals of the same tied-down bridge and differ only in the weight.
@@ -659,15 +659,15 @@ def build(runtime_note: str = "") -> str:
         "than that of two independent estimates. (Across ARMS the comparison is not "
         "paired - Arm B and Arm C realise different segment sizes, so no shared "
         "permutation set exists. Those are compared unpaired, with both SEs shown.)\n\n"
-        "C6 is the natural reference: it is a pure permutation test of exchangeability, so "
-        "its validity rests on no approximation and no citation.\n\n"
+        "C6 is the reference row. Its p-value is exact under within-segment "
+        "exchangeability, as every permutation row's is, so the choice is a convention, "
+        "not a ranking of validity.\n\n"
     )
     add(
         "**Agreement between checks, computed.** Each pair's rejection rates are compared "
         "across the shared power cells of the arm both are directed at; because every row "
         "in a cell reads the same permutation set, the difference is paired. C6 is the "
-        "reference: a pure permutation test of exchangeability, resting on no "
-        "approximation and no citation.\n\n"
+        "reference row, by convention.\n\n"
     )
     agreement = check_agreement(power)
     add(_markdown_table(agreement) if len(agreement) else "No shared cells to compare.")

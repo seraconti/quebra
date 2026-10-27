@@ -269,6 +269,49 @@ def test_the_exact_reference_rows_actually_agree():
             assert row.abs_difference < 1e-9, f"{row.case}/{row.statistic} disagrees"
 
 
+def test_a_missing_rank_acf_fixture_row_raises_rather_than_being_skipped():
+    """Oracle: the fixture with one `acf_rank_lag` row removed.
+
+    C5's and C6's tier-4 verdicts rest on these rows alone, so a skipped row could leave a
+    `pass` resting on fewer rows than its detail names, or on none.
+    """
+    from quebra.analyzers.instrument_validation import build_cross_implementation
+
+    trimmed = R_VALUES[
+        ~(
+            (R_VALUES["case"] == "durations_trend")
+            & (R_VALUES["quantity"] == "acf_rank_lag3")
+        )
+    ]
+    assert len(trimmed) == len(R_VALUES) - 1
+    with pytest.raises(ValueError, match="durations_trend/acf_rank_lag3"):
+        build_cross_implementation(R_INPUTS, trimmed)
+
+
+@pytest.mark.parametrize("offset", [1e-6, np.nan], ids=["off-by-1e-6", "nan"])
+def test_one_rank_acf_row_off_r_fails_the_c5_and_c6_tier_4_verdicts(offset):
+    """Oracle: the fixture with one `acf_rank_lag` reference moved off R's value.
+
+    One row outside `AGREEMENT_TOL` must turn both tier-4 verdicts to `fail`, and the
+    detail beside them must not say the lags match. The moved row is the last one, where a
+    NaN is invisible to `max()`.
+    """
+    values = R_VALUES.copy()
+    row = (values["case"] == "durations_trend") & (
+        values["quantity"] == "acf_rank_lag5"
+    )
+    assert row.sum() == 1
+    values.loc[row, "value"] = values.loc[row, "value"] + offset
+    data = build_instrument_validation(GAPS, PUBLISHED, R_INPUTS, values, _tie_frame())
+    for instrument in ("C5 rank autocorr", "C6 exchangeability"):
+        verdict = data.tier_verdict(instrument, 4)
+        assert verdict is not None
+        assert verdict.verdict == TIER_FAIL, f"{instrument}: {verdict.verdict}"
+        assert "r_h match" not in verdict.detail, f"{instrument}: {verdict.detail}"
+        if np.isnan(offset):
+            assert "max abs difference nan" in verdict.detail, verdict.detail
+
+
 def test_the_divergence_is_reported_in_levels_not_only_tie_fraction():
     """Tie fraction saturates; levels is the actionable form.
 
@@ -300,23 +343,42 @@ def test_no_tier_verdict_claims_evidence_that_does_not_exist():
     our own test file; C3's was 'it IS the R implementation', which compares R to itself),
     and tier-3 cells asserting a direction that the measurement contradicts.
 
-    C3's tier-4 cell is now `pass` on real evidence: an `r`-marked test puts the bridge
-    against a committed fixture on both the statistic and the p-value. The assertion below
-    moved with it, and what it guards moved too. It no longer asks whether the cell is
-    `absent`; it asks that a `pass` there NAME the artifact it rests on, so the circular
-    claim this audit removed cannot return under the same verdict.
+    C3's tier-4 cell is `partial`: an `r`-marked test puts the bridge against a committed
+    fixture on both the statistic and the p-value, which is bridge fidelity, R against
+    itself, not an independent implementation. A non-absent cell there must NAME the
+    artifact it rests on, so the circular claim this audit removed cannot return.
+
+    C5's and C6's tier-4 cells are `pass` on CrossImplementation rows: lags 1-5 of the rank
+    autocorrelation both checks read, against R's `acf`. A `pass` there must rest on those
+    rows, name the test, its file and the fixture, and say what is NOT pinned, so the cell
+    cannot be read as R vouching for the whole statistic.
     """
     data = _build()
     c2_t4 = data.tier_verdict("C2 Anderson-Darling", 4)
     assert c2_t4 is not None and c2_t4.verdict != TIER_PASS, (
         "a reimplementation in the same language by the same author is tier-1 evidence"
     )
-    c5_t4 = data.tier_verdict("C5 rank autocorr", 4)
-    assert c5_t4 is not None and c5_t4.verdict != TIER_PASS
-    assert "matches R" not in c5_t4.detail, (
-        "no test compares C5's own statistic with R: the lag-1 check computes a Pearson "
-        "correlation inline, and C5 divides by the full centred sum of squares instead"
-    )
+    rank_acf_rows = [
+        r for r in data.cross_implementation if r.statistic.startswith("rank acf")
+    ]
+    for instrument in ("C5 rank autocorr", "C6 exchangeability"):
+        row = data.tier_verdict(instrument, 4)
+        assert row is not None
+        if row.verdict != TIER_PASS:
+            continue
+        assert len(rank_acf_rows) == 10, (
+            f"{instrument}: a tier-4 pass must rest on the ten rank acf rows, "
+            f"found {len(rank_acf_rows)}"
+        )
+        for named in (
+            "tests/test_r_cross_implementation.py",
+            "test_rank_autocorrelations_match_r_acf_at_lags_1_to_5",
+            "r_reference_values.csv",
+            "Not pinned:",
+            "studentization",
+            "pairing across gaps",
+        ):
+            assert named in row.detail, f"{instrument}: tier-4 pass omits {named!r}"
     c3_t4 = data.tier_verdict("C3 serial copula", 4)
     assert c3_t4 is not None
     assert c3_t4.verdict != TIER_PASS, (

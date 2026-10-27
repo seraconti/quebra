@@ -134,9 +134,11 @@ None of these fixes is implemented. Each is a proposal.
    `docs/GOLD_STANDARD.md`). No fix proposed.
 8. **Multiplicity across groups is uncorrected.** The Bonferroni is per group, over 162
    groups, so about eight false "miscalibrated" flags are expected even for exact tests.
-   Three exact permutation rows are flagged today: C5 studentized, in-spec, n = 700; C5
-   unstudentized, in-spec, n = 20; and CvM permutation, calendar, n = 100
-   (`bench_acceptance_at_n` computed from `size_table.csv`).
+   Three exact permutation rows are flagged in the current tables: C5 studentized, in-spec,
+   n = 700; C5 unstudentized, in-spec, n = 20; and CvM permutation, calendar, n = 100
+   (`bench_acceptance_at_n` computed from `size_table.csv`). The C6 rows are pending the
+   bench re-run with the current statistic, and the re-run may move C5 rows too, so this
+   list may change.
    *Proposal:* correct across groups, or exempt permutation rows from the size criterion.
 9. **Ties are under-counted on quantised data.** `_permutation.permutation_p_value` counts
    ties with a float-exact `>=`. On a read grid, shuffles that tie the observed statistic

@@ -699,8 +699,8 @@ $T = \max_{h=1..H}\bigl| (r_h - \mu_h)/s_h \bigr|$, where $r_h$ is the within-se
 rank autocorrelation of the duration sequence at lag $h$ and $(\mu_h, s_h)$ are that
 lag's moments across the augmented permutation ensemble.
 
-\paragraph{Null.} Exchangeability of the duration sequence, hence serial independence
-under the renewal null.
+\paragraph{Null.} Exchangeability of the durations within each segment, hence serial
+independence under the renewal null.
 
 \paragraph{Directed at.} Localised neighbour dependence. If the durations carry a lag-2
 relation and nothing else, the maximum picks it up at full strength where a portmanteau
@@ -764,46 +764,67 @@ documentation should say which of the two problems the code solves.
 \section{C6 -- Permutation exchangeability, portmanteau}
 % ==============================================================
 
-\paragraph{Object.} $Q = \sum_{h=1}^{H} m_h\, r_h^2$, where $m_h$ is the number of
-within-segment pairs at lag $h$.
+\paragraph{Object.} $Q = \sum_{h=1}^{H} z_h^2$, with $z_h = (r_h - \mu_h)/s_h$, where $r_h$
+is C5's within-segment rank autocorrelation at lag $h$ and $(\mu_h, s_h)$ are its mean and
+standard deviation across the augmented permutation ensemble, the observed row included.
+The $z_h$ are exactly the values whose absolute maximum C5's studentized variant takes.
 
-\paragraph{Null.} Exchangeability, tested directly.
+\paragraph{Null.} Exchangeability of the durations within each segment, tested directly.
 
-\paragraph{Directed at.} Dependence spread thinly across several lags. The $m_h$
-weighting allocates the statistic's attention in proportion to how much evidence each
-lag rests on, which is the opposite trade to C5's maximum. Neither substitutes for the
-other.
+\paragraph{Directed at.} Dependence spread thinly across several lags. Once each lag is on
+its own permutation scale the sum gives every lag an equal voice, which is the opposite
+trade to C5's maximum. Neither substitutes for the other.
 
-\paragraph{Provenance.} The portmanteau form, a weighted sum of squared
-autocorrelations across lags, is the rank analogue of the Box-Pierce and Ljung-Box
-statistics (Box and Pierce, \emph{JASA} 65:1509--1526, 1970; Ljung and Box,
-\emph{Biometrika} 65:297--303, 1978). Those use asymptotic $\chi^2_H$ critical values and
-are known to be badly oversized under dependence at small $n$: Romano and Tirlea report
-Ljung-Box at $0.187$ and Box-Pierce at $0.174$ against a nominal $0.05$ at $n=50$.
-\SIMULATED{} The $\chi^2$ route is therefore \emph{not} taken here; only the permutation
-route is.
+\paragraph{Provenance.} $Q$ is a Ljung-Box-type sum, each lag centred at and scaled by its
+own permutation moments. Ljung and Box (\emph{Biometrika} 65:297--303, 1978, Eq.~(1.1),
+p.~297) sum squared autocorrelations that are not centred. Under exchangeability an
+autocorrelation does not average zero: Dufour and Roy (1985) define it on one unbroken
+series with one fully centred denominator shared by every lag, as here (Eq.~(2.1),
+p.~260), give its exact mean $E[r_k] = -(n-k)/(n(n-1))$ (Eq.~(2.2), p.~260), note that the
+result depends only on exchangeability (p.~261), carry it to rank autocorrelations
+(Section~3), note that the Ljung-Box standard error is not exact when the observations are
+centred (p.~268), and recommend the exact means and variances for tests of randomness
+(p.~271). Across a gap only each segment is exchangeable, so their closed forms do not
+cover a gapped record; the permutation moments take their place and hold with gaps and
+ties. The asymptotic $\chi^2_H$ critical values of Box-Pierce and Ljung-Box (Box and
+Pierce, \emph{JASA} 65:1509--1526, 1970) are known to be badly oversized under dependence
+at small $n$: Romano and Tirlea report Ljung-Box at $0.187$ and Box-Pierce at $0.174$
+against a nominal $0.05$ at $n=50$. \SIMULATED{} The $\chi^2$ route is therefore
+\emph{not} taken here; only the permutation route is.
 
 \paragraph{Calibration.} Within-segment permutation, upper tail. Exact under
-exchangeability by the randomisation hypothesis (Lehmann and Romano, \S 15.2). \PROVED
+exchangeability by the randomisation hypothesis (Lehmann and Romano, \S 15.2). \PROVED{}
+The moments are taken over the observed row and its $B$ permutations together, so the
+standardisation is a symmetric function of the augmented sample and the exactness holds
+at finite $B$. C5's studentized variant reads the same $z_h$ and is exact in the same
+sense, as is every
+permutation row of the battery. The bench compares the other checks against C6
+(\texttt{jobs/bench/report.py}); that choice of reference is a convention, not a ranking
+of validity.
 
-\textbf{This is the one check in the battery whose validity rests on no approximation and
-no transcription.} C1 and C2 rest on an asymptotic limit and on a correctly transcribed
-equation; C3 rests on an external package and a simulated null; C5 shares C6's exactness
-but adds a max-statistic construction. C6 is a permutation test of exactly the null it
-states. That makes it the natural reference point when checks disagree on a cell: the
-burden falls on the other check.
+\paragraph{Why each lag is centred and scaled.} When segments sit at different levels,
+every within-segment product leans positive whatever the order inside each segment, so
+the null mean of $r_h$ moves well away from zero. A sum of uncentred squares is not
+symmetric about that offset: dependence of one sign inflates it and the other sign
+deflates it. Permutation calibration keeps the size exact either way, so what the offset
+distorts is power, in a direction set by the sign of the dependence. Centring each lag at
+its own permutation mean removes the offset, and scaling by its own permutation standard
+deviation puts a lag with few pairs and a lag with many on one scale.
 
-\paragraph{Why $m_h$ weighting rather than uniform.} The number of within-segment pairs
-available at lag $h$ falls as $h$ grows, and falls fastest when segments are short.
-Weighting each squared autocorrelation by its pair count $m_h$ allocates the statistic's
-attention in proportion to the evidence behind each term. Ljung-Box also scales each
-squared autocorrelation by a lag-dependent factor, $n(n+2)/(n-h)$, to match its null
-variance; the two share that principle, not the direction of the weight. Without it, a high-variance estimate from a
-lag with ten pairs enters on equal terms with a stable one from forty.
+\paragraph{Level differences between segments.} The permutations never move a duration
+across a gap, so no permutation-based check (C1, C2 and CvM by permutation, C5, C6) can
+see a record whose segments differ only in level. That difference is part of the null;
+here the centring absorbs it by construction.
 
-\paragraph{Direction.} $Q$ is a sum of squares, therefore one-sided by construction, and
-says nothing about the sign of any dependence it finds. The lag-1 rank correlation is
-carried separately for that.
+\paragraph{Degenerate lags.} A lag whose range across the augmented sample is at most
+$10^{-12}$ has no spread to studentize, as when every segment holds two events, or every
+segment that pairs at that lag is constant inside. C5's studentized variant and C6 raise
+there, the battery raises with them, and the ledger writes the whole cell as one
+\texttt{not computed} row, with no other check reported for it.
+
+\paragraph{Direction.} $Q$ is symmetric in the sign of each $z_h$, therefore one-sided by
+construction, and says nothing about the sign of any dependence it finds. C5 carries the
+raw lag-1 rank autocorrelation, and C6 carries each $z_h$ with its sign.
 
 \paragraph{Censoring.} None. Complete windows only.
 
@@ -1235,7 +1256,8 @@ No canonical package for permutation rank autocorrelation on segmented series.
 \texttt{pastecs::trend.test} is a trend test, not a serial test, and is not a
 substitute.\\[3pt]
 C6 & assembled from primitives; shares C5's harness &
-Portmanteau rank statistic, exact permutation &
+Ljung-Box-type rank sum, each lag centred and scaled by permutation moments; Dufour and
+Roy (1985) for the centring; exact permutation &
 Same.\\[3pt]
 C4 & \textbf{not implemented} &
 Lin, Wei and Ying, \emph{Biometrika} 80, 1993 &
@@ -1312,6 +1334,8 @@ in autoregressive-integrated moving average time series models. \emph{Journal of
 American Statistical Association} 65:1509--1526.
 \item Chatterjee, S. (2021). A new coefficient of correlation. \emph{Journal of the
 American Statistical Association} 116(536):2009--2022.
+\item Dufour, J.-M. and Roy, R. (1985). Some robust exact results on sample
+autocorrelations and tests of randomness. \emph{Journal of Econometrics} 29(3):257--273.
 \item Genest, C. and Rémillard, B. (2004). Tests of independence and randomness based on
 the empirical copula process. \emph{TEST} 13(2):335--369.
 \item Ghoudi, K., Kulperger, R. and Rémillard, B. (2001). A nonparametric test of serial
