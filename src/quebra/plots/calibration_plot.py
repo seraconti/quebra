@@ -1,4 +1,4 @@
-"""The four calibration figures: what the bench established, drawn.
+"""The five calibration figures: what the bench established, drawn.
 
 Pure renderers. Every quantity comes from a typed artifact built by
 `analyzers/calibration_summary.py`; nothing here derives a scientific value, and no colour
@@ -18,6 +18,7 @@ import numpy as np
 
 from quebra.analyzers.calibration_summary import (
     PowerVsDependence,
+    PowerVsTrend,
     ReadDependence,
     SizeVsN,
     ValidationCurve,
@@ -132,6 +133,20 @@ class CalibrationSizePlot(BasePlot):
         raise NotImplementedError("CalibrationSizePlot has no plotly backend")
 
 
+def _power_footnote(
+    fig: plt.Figure, selection_reason: str, pooled_over: list[str]
+) -> None:
+    """FIGURE_STANDARD: a panel drawing a subset says which, in the panel; and a point that
+    is a mean says what it pools (AGENTS.md section 4)."""
+    notes = []
+    if selection_reason:
+        notes.append(f"shown: {selection_reason}")
+    if pooled_over:
+        notes.append(f"each point a mean over {', '.join(pooled_over)}")
+    if notes:
+        fig.text(0.5, 0.005, "; ".join(notes), ha="center")
+
+
 class CalibrationPowerPlot(BasePlot):
     """Power against the rank correlation of neighbouring durations the generator induces."""
 
@@ -168,23 +183,70 @@ class CalibrationPowerPlot(BasePlot):
                 ax.set_ylim(0.0, 1.0)
             axes[0].set_ylabel("Power")
             axes[-1].legend(loc="upper left", frameon=False)
-            # FIGURE_STANDARD: a panel drawing a subset says which, in the panel; and a
-            # point that is a mean says what it pools (AGENTS.md section 4).
-            notes = []
-            if result.selection_reason:
-                notes.append(f"shown: {result.selection_reason}")
-            if result.pooled_over:
-                notes.append(f"each point a mean over {', '.join(result.pooled_over)}")
-            if notes:
-                fig.text(0.5, 0.005, "; ".join(notes), ha="center")
-            fig.suptitle(
-                "Power against induced duration dependence - Arm E, copula AR(1)"
-            )
+            _power_footnote(fig, result.selection_reason, result.pooled_over)
+            fig.suptitle("Power against serial dependence - Arm E, copula AR(1)")
             fig.tight_layout(rect=(0, 0.045, 1, 1))
             return fig
 
     def build_plotly(self, result: PowerVsDependence):
         raise NotImplementedError("CalibrationPowerPlot has no plotly backend")
+
+
+class CalibrationTrendPlot(BasePlot):
+    """Rejection rate against the trend exponent of a Weibull trend-renewal process."""
+
+    def build_matplotlib(
+        self, result: PowerVsTrend, style: str = "default"
+    ) -> plt.Figure:
+        if not isinstance(result, PowerVsTrend):
+            raise TypeError("CalibrationTrendPlot expects a PowerVsTrend artifact")
+        with style_context(style):
+            rows = list(result.rows_drawn) or sorted(result.power_by_row_and_n)
+            fig, axes = plt.subplots(
+                1, len(rows), figsize=(4.0 * len(rows), 3.9), sharey=True
+            )
+            axes = np.atleast_1d(axes)
+            n_values = sorted(
+                {n for per_n in result.power_by_row_and_n.values() for n in per_n}
+            )
+
+            for ax, row in zip(axes, rows):
+                ax.axhline(result.alpha, **REFERENCE_LINE)
+                ax.axvline(1.0, **REFERENCE_LINE)
+                ax.text(
+                    1.0,
+                    0.98,
+                    "no trend",
+                    transform=ax.get_xaxis_transform(),
+                    ha="center",
+                    va="top",
+                )
+                for index, n in enumerate(n_values):
+                    ax.plot(
+                        result.b,
+                        result.power_by_row_and_n[row][n],
+                        marker="o",
+                        markersize=3.0,
+                        color=ordered_color(index, len(n_values)),
+                        label=f"n = {n}",
+                    )
+                ax.set_title(f"{_short(_check_of(row))} {_variant_of(row)}".strip())
+                ax.set_xlabel(
+                    "Trend exponent b\n(b < 1 falling event rate, b > 1 rising)"
+                )
+                ax.set_ylim(0.0, 1.0)
+            axes[0].set_ylabel(f"Rejection rate at alpha = {result.alpha:g}")
+            # Outside the last panel: every panel has curves near 1 at both ends of b.
+            axes[-1].legend(
+                loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False
+            )
+            _power_footnote(fig, result.selection_reason, result.pooled_over)
+            fig.suptitle("Power against trend - Arm D, Weibull trend-renewal process")
+            fig.tight_layout(rect=(0, 0.045, 0.95, 1))
+            return fig
+
+    def build_plotly(self, result: PowerVsTrend):
+        raise NotImplementedError("CalibrationTrendPlot has no plotly backend")
 
 
 class CalibrationValidationPlot(BasePlot):
@@ -313,5 +375,6 @@ __all__ = [
     "CalibrationPowerPlot",
     "CalibrationReadDependencePlot",
     "CalibrationSizePlot",
+    "CalibrationTrendPlot",
     "CalibrationValidationPlot",
 ]

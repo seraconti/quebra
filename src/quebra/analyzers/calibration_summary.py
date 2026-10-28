@@ -1,14 +1,15 @@
-"""Turning the bench tables into the four typed artifacts the calibration figures draw.
+"""Turning the bench tables into the five typed artifacts the calibration figures draw.
 
 These are steps: pure compute, no disk, no matplotlib. The bench tables arrive as
 DataFrames that the job loaded as datasets, so nothing here imports `jobs/bench/` - the
 dependency runs through provenance (their sha256 enters the run identity) rather than
 around it.
 
-Four questions, four artifacts, one per figure:
+Five questions, five artifacts, one per figure:
 
     SizeVsN            does a check hold its nominal level at the event counts we have?
     PowerVsDependence  how does its power grow with the serial dependence it is shown?
+    PowerVsTrend       how does its power grow with a trend in the event rate?
     ValidationCurve    is the transcription right, and what does estimating gamma cost?
     ReadDependence     does read-level correlation reach the durations at all?
 
@@ -39,8 +40,16 @@ from quebra.core._artifact_guard import StaleArtifactGuard
 # Nominal significance every size curve is read against.
 NOMINAL_ALPHA = 0.05
 
-# The bench arm whose latent correlation the power figure's x-axis is a function of.
+# The bench arms the two power figures read: Arm E's latent correlation is the serial
+# dependence axis, Arm D's power-law exponent the trend axis.
 ARM_E = "E_copula_ar1_durations"
+ARM_D = "D_trp_power_law"
+
+# Why the power figures show one row per check, the permutation one.
+REPRESENTATIVE_REASON = (
+    "permutation calibration - the asymptotic curves are within Monte Carlo error of them "
+    "and the bench rejected both"
+)
 
 
 def _label(check: str, calibration: str, variant: str) -> str:
@@ -172,6 +181,31 @@ class PowerVsDependence(StaleArtifactGuard):
     alpha: float = NOMINAL_ALPHA
     # One representative row per check, chosen HERE rather than at draw time. The artifact
     # keeps every row (completeness); this says which the figure shows and why.
+    rows_drawn: list[str] = field(default_factory=list)
+    selection_reason: str = ""
+
+
+@dataclass
+class PowerVsTrend(StaleArtifactGuard):
+    """Rejection rate against the trend exponent `b` of Arm D, a Weibull trend-renewal
+    process whose event intensity is `b t^(b-1)`.
+
+    `b = 1` is no trend; `b < 1` is a falling event rate and `b > 1` a rising one. The
+    `b = 1` point is a size, so the curves start from the nominal level there. As in
+    `PowerVsDependence`, each value is a mean over the cells sharing (row, n, b), named in
+    `pooled_over`, with its range in the lo/hi dicts.
+    """
+
+    b: list[float] = field(default_factory=list)
+    power_by_row_and_n: dict[str, dict[int, list[float]]] = field(default_factory=dict)
+    pooled_over: list[str] = field(default_factory=list)
+    power_lo_by_row_and_n: dict[str, dict[int, list[float]]] = field(
+        default_factory=dict
+    )
+    power_hi_by_row_and_n: dict[str, dict[int, list[float]]] = field(
+        default_factory=dict
+    )
+    alpha: float = NOMINAL_ALPHA
     rows_drawn: list[str] = field(default_factory=list)
     selection_reason: str = ""
 
@@ -321,50 +355,102 @@ def power_vs_dependence(
     if not len(selected):
         raise ValueError(f"no {arm} power cells in the table")
     cell = _with_label(_drawn_rows(selected, "power_vs_dependence"))
-    rho = sorted(float(r) for r in cell["rho"].unique())
+    grid = _power_grid(cell, "rho", "power_vs_dependence")
+    return PowerVsDependence(
+        rho=grid.values,
+        neighbour_rank_corr=[neighbour_rank_correlation(r) for r in grid.values],
+        power_by_row_and_n=grid.mean,
+        pooled_over=grid.pooled_over,
+        power_lo_by_row_and_n=grid.lo,
+        power_hi_by_row_and_n=grid.hi,
+        alpha=alpha,
+        rows_drawn=_representative_rows(grid.mean),
+        selection_reason=REPRESENTATIVE_REASON,
+    )
+
+
+@dataclass
+class _PowerGrid:
+    values: list[float]
+    mean: dict[str, dict[int, list[float]]]
+    lo: dict[str, dict[int, list[float]]]
+    hi: dict[str, dict[int, list[float]]]
+    pooled_over: list[str]
+
+
+def _power_grid(cell: pd.DataFrame, parameter: str, what: str) -> _PowerGrid:
+    """Rejection rate per row and event count at each value of `parameter`: the mean over
+    the cells that share them, with its range, and the factors that vary among those cells.
+
+    Every curve must cover the same `parameter` values, since the x-axis is shared, and
+    every point must pool the same number of cells (`_require_full_pooling`).
+    """
+    values = sorted(float(v) for v in cell[parameter].unique())
     pooled_over = [
         column
         for column in ("shape", "clock", "quantised", "censoring_target")
         if cell[column].nunique() > 1
     ]
     n_pooled = len(cell[pooled_over].drop_duplicates()) if pooled_over else 1
-    power: dict[str, dict[int, list[float]]] = {}
-    lo: dict[str, dict[int, list[float]]] = {}
-    hi: dict[str, dict[int, list[float]]] = {}
+    grid = _PowerGrid(values=values, mean={}, lo={}, hi={}, pooled_over=pooled_over)
     for row_label, group in cell.groupby("row"):
-        per_n: dict[int, list[float]] = {}
+        mean_n: dict[int, list[float]] = {}
         lo_n: dict[int, list[float]] = {}
         hi_n: dict[int, list[float]] = {}
         for n, sub in group.groupby("n_target"):
-            by_rho = sub.groupby("rho")["rejection_rate"]
-            ordered = by_rho.mean().sort_index()
-            # The x-axis is shared by every curve, so every curve must cover the same rho.
-            if [float(r) for r in ordered.index] != rho:
+            by_value = sub.groupby(parameter)["rejection_rate"]
+            ordered = by_value.mean().sort_index()
+            if [float(v) for v in ordered.index] != values:
                 raise ValueError(
-                    f"{row_label} at n={n} covers rho {list(ordered.index)}, not {rho}"
+                    f"{row_label} at n={n} covers {parameter} {list(ordered.index)}, "
+                    f"not {values}"
                 )
             _require_full_pooling(
-                by_rho.size(), n_pooled, f"power_vs_dependence {row_label} at n={n}"
+                by_value.size(), n_pooled, f"{what} {row_label} at n={n}"
             )
-            per_n[int(n)] = [float(v) for v in ordered]
-            lo_n[int(n)] = [float(v) for v in by_rho.min().sort_index()]
-            hi_n[int(n)] = [float(v) for v in by_rho.max().sort_index()]
-        power[row_label] = per_n
-        lo[row_label] = lo_n
-        hi[row_label] = hi_n
-    return PowerVsDependence(
-        rho=rho,
-        neighbour_rank_corr=[neighbour_rank_correlation(r) for r in rho],
-        power_by_row_and_n=power,
-        pooled_over=pooled_over,
-        power_lo_by_row_and_n=lo,
-        power_hi_by_row_and_n=hi,
+            mean_n[int(n)] = [float(v) for v in ordered]
+            lo_n[int(n)] = [float(v) for v in by_value.min().sort_index()]
+            hi_n[int(n)] = [float(v) for v in by_value.max().sort_index()]
+        grid.mean[row_label] = mean_n
+        grid.lo[row_label] = lo_n
+        grid.hi[row_label] = hi_n
+    return grid
+
+
+def power_vs_trend(
+    power_table: pd.DataFrame,
+    size_table: pd.DataFrame,
+    *,
+    alpha: float = NOMINAL_ALPHA,
+) -> PowerVsTrend:
+    """Rejection rate per row and event count against Arm D's trend exponent `b`.
+
+    The `b != 1` cells are Arm D's power cells. `b = 1` is no trend, Arm D's uncensored size
+    cells, so each curve passes through the check's size there. Only uncensored cells are
+    drawn, which is what every power cell is.
+    """
+    trend = power_table[power_table["arm"] == ARM_D]
+    null = size_table[
+        (size_table["arm"] == ARM_D)
+        & (size_table["b"] == 1.0)
+        & (size_table["censoring_target"] == 0.0)
+    ]
+    if not len(trend):
+        raise ValueError(f"no {ARM_D} power cells in the table")
+    if not len(null):
+        raise ValueError(f"no {ARM_D} b = 1 uncensored size cells in the table")
+    selected = pd.concat([trend, null], ignore_index=True)
+    cell = _with_label(_drawn_rows(selected, "power_vs_trend"))
+    grid = _power_grid(cell, "b", "power_vs_trend")
+    return PowerVsTrend(
+        b=grid.values,
+        power_by_row_and_n=grid.mean,
+        pooled_over=grid.pooled_over,
+        power_lo_by_row_and_n=grid.lo,
+        power_hi_by_row_and_n=grid.hi,
         alpha=alpha,
-        rows_drawn=_representative_rows(power),
-        selection_reason=(
-            "permutation calibration - the asymptotic curves are within Monte Carlo error "
-            "of them and the bench rejected both"
-        ),
+        rows_drawn=_representative_rows(grid.mean),
+        selection_reason=REPRESENTATIVE_REASON,
     )
 
 

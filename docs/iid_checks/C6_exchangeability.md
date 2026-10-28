@@ -54,14 +54,21 @@ some lag, as when every segment holds two events, or every segment that pairs at
 is constant inside, `studentize` raises. The battery raises with it, so the ledger writes
 the whole cell as one `not computed` row and reports no other check for it, C3 included.
 
-**Power is pending the bench re-run.** Its power over the bench's dependence grid
-(`jobs/bench/results/power_table.csv`, arm=E_copula_ar1_durations) and its agreement with C5
-in rejection rate (`jobs/bench/report.py::check_agreement`) are pending the bench re-run with
-the current statistic.
+**Power is low below n = 100.** Averaged over the bench's dependence grid
+(`jobs/bench/results/power_table.csv`, arm=E_copula_ar1_durations, mean over `rho` and
+shape), C6 has 22% power at n = 50, 34% at n = 100, 60% at n = 355 and 79% at n = 1000,
+slightly below C5 studentized at every n of the grid. Its rejection rate differs from C5
+studentized's by 0.019 on average and by at most 0.172 over the 288 power cells they share
+(`jobs/bench/report.py::check_agreement`).
 
 ## What we do
 
 Report it, and require the same three conditions before a `pass`. The bench compares the
 other checks against it (`jobs/bench/report.py::check_agreement`); that choice of reference
-is a convention, since every permutation row is exact under the same null. Its bench verdict
-and its worst null cell are pending the bench re-run (`promotion_report.md`, size per row).
+is a convention, since every permutation row is exact under the same null. The bench puts it
+on HOLD: correctly calibrated across the 144 null cells inside the envelope, worst 0.0355 on
+Arm A, in-spec, n = 700, continuous and uncensored (z = -2.98 against 3.58), but with mean
+power 0.343 at n = 100 (`promotion_report.md`, verdicts and size per row). Judged per event
+count, as the ledger judges it, that cell is flagged at n = 700 (z = -2.98 against 2.96 over
+16 cells): conservative, not oversized, and a non-rejection there reads `underpowered`
+(`BENCH.md`, section 5, item 8).

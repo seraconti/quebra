@@ -51,7 +51,7 @@ compares another record's event counts, censoring or quantisation with the grid.
 Each replicate is generated, the whole battery runs on it, and a row counts a rejection
 when `p < 0.05` (`jobs/bench/runner.py:run_cell`). Size cells have 2000 replicates, power
 cells 1000, and permutation rows use B = 999 (`grid.py`: `N_REPLICATES_SIZE`,
-`N_REPLICATES_POWER`, `N_PERM`). The last run covered 504 cells and 720,000 replicates
+`N_REPLICATES_POWER`, `N_PERM`). The last run covered 591 cells and 816,000 replicates
 (`jobs/bench/results/runtime.txt`).
 
 The Monte Carlo standard error of a size at a true 0.05 is `sqrt(0.05 * 0.95 / 2000)` =
@@ -147,11 +147,13 @@ None of these fixes is implemented. Each is a proposal.
    `docs/GOLD_STANDARD.md`). No fix proposed.
 8. **Multiplicity across groups is uncorrected.** The Bonferroni is per group, over 162
    groups, so about eight false "miscalibrated" flags are expected even for exact tests.
-   Three exact permutation rows are flagged in the current tables: C5 studentized, in-spec,
-   n = 700; C5 unstudentized, in-spec, n = 20; and CvM permutation, calendar, n = 100
-   (`bench_acceptance_at_n` computed from `size_table.csv`). The C6 rows are pending the
-   bench re-run with the current statistic, and the re-run may move C5 rows too, so this
-   list may change.
+   Four exact permutation rows are flagged in the current tables: C5 studentized and C6,
+   in-spec, n = 700, both on the same cell (Arm A, continuous, uncensored) and both
+   conservative, at 0.0345 and 0.0355; C5 unstudentized, in-spec, n = 20; and CvM
+   permutation, calendar, n = 100 (`bench_acceptance_at_n` computed from `size_table.csv`).
+   C5 studentized and C6 read the same rank autocorrelations off the same permutations, so
+   their two flags are not independent. A flagged group demotes a ledger non-rejection at
+   that event count to `underpowered`.
    *Proposal:* correct across groups, or exempt permutation rows from the size criterion.
 9. **Ties are under-counted on quantised data.** `_permutation.permutation_p_value` counts
    ties with a float-exact `>=`. On a read grid, shuffles that tie the observed statistic

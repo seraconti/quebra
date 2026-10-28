@@ -7,14 +7,15 @@ reader who took any single ledger row at face value.
 
 This is the binding one. Power depends on how strong the dependence is, and the bench
 sweeps it: Arm E, `rho` 0.05-0.5, inducing a duration-level lag-1 from about 0 to 0.48.
-Averaged over that grid (`jobs/bench/results/power_table.csv`, arm=E_copula_ar1_durations, mean over `rho` and shape), C5 has the
-power below. C6's row is pending the bench re-run with the current statistic.
+Averaged over that grid (`jobs/bench/results/power_table.csv`, arm=E_copula_ar1_durations, mean over `rho` and shape), C5 and C6 have
+the power below.
 
 | n | 20 | 35 | 50 | 75 | 100 | 355 | 500 | 700 | 1000 |
 |---|---|---|---|---|---|---|---|---|---|
 | C5 studentized | 0.106 | 0.174 | 0.236 | 0.307 | 0.357 | 0.626 | 0.691 | 0.750 | 0.804 |
+| C6 | 0.097 | 0.166 | 0.220 | 0.295 | 0.343 | 0.605 | 0.674 | 0.732 | 0.791 |
 
-Below n = 100 C5 does not exceed 0.5 except at the strongest grid point, `rho` = 0.5
+Below n = 100 neither exceeds 0.5 except at the strongest grid point, `rho` = 0.5
 (`promotion_report.md`, "Power across the dependence grid"). So below n = 100 a
 non-rejection is the expected outcome whether the durations are dependent or not, unless
 the dependence is strong. A REJECTION is meaningful, because the checks are correctly calibrated. It is the

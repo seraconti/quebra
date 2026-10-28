@@ -79,5 +79,5 @@ underpowered (mean power 0.357 at n = 100) - so `analyzers/check_ledger.py` mark
 non-rejection below `min_events_pass` as `underpowered`, never `pass`.
 
 The studentized variant takes the largest `|z_h|`, and C6 sums the squares of the same
-`z_h`. How closely the two agree in rejection
-rate is pending the bench re-run with the current C6 (`promotion_report.md`, criterion 4).
+`z_h`. Over the 288 power cells they share, their rejection rates differ by 0.019 on
+average and by at most 0.172 (`promotion_report.md`, criterion 4).

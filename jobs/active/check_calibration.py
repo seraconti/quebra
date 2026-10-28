@@ -1,4 +1,4 @@
-"""What the calibration bench established, as four figures.
+"""What the calibration bench established, as five figures.
 
 This job is the one place the bench's numbers reach a figure, and it does so WITHOUT
 importing `bench/`. The two result tables are declared as `Dataset`s and loaded with
@@ -10,7 +10,7 @@ rather than through the import graph.
 `jobs/bench/results/*.csv` is inside the repository, not under the dataset root, which is why
 `core.paths.resolve_dataset_path` grows a repo-root fallback - see its docstring.
 
-The fourth figure re-simulates rather than reshaping a table: a P-P plot needs the
+The validation figure re-simulates rather than reshaping a table: a P-P plot needs the
 statistics themselves and the tables carry only rejection rates. Its `seed` and replicate
 count are step kwargs, so both appear on the provenance label and the figure is
 reproducible from the record alone.
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from quebra.analyzers.calibration_summary import (
     power_vs_dependence,
+    power_vs_trend,
     read_dependence,
     size_vs_n,
     validation_curve,
@@ -30,6 +31,7 @@ from quebra.plots.calibration_plot import (
     CalibrationPowerPlot,
     CalibrationReadDependencePlot,
     CalibrationSizePlot,
+    CalibrationTrendPlot,
     CalibrationValidationPlot,
 )
 
@@ -55,6 +57,7 @@ _power_table = job.load_df(POWER_TABLE)
 
 _size = job.step(size_vs_n, _size_table, name="size_vs_n")
 _power = job.step(power_vs_dependence, _power_table, name="power_vs_dependence")
+_trend = job.step(power_vs_trend, _power_table, _size_table, name="power_vs_trend")
 _reads = job.step(read_dependence, _power_table, name="read_dependence")
 _validation = job.step(
     validation_curve,
@@ -75,6 +78,12 @@ job.figure(
     _power,
     targets=["static", "academic"],
     title=f"{PREFIX} power",
+)
+job.figure(
+    CalibrationTrendPlot,
+    _trend,
+    targets=["static", "academic"],
+    title=f"{PREFIX} trend",
 )
 job.figure(
     CalibrationValidationPlot,

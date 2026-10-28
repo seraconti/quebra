@@ -38,9 +38,9 @@ Six checks ask whether that assumption survives contact with the data.
 
 Whether any two of them are redundant is open. C5's studentized variant and C6 read the
 same studentized rank autocorrelations and differ in how they combine lags; C1/C2 measure a
-different thing. How far apart they sit in rejection rate, measured against C6 as the
-reference, is pending the bench re-run with the current C6 (`promotion_report.md`,
-criterion 4).
+different thing. Measured against C6 as the reference, C5 studentized differs from it in
+rejection rate by 0.019 on average and by at most 0.172 over the 288 power cells they share
+(`promotion_report.md`, criterion 4).
 
 ## Two clocks, because the mapping is not unique
 
@@ -90,7 +90,7 @@ p = 0.3860 / 0.4040 / 0.3790 while the provenance record stayed identical.
 ## What the bench establishes, and what it does not
 
 `jobs/bench/` measures empirical size and power at the event counts this project actually has,
-over 504 cells and 720,000 replicates. Its verdicts:
+over 591 cells and 816,000 replicates. Its verdicts:
 
 | | verdict | why |
 |---|---|---|
@@ -99,14 +99,14 @@ over 504 cells and 720,000 replicates. Its verdicts:
 | CvM permutation | PROMOTE | size holds across 144 null cells (worst z = 2.56) |
 | CvM asymptotic | REJECT | oversized inside the envelope (worst z = 4.41 over 86 null cells) |
 | C5 | HOLD | correctly calibrated, but mean power at n = 100 is only 0.34-0.36 |
-| C6 | pending | the bench re-run with the current statistic |
+| C6 | HOLD | correctly calibrated (worst z = -2.98 over 144 null cells), but mean power at n = 100 is only 0.34 |
 | C3 | RUNS, UNCALIBRATED | exercised under Rscript 4.5.3 with `copula`; smoke-tested on iid input only - no bench cell, no size or power evidence |
 
 **The number to read before trusting a non-rejection**: averaged over the bench's dependence
 grid, C5 (studentized) has 24% power at n = 50, 36% at n = 100, 63% at n = 355 and 80% at
 n = 1000, and below n = 100 it exceeds 50% only at the strongest dependence the grid tests
-(`promotion_report.md`, "Power across the dependence grid"). C6's figures are pending the
-bench re-run with the current statistic. A non-rejection at a
+(`promotion_report.md`, "Power across the dependence grid"). C6 has 22% at n = 50, 34% at
+n = 100, 60% at n = 355 and 79% at n = 1000, under the same condition. A non-rejection at a
 threshold with 50 windows is close to uninformative unless the dependence is strong. A
 rejection still means something; the silence does not.
 

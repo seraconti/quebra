@@ -15,8 +15,12 @@ import pytest
 
 import quebra.analyzers.checks.c5_rank_autocorr as c5
 from quebra.analyzers.calibration_summary import (
+    ARM_D,
     ARM_E,
+    bonferroni_z_crit,
+    null_se,
     power_vs_dependence,
+    power_vs_trend,
     read_dependence,
     size_vs_n,
 )
@@ -261,3 +265,76 @@ def test_read_dependence_adds_back_one_over_n_per_cell_and_refuses_several_segme
     )
     with pytest.raises(ValueError, match="failed every replicate"):
         read_dependence(pd.concat([table[~first_cell], failed], ignore_index=True))
+
+
+@pytest.mark.unit
+def test_power_vs_trend_reads_b_and_takes_b_1_from_the_uncensored_size_cells():
+    """Contract: the x-axis is Arm D's trend exponent `b`. Its `b = 1` point, no trend, is
+    Arm D's uncensored size cells; a censored size cell (rate 0.9 here) must not enter it,
+    and without an uncensored `b = 1` cell the artifact raises.
+    """
+
+    def cells(b, censoring, rate):
+        return [
+            {
+                "arm": ARM_D,
+                "clock": "in_spec",
+                "n_target": n,
+                "shape": shape,
+                "quantised": False,
+                "censoring_target": censoring,
+                "b": b,
+                "rho": np.nan,
+                "check": check,
+                "calibration": "permutation",
+                "variant": np.nan,
+                "rejection_rate": rate,
+            }
+            for n in (20, 100)
+            for shape in (0.75, 1.5)
+            for check in ("c1_lewis_robinson", "c6_exchangeability")
+        ]
+
+    power = pd.DataFrame(cells(0.7, 0.0, 0.4) + cells(1.5, 0.0, 0.6))
+    size = pd.DataFrame(cells(1.0, 0.0, 0.05) + cells(1.0, 0.25, 0.9))
+    artifact = power_vs_trend(power, size)
+    assert artifact.b == [0.7, 1.0, 1.5]
+    assert artifact.pooled_over == ["shape"]
+    assert artifact.power_by_row_and_n["c1_lewis_robinson [permutation]"][20] == (
+        pytest.approx([0.4, 0.05, 0.6])
+    )
+    with pytest.raises(ValueError, match="b = 1"):
+        power_vs_trend(power, size[size["censoring_target"] > 0.0])
+
+
+@pytest.mark.statistical
+def test_every_drawn_check_is_at_its_size_at_b_1_on_the_committed_tables():
+    """Oracle: a permutation-calibrated check is exact, so at `b = 1` (no trend) each drawn
+    row's rejection rate is binomial around alpha.
+
+    Each point is the mean of the two shape cells, so its null SE is
+    `sqrt(se_1^2 + se_2^2) / 2` from their `n_used`. The band is the two-sided Bonferroni
+    threshold over every drawn (row, n) point. The test reads the committed tables: it is
+    evidence about them, and the guard on the code is the test above.
+    """
+    size = pd.read_csv(RESULTS / "size_table.csv")
+    power = pd.read_csv(RESULTS / "power_table.csv")
+    artifact = power_vs_trend(power, size)
+    at_null = artifact.b.index(1.0)
+    null = size[
+        (size["arm"] == ARM_D) & (size["b"] == 1.0) & (size["censoring_target"] == 0.0)
+    ].assign(
+        row=lambda d: [
+            f"{c} [{k}" + (f"/{v}]" if isinstance(v, str) and v else "]")
+            for c, k, v in zip(d["check"], d["calibration"], d["variant"])
+        ]
+    )
+    z = []
+    for row in artifact.rows_drawn:
+        for n, rates in artifact.power_by_row_and_n[row].items():
+            used = null[(null["row"] == row) & (null["n_target"] == n)]["n_used"]
+            assert len(used) == 2
+            se = np.sqrt(sum(null_se(artifact.alpha, u) ** 2 for u in used)) / 2.0
+            z.append((rates[at_null] - artifact.alpha) / se)
+    assert len(z) >= 2 * len(artifact.rows_drawn)
+    assert max(abs(v) for v in z) <= bonferroni_z_crit(len(z)), [round(v, 2) for v in z]

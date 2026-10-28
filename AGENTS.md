@@ -241,7 +241,7 @@ analyzers/   allan.py, fidelity.py, t2star.py, tlf.py, mtbf.py
              nothing from quebra
              signal_band.py, distinguish_band.py, reliability_band.py  the three nested
              band contracts of the within-calibration panel; shape_stats.py
-             calibration_summary.py  reshapes the bench tables into the four typed
+             calibration_summary.py  reshapes the bench tables into the five typed
              artifacts the calibration figures draw; also re-simulates the P-P curve
              checks/  C1 Lewis-Robinson, C2 Anderson-Darling, CvM Cramer-von Mises,
              C5 rank autocorrelation, C6 exchangeability, and C3 copula-via-R (needs
