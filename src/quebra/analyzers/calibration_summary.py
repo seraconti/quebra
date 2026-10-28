@@ -8,7 +8,7 @@ around it.
 Four questions, four artifacts, one per figure:
 
     SizeVsN            does a check hold its nominal level at the event counts we have?
-    PowerVsDependence  how does its power grow with the dependence it is shown?
+    PowerVsDependence  how does its power grow with the serial dependence it is shown?
     ValidationCurve    is the transcription right, and what does estimating gamma cost?
     ReadDependence     does read-level correlation reach the durations at all?
 
@@ -16,6 +16,12 @@ Four questions, four artifacts, one per figure:
 P-P plot needs the statistics themselves and the tables only carry rejection rates. It is
 a deterministic function of `(seed, n_values, n_replicates)`, and the seed travels as a
 step kwarg so it lands on the provenance label.
+
+Every artifact carries the rows of `battery.ROW_KEYS` only. C5's unstudentized variant is in
+the bench tables as the measured comparison for what studentizing buys, and it reaches no
+figure. A dependence axis is a quantity that is 0 with no dependence: the generator's own
+rank correlation for Arm E, and the measured lag-1 with its exchangeable mean added back for
+Arm C.
 """
 
 from __future__ import annotations
@@ -26,16 +32,50 @@ import numpy as np
 import pandas as pd
 
 import quebra.analyzers.checks.c2_anderson_darling as c2
+from quebra.analyzers.checks.battery import BENCH_ROW_KEYS, ROW_KEYS
 from quebra.analyzers.checks.result import CALIB_ASYMPTOTIC, CALIB_PERMUTATION, Segment
 from quebra.core._artifact_guard import StaleArtifactGuard
 
 # Nominal significance every size curve is read against.
 NOMINAL_ALPHA = 0.05
 
+# The bench arm whose latent correlation the power figure's x-axis is a function of.
+ARM_E = "E_copula_ar1_durations"
+
 
 def _label(check: str, calibration: str, variant: str) -> str:
     suffix = f"/{variant}" if isinstance(variant, str) and variant else ""
     return f"{check} [{calibration}{suffix}]"
+
+
+def _pipeline_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    """The rows of `battery.ROW_KEYS`, the ones a ledger can carry.
+
+    C5's unstudentized row is dropped: it is in `BENCH_ROW_KEYS` only. A row in neither list
+    raises, so a table carrying a check this code does not know is not drawn by omission.
+    """
+    keys = list(
+        zip(
+            frame["check"],
+            frame["calibration"],
+            frame["variant"].fillna(""),
+            strict=True,
+        )
+    )
+    unknown = sorted(set(keys) - set(BENCH_ROW_KEYS))
+    if unknown:
+        raise ValueError(f"rows outside battery.BENCH_ROW_KEYS: {unknown}")
+    return frame[[key in ROW_KEYS for key in keys]]
+
+
+def neighbour_rank_correlation(rho: float) -> float:
+    """Spearman's correlation of two neighbouring durations in Arm E: `(6/pi) arcsin(rho/2)`.
+
+    Arm E's durations are a monotone map of a stationary Gaussian AR(1) whose lag-1
+    correlation is `rho`, so their rank correlation is the Gaussian copula's. It is exactly
+    0 at `rho = 0` and does not depend on the event count.
+    """
+    return float(6.0 / np.pi * np.arcsin(rho / 2.0))
 
 
 def _with_label(frame: pd.DataFrame) -> pd.DataFrame:
@@ -75,13 +115,17 @@ class SizeVsN(StaleArtifactGuard):
 
 @dataclass
 class PowerVsDependence(StaleArtifactGuard):
-    """Power against the dependence actually induced, not against the latent knob.
+    """Power against the rank correlation of neighbouring durations the generator induces.
 
-    `induced_lag1` is the x-axis on purpose: `rho` is a Gaussian-copula parameter no reader
-    can interpret, while the induced duration-level lag-1 is the dependence a check sees.
+    The x-axis is `neighbour_rank_correlation(rho)`, one value per `rho` shared by every n.
+    It is 0 with no dependence and exact, so the curves for different n line up by
+    construction. The measured `mean_induced_lag1` is not used: it is C5's uncentred `r_1`,
+    about `-1/n` with no dependence and pulled further toward 0 at small n under dependence,
+    so curves drawn against it shift with n.
     """
 
-    induced_lag1_by_n: dict[int, list[float]] = field(default_factory=dict)
+    rho: list[float] = field(default_factory=list)
+    neighbour_rank_corr: list[float] = field(default_factory=list)
     power_by_row_and_n: dict[str, dict[int, list[float]]] = field(default_factory=dict)
     alpha: float = NOMINAL_ALPHA
     # One representative row per check, chosen HERE rather than at draw time. The artifact
@@ -114,16 +158,22 @@ class ReadDependence(StaleArtifactGuard):
 
     The finding this artifact exists to carry is a NULL one: the curve stays flat near zero
     while `y = x` climbs away from it. Read correlation does not reach the durations.
+
+    `centred_lag1` is each cell's `mean_induced_lag1` plus `1/mean_n_events`, then averaged
+    over the event counts at one `rho`. The column is C5's uncentred `r_1`, whose mean with
+    no dependence is `-1/N` on one segment, so without the correction each point would mix
+    offsets from about -1/20 at n = 20 to about -1/1000 at n = 1000. `1/mean_n_events`
+    stands in for the mean of `1/N` over replicates.
     """
 
     read_rho: list[float] = field(default_factory=list)
-    induced_lag1: list[float] = field(default_factory=list)
-    # Standard error of the MEAN ACROSS the pooled cells (the n and clock levels at this
-    # rho), not the sampling error of any single lag-1 estimate. It answers "how much do
-    # the cells disagree", which is the right question for a curve drawn through their
-    # mean - but it is not a confidence interval on the statistic, and naming it so here
-    # keeps the figure's error bars from being read as one.
-    induced_lag1_se: list[float] = field(default_factory=list)
+    centred_lag1: list[float] = field(default_factory=list)
+    # Standard error of the MEAN ACROSS the pooled cells (one per event count at this rho),
+    # not the sampling error of any single lag-1 estimate. It answers "how much do the
+    # cells disagree", which is the right question for a curve drawn through their mean -
+    # but it is not a confidence interval on the statistic, and naming it so here keeps the
+    # figure's error bars from being read as one.
+    centred_lag1_se: list[float] = field(default_factory=list)
     arm: str = ""
 
 
@@ -141,7 +191,7 @@ def size_vs_n(
     shape factor - `pooled_over` names whatever survives it and `rate_lo/hi_by_row` carry
     the spread, so the figure can draw the pooling instead of hiding it.
     """
-    frame = _with_label(size_table)
+    frame = _with_label(_pipeline_rows(size_table))
     cell = frame[
         (frame["arm"] == arm)
         & (~frame["quantised"].astype(bool))
@@ -200,41 +250,52 @@ def size_vs_n(
 def power_vs_dependence(
     power_table: pd.DataFrame,
     *,
-    arm: str = "E_copula_ar1_durations",
+    arm: str = ARM_E,
     alpha: float = NOMINAL_ALPHA,
 ) -> PowerVsDependence:
-    frame = _with_label(power_table)
+    """Power per row and event count against `neighbour_rank_correlation(rho)`.
+
+    Validity assumptions
+
+    - Assumption: the arm's durations are a monotone map of a stationary Gaussian AR(1)
+      latent with lag-1 correlation `rho`, so `(6/pi) arcsin(rho/2)` is their neighbours'
+      rank correlation.
+      Diagnostic: `tests/test_calibration_artifacts.py` compares the centred measured `r_1`
+      at the largest event count with it; any other arm raises here.
+      Consequence of violation: every curve is drawn at the wrong x, by the same amount at
+      every n.
+      Reference: `jobs/bench/arms.py`, `arm_e`; no source located for the identity itself.
+    """
+    if arm != ARM_E:
+        raise ValueError(
+            f"the x-axis is Arm E's Gaussian-copula rank correlation; {arm!r} is not Arm E"
+        )
+    frame = _with_label(_pipeline_rows(power_table))
     cell = frame[frame["arm"] == arm]
     if not len(cell):
         raise ValueError(f"no {arm} power cells in the table")
-    induced: dict[int, list[float]] = {}
+    rho = sorted(float(r) for r in cell["rho"].unique())
     power: dict[str, dict[int, list[float]]] = {}
     for row_label, group in cell.groupby("row"):
         per_n: dict[int, list[float]] = {}
         for n, sub in group.groupby("n_target"):
             ordered = sub.groupby("rho").mean(numeric_only=True).sort_index()
-            per_n[int(n)] = [float(v) for v in ordered["rejection_rate"]]
-            lag1 = [float(v) for v in ordered["mean_induced_lag1"]]
-            # `induced` is shared by every row at this n, which is only sound because
-            # `mean_induced_lag1` is a CELL-level scalar stamped onto each of the cell's
-            # rows. Assert it rather than rely on it: if a future table made it row-level,
-            # the last row written would win and every other row would be plotted against
-            # the wrong x, silently.
-            if int(n) in induced and not np.allclose(induced[int(n)], lag1, atol=1e-12):
+            # The x-axis is shared by every curve, so every curve must cover the same rho.
+            if [float(r) for r in ordered.index] != rho:
                 raise ValueError(
-                    f"induced lag-1 differs between rows at n={n}; it is assumed "
-                    "cell-level and shared as the x-axis of every curve"
+                    f"{row_label} at n={n} covers rho {list(ordered.index)}, not {rho}"
                 )
-            induced[int(n)] = lag1
+            per_n[int(n)] = [float(v) for v in ordered["rejection_rate"]]
         power[row_label] = per_n
     return PowerVsDependence(
-        induced_lag1_by_n=induced,
+        rho=rho,
+        neighbour_rank_corr=[neighbour_rank_correlation(r) for r in rho],
         power_by_row_and_n=power,
         alpha=alpha,
         rows_drawn=_representative_rows(power),
         selection_reason=(
-            "permutation calibration, studentized where a variant exists - the asymptotic "
-            "curves are within Monte Carlo error of them and the bench rejected both"
+            "permutation calibration - the asymptotic curves are within Monte Carlo error "
+            "of them and the bench rejected both"
         ),
     )
 
@@ -242,8 +303,8 @@ def power_vs_dependence(
 def _representative_rows(power: dict[str, dict[int, list[float]]]) -> list[str]:
     """One row per check: the calibration a reader should actually use.
 
-    Drawing all nine put C1, C2 and CvM on the page twice in visually identical panels - the
-    asymptotic and permutation power curves differ by less than the Monte Carlo error,
+    Drawing every row put C1, C2 and CvM on the page twice in visually identical panels -
+    the asymptotic and permutation power curves differ by less than the Monte Carlo error,
     while their SIZE (the other figure) differs enormously. Showing both here implies a
     distinction this figure cannot resolve.
     """
@@ -251,8 +312,7 @@ def _representative_rows(power: dict[str, dict[int, list[float]]]) -> list[str]:
     for check in sorted({_check_of(row) for row in power}):
         candidates = [row for row in power if _check_of(row) == check]
         preferred = [r for r in candidates if "permutation" in r] or candidates
-        studentized = [r for r in preferred if "unstudentized" not in r]
-        chosen.append(sorted(studentized or preferred)[0])
+        chosen.append(sorted(preferred)[0])
     return chosen
 
 
@@ -266,21 +326,50 @@ def read_dependence(
     arm: str = "C_ar1_reads_carved",
     clock: str = "in_spec",
 ) -> ReadDependence:
+    """`centred_lag1` per read-level `rho`, one cell per event count; see `ReadDependence`.
+
+    Raises on a cell with more than one segment, where `-1/N` is not the exchangeable mean,
+    and on a cell whose rows disagree on `mean_induced_lag1`, which is a cell-level value.
+
+    Validity assumptions
+
+    - Assumption: every cell is one segment, so the exchangeable mean of `r_1` is `-1/N`.
+      Diagnostic: the raise above, on `mean_n_segments`.
+      Consequence of violation: the centring misses the level effect of the layout.
+      Reference: Dufour and Roy (1985), Eq. (2.2), p. 260.
+    - Assumption: `1/mean_n_events` stands in for the mean of `1/N` over replicates.
+      Diagnostic: none here; the table carries no per-replicate event count.
+      Consequence of violation: a small offset is left in, largest at the smallest n.
+      Reference: no source located.
+    """
     frame = power_table[(power_table["arm"] == arm) & (power_table["clock"] == clock)]
     if not len(frame):
         raise ValueError(f"no {arm} power cells on the {clock} clock")
-    grouped = frame.groupby("rho")
-    rho = sorted(float(r) for r in frame["rho"].unique())
-    induced = [float(grouped.get_group(r)["mean_induced_lag1"].mean()) for r in rho]
+    by_cell = frame.groupby(["n_target", "rho"])
+    if (by_cell["mean_induced_lag1"].nunique() > 1).any():
+        raise ValueError("mean_induced_lag1 differs between rows of one cell")
+    cells = by_cell.first().reset_index()
+    several = cells[cells["mean_n_segments"] != 1.0]
+    if len(several):
+        raise ValueError(
+            f"{len(several)} {arm} cells have more than one segment, where -1/N is not "
+            "the exchangeable mean of r_1; centring them by 1/N would be wrong"
+        )
+    cells = cells.assign(
+        centred=cells["mean_induced_lag1"] + 1.0 / cells["mean_n_events"]
+    )
+    grouped = cells.groupby("rho")
+    rho = sorted(float(r) for r in cells["rho"].unique())
+    centred = [float(grouped.get_group(r)["centred"].mean()) for r in rho]
     se = [
         float(
-            grouped.get_group(r)["mean_induced_lag1"].std(ddof=1)
-            / np.sqrt(max(len(grouped.get_group(r)), 1))
+            grouped.get_group(r)["centred"].std(ddof=1)
+            / np.sqrt(len(grouped.get_group(r)))
         )
         for r in rho
     ]
     return ReadDependence(
-        read_rho=rho, induced_lag1=induced, induced_lag1_se=se, arm=arm
+        read_rho=rho, centred_lag1=centred, centred_lag1_se=se, arm=arm
     )
 
 
@@ -365,11 +454,11 @@ __all__ = [
 # `null_se`, `bonferroni_z_crit` and the three constants from here, so the difference
 # between them is the grouping they apply and nothing else.
 #
-# They can therefore disagree, by design and in both directions. Two live examples:
-# C5-unstudentized is flagged by the ledger at n = 20 (z = -2.97 against 2.955) but reads
-# calibrated in the report, which only scores n >= 35; C2-asymptotic reads REJECT overall
-# in the report but is accepted by the ledger on the in-spec clock at every n from 50 up,
-# which is the more useful statement for a record of a few hundred windows.
+# They can therefore disagree, by design and in both directions. A live example:
+# C2-asymptotic reads REJECT overall in the report but is accepted by the ledger on the
+# in-spec clock at every n from 50 up, which is the more useful statement for a record of a
+# few hundred windows. The other direction is a row the per-n rule flags at n = 20, which
+# the report, scoring only n >= 35, reads as calibrated.
 
 # Censoring the real data exhibits (0.000-0.026 wherever n >= 20). Cells beyond it are a
 # corner the data never reaches and must not condemn a check that works where it lives.

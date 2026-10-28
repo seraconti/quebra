@@ -36,8 +36,9 @@ over several lags and loses where it sits entirely in one. That is the trade tha
 ship rather than one standing in for the other.
 
 Q is symmetric in the sign of each `z_h`, so it is one-sided by construction and says nothing
-about the DIRECTION of any dependence it finds. C5's `extra["r_lag1"]` carries the sign of
-the raw lag-1 value, and `extra["z"]` here carries each lag's `z_h` with its sign.
+about the DIRECTION of any dependence it finds. The direction is read from the sign of `z_1`
+in `extra["z"]`, which carries each lag's `z_h` with its sign. C5's `extra["r_lag1"]` is the
+uncentred `r_1`, whose null mean is not zero, so its sign is not the direction.
 
 Validity assumptions
 

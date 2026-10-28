@@ -10,7 +10,7 @@ The numbers quoted below are from those tables as committed with this page.
 ## 1. What is simulated
 
 A cell is one generating configuration at one event count on one clock
-(`jobs/bench/grid.py:Cell`). Five arms generate the data (`jobs/bench/arms.py`):
+(`jobs/bench/grid.py:Cell`). Seven arms generate the data (`jobs/bench/arms.py`):
 
 | arm | generator | stands for |
 |---|---|---|
@@ -19,6 +19,8 @@ A cell is one generating configuration at one event count on one clock
 | C, `arm_c` | AR(1) Gaussian reads at correlation `rho`, carved identically | read-level dependence; its power cells are null cells, because read correlation does not reach the durations |
 | D, `arm_d` | Weibull trend-renewal process, cumulative intensity `t^b` | the trend C1, C2 and CvM are directed at; `b = 1` is a second null |
 | E, `arm_e` | Weibull durations with a Gaussian-copula AR(1) dependence of strength `rho` | the serial dependence C5 and C6 are directed at; `rho = 0` is Arm A |
+| E2, `arm_e2` | Arm E with the latent dependence at lag 2 only, of strength `rho` | dependence C5 and C6 must find away from lag 1 |
+| EL, `arm_el` | two segments of Arm E, the second shifted by `delta` on the latent scale, latent AR(1) coefficient `phi` | a level difference between segments, which is part of every permutation row's null (`phi = 0`), alone and under dependence of either sign |
 
 The factors (`jobs/bench/grid.py`): event count `N_GRID` = 20, 35, 50, 75, 100, 355, 500,
 700, 1000; Weibull shape 0.75 and 1.5; quantised or continuous durations (Arm A); target
@@ -27,6 +29,16 @@ censoring 0, 0.03 and 0.25 (Arms A and D, through `arms.n_segments_for_censoring
 clocks, and their in-spec cells run only the rows that stay defined when `tau == T_N`: C5,
 C6 and CvM by permutation (`grid._carved_clocks`, `checks/battery.py:run_battery`).
 `grid.size_cells` and `grid.power_cells` give 216 and 288 cells.
+
+`grid.serial_cells` gives 87 more, written to their own table, `serial_table.csv`, which
+only `jobs/bench/report.py` reads, for `promotion_report.md`: Arms E and E2 split into a
+target of 3, 5 and 10 segments at n = 50 and 60, and Arm EL at 150 expected events per
+segment, `delta` 0, 0.4 and 0.8 and `phi` -0.12, 0 and 0.12. They use the one Weibull shape
+0.75; the grid docstring says why. Beside the size and power columns the table carries
+`delta`, the realised segment counts and segment-size quantiles, and `n_not_computed` per
+row. It leaves out `mean_induced_lag1`, which on several segments moves with the layout and
+with any difference in level (`runner.py` module docstring). The size table keeps the column
+on its censored cells, which are several segments too, and the same caveat applies there.
 
 The event counts cover the 6D2S check-ledger records, which reach 935 events. The
 censoring and quantisation levels were set from one record family, measured before the

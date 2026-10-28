@@ -470,10 +470,11 @@ def test_the_battery_switches_are_derived_from_the_run_set_and_reach_the_ledger(
 def test_the_switches_restrict_but_are_coarser_than_the_run_set():
     """MEASURED, so the caveat in `check_ledger.py` is a number rather than a hedge.
 
-    `PERMUTATION_KEYS` declares 6 rows. The battery computes 9 unrestricted and 8 under the
-    derived switches: restriction is real, and the 2-row overshoot is `include_tau_checks`
-    being all-or-nothing over five rows, so C1-asymptotic and CvM-asymptotic ride along with
-    C1's and C2's permutation rows. The run-set names AT MOST what ran.
+    `PERMUTATION_KEYS` declares 5 rows. The battery computes 8 unrestricted and 7 under the
+    derived switches; C5's unstudentized row runs only in the bench, so neither count has
+    it. Restriction is real, and the 2-row overshoot is `include_tau_checks` being
+    all-or-nothing over five rows, so C1-asymptotic and CvM-asymptotic ride along with C1's
+    and C2's permutation rows. The run-set names AT MOST what ran.
 
     If this fails because the numbers moved, the caveat needs re-measuring, not deleting.
     """
@@ -488,8 +489,8 @@ def test_the_switches_restrict_but_are_coarser_than_the_run_set():
             }
         )
     }
-    assert len(unrestricted) == 9
-    assert len(restricted) == 8, (
+    assert len(unrestricted) == 8
+    assert len(restricted) == 7, (
         "the run-set no longer restricts what the battery computes"
     )
     assert unrestricted - restricted == {("c2_anderson_darling", "asymptotic", "")}

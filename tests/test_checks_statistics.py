@@ -56,7 +56,13 @@ from quebra.analyzers.checks._rank_serial import (
     global_ranks,
     lag_layout,
 )
-from quebra.analyzers.checks.battery import ROW_KEYS, row_key, run_battery
+from quebra.analyzers.checks.battery import (
+    BENCH_ROW_KEYS,
+    C5_RAW_KEY,
+    ROW_KEYS,
+    row_key,
+    run_battery,
+)
 from quebra.analyzers.checks.result import (
     CALIB_ASYMPTOTIC,
     CALIB_PERMUTATION,
@@ -549,6 +555,53 @@ def test_battery_returns_every_row_and_shares_one_permutation_set():
 
 
 @pytest.mark.unit
+def test_c5_raw_runs_only_when_the_bench_asks_for_it():
+    """Oracle: C5's own `run` with the unstudentized variant on the same permutation set.
+
+    The default battery, which every ledger, the survey and a band read, has no C5-raw
+    row. The bench's call has it last, equal to the standalone variant, and every other
+    row is the default call's to the bit, with and without the tau checks. The bench's own
+    runner must ask for it, or the bench tables lose the row.
+    """
+    import dataclasses
+
+    from jobs.bench import grid, runner
+
+    cell = dataclasses.replace(grid.all_cells()[0], n_replicates=2)
+    written = {
+        (r["check"], r["calibration"], r["variant"]) for r in runner.run_cell(cell, 0)
+    }
+    assert written == set(BENCH_ROW_KEYS)
+
+    rng = np.random.default_rng(14)
+    segment = exponential_segment(40, rng)
+    perm = block_permutations([segment.n_events], 199, rng)
+    assert C5_RAW_KEY not in ROW_KEYS
+    for tau in (True, False):
+        default = run_battery([segment], perm=perm, include_tau_checks=tau)
+        bench = run_battery(
+            [segment], perm=perm, include_tau_checks=tau, include_c5_raw=True
+        )
+        assert C5_RAW_KEY not in [row_key(r) for r in default]
+        assert [row_key(r) for r in bench] == [row_key(r) for r in default] + [
+            C5_RAW_KEY
+        ]
+        for shared, alone in zip(bench, default):
+            assert (shared.statistic, shared.p_value) == (
+                alone.statistic,
+                alone.p_value,
+            )
+        standalone = c5.run([segment], variant=c5.VARIANT_RAW, perm=perm)
+        assert (bench[-1].statistic, bench[-1].p_value) == (
+            standalone.statistic,
+            standalone.p_value,
+        )
+    assert [
+        row_key(r) for r in run_battery([segment], perm=perm, include_c5_raw=True)
+    ] == (list(BENCH_ROW_KEYS))
+
+
+@pytest.mark.unit
 def test_the_battery_runs_the_shipped_gamma_estimator():
     """Oracle: each check's own `run` under `GAMMA_DEFAULT`, which differs from 1/N here.
 
@@ -598,7 +651,12 @@ def test_battery_drops_only_the_tau_checks_when_asked():
     assert ("cvm_cramer_von_mises", CALIB_PERMUTATION, "") in keys
     assert ("cvm_cramer_von_mises", CALIB_ASYMPTOTIC, "") not in keys
     assert not any(key[0].startswith(("c1", "c2")) for key in keys)
-    assert len(keys) == 4
+    # Three rows, not four: C5's unstudentized variant runs only when the bench asks.
+    assert keys == [
+        ("c5_rank_autocorr", CALIB_PERMUTATION, c5.VARIANT_STUDENTIZED),
+        ("c6_exchangeability", CALIB_PERMUTATION, ""),
+        ("cvm_cramer_von_mises", CALIB_PERMUTATION, ""),
+    ]
 
 
 @pytest.mark.unit

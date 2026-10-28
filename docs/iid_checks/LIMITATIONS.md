@@ -116,3 +116,21 @@ test (`analyzers/checks/_permutation.py`). So none of them can see a record whos
 differ only in level: at any size of shift, such a record is rejected no more often than
 the nominal size. A shift between segments is part of the null these rows test, so a
 non-rejection says nothing about whether the segments share a level.
+
+## 10. C5's unstudentized row and `r_lag1` are uncentred
+
+Under exchangeability the rank autocorrelation `r_h` does not average zero. On one segment its
+mean is `-(n - h)/(n(n - 1))`, which is `-1/n` at lag 1 (Dufour and Roy 1985, Eq. (2.2),
+p. 260). On segments at different levels every within-segment product leans positive, so the
+mean moves up by an amount that grows with the difference in level.
+
+C6 and C5's studentized row centre each lag at its own permutation mean, so the offset does not
+reach them. C5's unstudentized row, `max_h |r_h|`, is not centred, and it leans as an uncentred
+sum does: dependence of one sign is inflated and the other deflated. Its size stays exact, so
+what the offset distorts is power, in a direction set by the sign of the dependence. It runs
+only in the bench, as its measure of what studentizing buys: the pipeline's battery leaves it
+out, so no ledger, survey or band carries it (`battery.BENCH_ROW_KEYS`).
+
+C5's `extra["r_lag1"]`, and the bench's `mean_induced_lag1` that averages it, carry the same
+offset: about `-1/n` on one segment, and the level effect across gaps. Neither gives the
+direction of a dependence. The sign of `z_1` in C6's `extra["z"]` does.

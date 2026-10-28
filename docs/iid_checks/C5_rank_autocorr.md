@@ -38,10 +38,22 @@ the opposite of the usual intuition. Measured:
 | one segment of 60 | 1-5, 59..55 | 0.1269..0.1224 | 1.04 |
 | 10 segments of 5 | 1-4, 40..10 | 0.0985..0.0600 | 1.64 |
 
-So on an ungapped record the two variants are near-identical by construction, and only on
-short, numerous segments does the unstudentized max concentrate on one lag (43% of
-replicates on lag 1, against 21-29% once each lag is on its own scale). The unstudentized
-variant ships so that this is a number rather than a claim.
+So on an ungapped record studentizing barely changes each lag's scale, and only on short,
+numerous segments does the unstudentized max concentrate on one lag (43% of replicates on
+lag 1, against 21-29% once each lag is on its own scale). Studentizing also moves each
+lag's centre, and that separates the two variants even on one segment: in
+`jobs/bench/results/power_table.csv` the unstudentized variant rejects less often than the
+studentized one in 84 of the 88 Arm E cells where they differ, and in 63 of 65 on Arm D,
+all single segments. The unstudentized variant runs in the bench so that these are numbers
+rather than claims.
+
+**The unstudentized variant runs only in the bench.** It is uncentred: under
+exchangeability its `r_h` averages `-(n - h)/(n(n - 1))` on one segment, `-1/n` at lag 1
+(Dufour and Roy 1985, Eq. (2.2), p. 260), and moves up with any difference in level between
+segments. Its max then leans as an uncentred sum does, so its power depends on the sign of
+the dependence. The pipeline's battery leaves it out (`battery.ROW_KEYS`), so no ledger,
+survey or band carries it; the bench asks for it with `include_c5_raw=True`
+(`battery.BENCH_ROW_KEYS`). `LIMITATIONS.md`, section 10, covers it and `extra["r_lag1"]`.
 
 **A lag with no spread is not computed.** When every permutation gives the same `r_h` at
 some lag, as when every segment holds two events, or every segment that pairs at that lag

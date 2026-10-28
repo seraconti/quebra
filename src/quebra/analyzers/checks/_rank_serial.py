@@ -27,11 +27,13 @@ observations means more noise. Measured null SD per lag:
     one segment of 60      lags 1-5, pairs 59..55   SD 0.1269..0.1224   ratio 1.04
     10 segments of 5       lags 1-4, pairs 40..10   SD 0.0985..0.0600   ratio 1.64
 
-So on an ungapped record studentization is very nearly a no-op, and the two C5 variants
-should agree. It bites when segments are short and numerous - the censored/gapped case -
-where an unstudentized `max_h |r_h|` picks lag 1 in 43% of replicates against 21-29% once
-each lag is put on its own scale. Shipping both variants is what turns that from a claim
-into a number the bench reports.
+So on an ungapped record studentization barely changes the scale of a lag. It still moves
+its centre, since `r_h` does not average zero under exchangeability (`c5_rank_autocorr`), so
+the two C5 variants differ even there. The scale bites when segments are short and numerous,
+the censored or gapped case, where an unstudentized `max_h |r_h|` picks lag 1 in 43% of
+replicates against 21-29% once each lag is put on its own scale. Running both variants in
+the bench is what turns that from a claim into a number it reports; the pipeline's battery
+runs only the studentized one.
 
 The moments are computed from the observed value TOGETHER WITH the permutations, not from
 the permutations alone: that makes the scaling a symmetric function of the augmented

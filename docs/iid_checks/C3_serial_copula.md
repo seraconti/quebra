@@ -20,7 +20,7 @@ p-value at seed 707, N 1000, `lag.max` 5. Both are asserted because the statisti
 N-invariant and so cannot, alone, detect a swapped argument order. The test skips where
 `Rscript` is absent and never passes with a mocked one.
 
-**C3 is UNCALIBRATED.** It has no entry in `battery.ROW_KEYS` and no row in either bench
+**C3 is UNCALIBRATED.** It has no entry in `battery.ROW_KEYS` and no row in any bench
 table, so its size has never been measured and its power has never been measured. A C3
 p-value is a statistic, not a level: neither a rejection nor a non-rejection from it is
 evidence at alpha. The ledger says so on every such row, and

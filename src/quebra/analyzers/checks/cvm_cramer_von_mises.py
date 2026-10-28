@@ -41,7 +41,7 @@ statistic `W^2` on `u_i = T_i/tau` - agreement to 12 decimals against
 `scipy.stats.cramervonmises`, which is the external cross-check and is stronger evidence
 than a second transcription of the same formula would be.
 
-**Registered in `battery.ROW_KEYS`.** That tuple is the schema of the bench
+**Registered in `battery.ROW_KEYS`.** Every row there is a row of the bench
 tables, so registration alone would have made `bench_acceptance_at_n` return None and every
 CvM ledger row read `underpowered / no bench cell`. `jobs/bench/results/size_table.csv`
 carries 219 CvM size rows and the power table 348. Over the twelve arm=A_iid_weibull /

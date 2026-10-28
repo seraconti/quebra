@@ -101,7 +101,6 @@ class CalibrationSizePlot(BasePlot):
                         marker="o",
                         markersize=3.5,
                         color=calibration_color(_calibration_of(row)),
-                        linestyle="--" if variant == "unstudentized" else "-",
                         label=_calibration_of(row)
                         + (f" / {variant}" if variant else ""),
                     )
@@ -134,7 +133,7 @@ class CalibrationSizePlot(BasePlot):
 
 
 class CalibrationPowerPlot(BasePlot):
-    """Power against the duration dependence actually induced."""
+    """Power against the rank correlation of neighbouring durations the generator induces."""
 
     def build_matplotlib(
         self, result: PowerVsDependence, style: str = "default"
@@ -147,13 +146,15 @@ class CalibrationPowerPlot(BasePlot):
                 1, len(rows), figsize=(4.0 * len(rows), 3.9), sharey=True
             )
             axes = np.atleast_1d(axes)
-            n_values = sorted(result.induced_lag1_by_n)
+            n_values = sorted(
+                {n for per_n in result.power_by_row_and_n.values() for n in per_n}
+            )
 
             for ax, row in zip(axes, rows):
                 ax.axhline(result.alpha, **REFERENCE_LINE)
                 for index, n in enumerate(n_values):
                     ax.plot(
-                        result.induced_lag1_by_n[n],
+                        result.neighbour_rank_corr,
                         result.power_by_row_and_n[row][n],
                         marker="o",
                         markersize=3.0,
@@ -161,7 +162,9 @@ class CalibrationPowerPlot(BasePlot):
                         label=f"n = {n}",
                     )
                 ax.set_title(f"{_short(_check_of(row))} {_variant_of(row)}".strip())
-                ax.set_xlabel("Induced duration lag-1 autocorrelation")
+                ax.set_xlabel(
+                    "Rank correlation of neighbouring durations\ninduced by the generator"
+                )
                 ax.set_ylim(0.0, 1.0)
             axes[0].set_ylabel("Power")
             axes[-1].legend(loc="upper left", frameon=False)
@@ -255,8 +258,8 @@ class CalibrationReadDependencePlot(BasePlot):
         with style_context(style):
             fig, ax = plt.subplots(figsize=(6.4, 4.2))
             rho = np.asarray(result.read_rho, dtype=float)
-            induced = np.asarray(result.induced_lag1, dtype=float)
-            se = np.asarray(result.induced_lag1_se, dtype=float)
+            induced = np.asarray(result.centred_lag1, dtype=float)
+            se = np.asarray(result.centred_lag1_se, dtype=float)
 
             ax.axhline(0.0, **REFERENCE_LINE)
             ax.plot(rho, rho, **REFERENCE_LINE)
@@ -268,7 +271,7 @@ class CalibrationReadDependencePlot(BasePlot):
                 markersize=4.0,
                 capsize=2.5,
                 color=calibration_color("permutation"),
-                label="induced, measured",
+                label="induced, measured, +1/N",
             )
             ax.annotate(
                 "if read correlation reached the durations,\nthe curve would follow this line",
@@ -284,7 +287,9 @@ class CalibrationReadDependencePlot(BasePlot):
                 },
             )
             ax.set_xlabel("Read-level AR(1) correlation")
-            ax.set_ylabel("Induced duration lag-1 autocorrelation")
+            ax.set_ylabel(
+                "Induced duration lag-1 rank autocorrelation,\ncentred (+1/N)"
+            )
             ax.set_title(
                 "Duration dependence induced by read correlation - Arm C, carved"
             )
