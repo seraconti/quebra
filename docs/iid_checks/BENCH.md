@@ -89,8 +89,8 @@ still be accepted is 0.05 +/- 0.011, 0.013, 0.014 and 0.014 respectively
   - otherwise it is `underpowered`.
 
 **The figures.** `jobs/active/check_calibration.py` declares both tables as Datasets and draws
-`calibration_summary.size_vs_n`, `power_vs_dependence`, `read_dependence` and
-`validation_curve`.
+`calibration_summary.size_vs_n`, `power_vs_dependence`, `power_vs_trend` (one row of
+panels per renewal shape), `read_dependence` and `validation_curve`.
 
 **The reports.**
 - `jobs/bench/report.py:verdicts` sets the verdicts in `promotion_report.md`. It REJECTs a
@@ -146,7 +146,8 @@ None of these fixes is implemented. Each is a proposal.
    still look right. Only published values catch it (`tests/test_checks_published_values.py`,
    `docs/GOLD_STANDARD.md`). No fix proposed.
 8. **Multiplicity across groups is uncorrected.** The Bonferroni is per group, over 162
-   groups, so about eight false "miscalibrated" flags are expected even for exact tests.
+   groups, so about eight false "miscalibrated" flags are expected across the table even if
+   every check were exact, about five of them among its 108 permutation groups.
    Four exact permutation rows are flagged in the current tables: C5 studentized and C6,
    in-spec, n = 700, both on the same cell (Arm A, continuous, uncensored) and both
    conservative, at 0.0345 and 0.0355; C5 unstudentized, in-spec, n = 20; and CvM

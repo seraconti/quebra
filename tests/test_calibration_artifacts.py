@@ -269,42 +269,91 @@ def test_read_dependence_adds_back_one_over_n_per_cell_and_refuses_several_segme
 
 @pytest.mark.unit
 def test_power_vs_trend_reads_b_and_takes_b_1_from_the_uncensored_size_cells():
-    """Contract: the x-axis is Arm D's trend exponent `b`. Its `b = 1` point, no trend, is
-    Arm D's uncensored size cells; a censored size cell (rate 0.9 here) must not enter it,
-    and without an uncensored `b = 1` cell the artifact raises.
+    """Contract: the x-axis is Arm D's trend exponent `b`, one curve set per renewal shape,
+    no mean over shapes. Its `b = 1` point, no trend, is Arm D's uncensored size cells only:
+    a censored one, an Arm A one and an Arm D `b = 0.7` size cell (rate 0.7 each) must not
+    enter. Without an uncensored `b = 1` cell, or with a factor other than shape varying,
+    the artifact raises. C1's asymptotic row, above its permutation row by 0.03 at shape
+    0.75 and 0.01 at shape 1.5, is not drawn, and the selection reason carries the larger
+    gap. C6 sits 0.04 below C1, so a gap taken across checks would read 0.07.
     """
 
-    def cells(b, censoring, rate):
+    def cells(
+        b,
+        censoring,
+        rate,
+        arm=ARM_D,
+        shapes=(0.75, 1.5),
+        quantised=False,
+        calibration="permutation",
+        checks=("c1_lewis_robinson", "c6_exchangeability"),
+    ):
         return [
             {
-                "arm": ARM_D,
+                "arm": arm,
                 "clock": "in_spec",
                 "n_target": n,
                 "shape": shape,
-                "quantised": False,
+                "quantised": quantised,
                 "censoring_target": censoring,
                 "b": b,
                 "rho": np.nan,
                 "check": check,
-                "calibration": "permutation",
+                "calibration": calibration,
                 "variant": np.nan,
-                "rejection_rate": rate,
+                # Shape 1.5 a fixed 0.2 above shape 0.75, so a mean would show.
+                "rejection_rate": rate
+                + (0.2 if shape == 1.5 else 0.0)
+                - (0.04 if check == "c6_exchangeability" else 0.0),
             }
             for n in (20, 100)
-            for shape in (0.75, 1.5)
-            for check in ("c1_lewis_robinson", "c6_exchangeability")
+            for shape in shapes
+            for check in checks
         ]
 
-    power = pd.DataFrame(cells(0.7, 0.0, 0.4) + cells(1.5, 0.0, 0.6))
-    size = pd.DataFrame(cells(1.0, 0.0, 0.05) + cells(1.0, 0.25, 0.9))
+    def asymptotic(b, rate):
+        return [
+            row
+            for shape, gap in ((0.75, 0.03), (1.5, 0.01))
+            for row in cells(
+                b,
+                0.0,
+                rate + gap,
+                shapes=(shape,),
+                calibration="asymptotic",
+                checks=("c1_lewis_robinson",),
+            )
+        ]
+
+    power = pd.DataFrame(
+        cells(0.7, 0.0, 0.4)
+        + cells(1.5, 0.0, 0.6)
+        + asymptotic(0.7, 0.4)
+        + asymptotic(1.5, 0.6)
+    )
+    size = pd.DataFrame(
+        cells(1.0, 0.0, 0.05)
+        + asymptotic(1.0, 0.05)
+        + cells(1.0, 0.25, 0.7)
+        + cells(1.0, 0.0, 0.7, arm="A_iid_weibull", shapes=(0.75,))
+        + cells(0.7, 0.0, 0.7, shapes=(0.75,))
+    )
     artifact = power_vs_trend(power, size)
     assert artifact.b == [0.7, 1.0, 1.5]
-    assert artifact.pooled_over == ["shape"]
-    assert artifact.power_by_row_and_n["c1_lewis_robinson [permutation]"][20] == (
-        pytest.approx([0.4, 0.05, 0.6])
-    )
+    assert artifact.shapes == [0.75, 1.5]
+    c1 = "c1_lewis_robinson [permutation]"
+    assert artifact.power_by_shape[0.75][c1][20] == pytest.approx([0.4, 0.05, 0.6])
+    assert artifact.power_by_shape[1.5][c1][20] == pytest.approx([0.6, 0.25, 0.8])
+    assert "4 censored b = 1 cells left out" in artifact.cell_description
+    assert artifact.rows_drawn == [c1, "c6_exchangeability [permutation]"]
+    assert "differ from it by at most 0.030" in artifact.selection_reason
     with pytest.raises(ValueError, match="b = 1"):
         power_vs_trend(power, size[size["censoring_target"] > 0.0])
+    mixed = pd.concat(
+        [size, pd.DataFrame(cells(1.0, 0.0, 0.05, quantised=True))], ignore_index=True
+    )
+    with pytest.raises(ValueError, match="pools nothing, but quantised varies"):
+        power_vs_trend(power, mixed)
 
 
 @pytest.mark.statistical
@@ -312,10 +361,10 @@ def test_every_drawn_check_is_at_its_size_at_b_1_on_the_committed_tables():
     """Oracle: a permutation-calibrated check is exact, so at `b = 1` (no trend) each drawn
     row's rejection rate is binomial around alpha.
 
-    Each point is the mean of the two shape cells, so its null SE is
-    `sqrt(se_1^2 + se_2^2) / 2` from their `n_used`. The band is the two-sided Bonferroni
-    threshold over every drawn (row, n) point. The test reads the committed tables: it is
-    evidence about them, and the guard on the code is the test above.
+    Each point is one cell, so its null SE is `null_se` at that cell's `n_used`. The band is
+    the two-sided Bonferroni threshold over every drawn (shape, row, n) point. The test
+    reads the committed tables: it is evidence about them, and the guard on the code is the
+    test above.
     """
     size = pd.read_csv(RESULTS / "size_table.csv")
     power = pd.read_csv(RESULTS / "power_table.csv")
@@ -330,11 +379,16 @@ def test_every_drawn_check_is_at_its_size_at_b_1_on_the_committed_tables():
         ]
     )
     z = []
-    for row in artifact.rows_drawn:
-        for n, rates in artifact.power_by_row_and_n[row].items():
-            used = null[(null["row"] == row) & (null["n_target"] == n)]["n_used"]
-            assert len(used) == 2
-            se = np.sqrt(sum(null_se(artifact.alpha, u) ** 2 for u in used)) / 2.0
-            z.append((rates[at_null] - artifact.alpha) / se)
-    assert len(z) >= 2 * len(artifact.rows_drawn)
+    for shape in artifact.shapes:
+        for row in artifact.rows_drawn:
+            for n, rates in artifact.power_by_shape[shape][row].items():
+                used = null[
+                    (null["row"] == row)
+                    & (null["n_target"] == n)
+                    & (null["shape"] == shape)
+                ]["n_used"]
+                assert len(used) == 1
+                se = null_se(artifact.alpha, float(used.iloc[0]))
+                z.append((rates[at_null] - artifact.alpha) / se)
+    assert len(z) >= 2 * len(artifact.shapes) * len(artifact.rows_drawn)
     assert max(abs(v) for v in z) <= bonferroni_z_crit(len(z)), [round(v, 2) for v in z]

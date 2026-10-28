@@ -40,7 +40,8 @@ Whether any two of them are redundant is open. C5's studentized variant and C6 r
 same studentized rank autocorrelations and differ in how they combine lags; C1/C2 measure a
 different thing. Measured against C6 as the reference, C5 studentized differs from it in
 rejection rate by 0.019 on average and by at most 0.172 over the 288 power cells they share
-(`promotion_report.md`, criterion 4).
+on Arms C, D and E, that maximum on an Arm D trend cell (`promotion_report.md`, criterion 4).
+On Arm E's dependence grid alone the figures are 0.017 and 0.077.
 
 ## Two clocks, because the mapping is not unique
 

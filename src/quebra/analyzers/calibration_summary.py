@@ -45,12 +45,6 @@ NOMINAL_ALPHA = 0.05
 ARM_E = "E_copula_ar1_durations"
 ARM_D = "D_trp_power_law"
 
-# Why the power figures show one row per check, the permutation one.
-REPRESENTATIVE_REASON = (
-    "permutation calibration - the asymptotic curves are within Monte Carlo error of them "
-    "and the bench rejected both"
-)
-
 
 def _label(check: str, calibration: str, variant: str) -> str:
     suffix = f"/{variant}" if isinstance(variant, str) and variant else ""
@@ -187,27 +181,26 @@ class PowerVsDependence(StaleArtifactGuard):
 
 @dataclass
 class PowerVsTrend(StaleArtifactGuard):
-    """Rejection rate against the trend exponent `b` of Arm D, a Weibull trend-renewal
-    process whose event intensity is `b t^(b-1)`.
+    """Rejection rate against the trend exponent `b` of Arm D, a trend-renewal process with
+    Weibull renewals and trend function `b t^(b-1)`.
 
     `b = 1` is no trend; `b < 1` is a falling event rate and `b > 1` a rising one. The
-    `b = 1` point is a size, so the curves start from the nominal level there. As in
-    `PowerVsDependence`, each value is a mean over the cells sharing (row, n, b), named in
-    `pooled_over`, with its range in the lo/hi dicts.
+    `b = 1` point is a size, from Arm D's size cells, so each curve passes through the
+    check's size there. Nothing is pooled: the renewal shape can change power by more than
+    the trend does, so a mean over shapes would draw a power neither shape has. Each value
+    is one cell, keyed `shape -> row -> n`.
     """
 
     b: list[float] = field(default_factory=list)
-    power_by_row_and_n: dict[str, dict[int, list[float]]] = field(default_factory=dict)
-    pooled_over: list[str] = field(default_factory=list)
-    power_lo_by_row_and_n: dict[str, dict[int, list[float]]] = field(
-        default_factory=dict
-    )
-    power_hi_by_row_and_n: dict[str, dict[int, list[float]]] = field(
+    shapes: list[float] = field(default_factory=list)
+    power_by_shape: dict[float, dict[str, dict[int, list[float]]]] = field(
         default_factory=dict
     )
     alpha: float = NOMINAL_ALPHA
     rows_drawn: list[str] = field(default_factory=list)
     selection_reason: str = ""
+    # The configuration every drawn cell shares, and what was left out to get it.
+    cell_description: str = ""
 
 
 @dataclass
@@ -365,7 +358,7 @@ def power_vs_dependence(
         power_hi_by_row_and_n=grid.hi,
         alpha=alpha,
         rows_drawn=_representative_rows(grid.mean),
-        selection_reason=REPRESENTATIVE_REASON,
+        selection_reason=_selection_reason(grid.mean),
     )
 
 
@@ -423,44 +416,120 @@ def power_vs_trend(
     *,
     alpha: float = NOMINAL_ALPHA,
 ) -> PowerVsTrend:
-    """Rejection rate per row and event count against Arm D's trend exponent `b`.
+    """Rejection rate per renewal shape, row and event count against Arm D's trend exponent.
 
-    The `b != 1` cells are Arm D's power cells. `b = 1` is no trend, Arm D's uncensored size
-    cells, so each curve passes through the check's size there. Only uncensored cells are
-    drawn, which is what every power cell is.
+    The `b != 1` cells are Arm D's power cells. `b = 1`, no trend, is Arm D's uncensored
+    size cells, so each curve passes through the check's size there. Every power cell is
+    uncensored, so Arm D's censored `b = 1` cells are left out, and `cell_description` says
+    so. A factor other than shape that varies among the drawn cells raises: nothing here is
+    pooled.
+
+    Validity assumptions
+
+    - Assumption: Arm D's `b = 1` size cells come from the same generator and configuration
+      as its power cells, so the `b = 1` point continues the same curve.
+      Diagnostic: both are drawn by `arm_d` in `jobs/bench/arms.py`; this builder raises
+      when the clock, quantisation or censoring differ among the drawn cells, and
+      `tests/test_calibration_artifacts.py` checks every drawn row is within its size band
+      at `b = 1`.
+      Consequence of violation: the `b = 1` point would describe another configuration, and
+      the curve would bend there for a reason other than the trend.
+      Reference: `jobs/bench/grid.py`, which lists both sets of cells; no source located
+      for the design itself.
+    - Assumption: the renewal distribution is Weibull at the bench's two shapes.
+      Diagnostic: none here; the real records' gap variability is not measured against
+      them.
+      Consequence of violation: the curves describe this generator only, and a record whose
+      gaps are more irregular than shape 0.75's lies outside what the figure shows.
+      Reference: `jobs/bench/arms.py`, `arm_d`.
     """
     trend = power_table[power_table["arm"] == ARM_D]
-    null = size_table[
-        (size_table["arm"] == ARM_D)
-        & (size_table["b"] == 1.0)
-        & (size_table["censoring_target"] == 0.0)
-    ]
+    null = size_table[(size_table["arm"] == ARM_D) & (size_table["b"] == 1.0)]
+    uncensored = null[null["censoring_target"] == 0.0]
     if not len(trend):
         raise ValueError(f"no {ARM_D} power cells in the table")
-    if not len(null):
+    if not len(uncensored):
         raise ValueError(f"no {ARM_D} b = 1 uncensored size cells in the table")
-    selected = pd.concat([trend, null], ignore_index=True)
+    selected = pd.concat([trend, uncensored], ignore_index=True)
     cell = _with_label(_drawn_rows(selected, "power_vs_trend"))
-    grid = _power_grid(cell, "b", "power_vs_trend")
-    return PowerVsTrend(
-        b=grid.values,
-        power_by_row_and_n=grid.mean,
-        pooled_over=grid.pooled_over,
-        power_lo_by_row_and_n=grid.lo,
-        power_hi_by_row_and_n=grid.hi,
-        alpha=alpha,
-        rows_drawn=_representative_rows(grid.mean),
-        selection_reason=REPRESENTATIVE_REASON,
+    varying = [
+        column
+        for column in ("clock", "quantised", "censoring_target")
+        if cell[column].nunique() > 1
+    ]
+    if varying:
+        raise ValueError(
+            f"power_vs_trend pools nothing, but {', '.join(varying)} varies among the "
+            "drawn cells"
+        )
+    shapes = sorted(float(s) for s in cell["shape"].unique())
+    grids = {
+        shape: _power_grid(
+            cell[cell["shape"] == shape], "b", f"power_vs_trend shape {shape:g}"
+        )
+        for shape in shapes
+    }
+    if len({tuple(g.values) for g in grids.values()}) != 1:
+        raise ValueError(
+            "power_vs_trend: the shapes cover different b, "
+            f"{ {s: g.values for s, g in grids.items()} }"
+        )
+    if len({frozenset(g.mean) for g in grids.values()}) != 1:
+        raise ValueError("power_vs_trend: the shapes carry different rows")
+    dropped = null[null["censoring_target"] != 0.0][
+        ["clock", "n_target", "shape", "quantised", "censoring_target"]
+    ].drop_duplicates()
+    first = cell.iloc[0]
+    description = (
+        f"{ARM_D}, {first['clock']} clock, "
+        f"{'quantised' if bool(first['quantised']) else 'continuous'} durations, "
+        f"censoring {float(first['censoring_target']):g}; b = 1 from the size table"
     )
+    if len(dropped):
+        description += f", its {len(dropped)} censored b = 1 cells left out"
+    means = [g.mean for g in grids.values()]
+    return PowerVsTrend(
+        b=grids[shapes[0]].values,
+        shapes=shapes,
+        power_by_shape={shape: grids[shape].mean for shape in shapes},
+        alpha=alpha,
+        rows_drawn=_representative_rows(means[0]),
+        selection_reason=_selection_reason(*means),
+        cell_description=description,
+    )
+
+
+def _selection_reason(*powers: dict[str, dict[int, list[float]]]) -> str:
+    """Why a power figure draws the permutation row of a check that has two calibrations,
+    with the largest gap between the two on the points it draws, measured here."""
+    gaps = [
+        abs(a - p)
+        for power in powers
+        for asymptotic in power
+        if "[asymptotic" in asymptotic
+        for permutation in power
+        if "[permutation" in permutation
+        and _check_of(permutation) == _check_of(asymptotic)
+        for n in sorted(power[asymptotic].keys() & power[permutation].keys())
+        for a, p in zip(power[asymptotic][n], power[permutation][n], strict=True)
+    ]
+    reason = "the permutation calibration"
+    if gaps:
+        reason += (
+            f"; the asymptotic rows differ from it by at most {max(gaps):.3f} on these "
+            "points, and the promotion report rejects them on size"
+        )
+    return reason
 
 
 def _representative_rows(power: dict[str, dict[int, list[float]]]) -> list[str]:
     """One row per check: the calibration a reader should actually use.
 
     Drawing every row put C1, C2 and CvM on the page twice in visually identical panels -
-    the asymptotic and permutation power curves differ by less than the Monte Carlo error,
-    while their SIZE (the other figure) differs enormously. Showing both here implies a
-    distinction this figure cannot resolve.
+    the asymptotic and permutation power curves differ by a few hundredths at most
+    (`_selection_reason` measures the gap onto the figure), while their SIZE (the other
+    figure) differs enormously. Showing both here implies a distinction this figure cannot
+    resolve.
     """
     chosen: list[str] = []
     for check in sorted({_check_of(row) for row in power}):

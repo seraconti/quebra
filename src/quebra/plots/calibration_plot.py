@@ -134,17 +134,23 @@ class CalibrationSizePlot(BasePlot):
 
 
 def _power_footnote(
-    fig: plt.Figure, selection_reason: str, pooled_over: list[str]
+    fig: plt.Figure,
+    selection_reason: str,
+    pooled_over: list[str],
+    cell_description: str = "",
 ) -> None:
-    """FIGURE_STANDARD: a panel drawing a subset says which, in the panel; and a point that
-    is a mean says what it pools (AGENTS.md section 4)."""
+    """FIGURE_STANDARD: a panel drawing a subset says which, in the panel; a point that is
+    a mean says what it pools (AGENTS.md section 4); and the cells drawn are named."""
     notes = []
     if selection_reason:
         notes.append(f"shown: {selection_reason}")
     if pooled_over:
         notes.append(f"each point a mean over {', '.join(pooled_over)}")
-    if notes:
-        fig.text(0.5, 0.005, "; ".join(notes), ha="center")
+    lines = ["; ".join(notes)] if notes else []
+    if cell_description:
+        lines.append(f"cells: {cell_description}")
+    if lines:
+        fig.text(0.5, 0.005, "\n".join(lines), ha="center", va="bottom")
 
 
 class CalibrationPowerPlot(BasePlot):
@@ -193,7 +199,8 @@ class CalibrationPowerPlot(BasePlot):
 
 
 class CalibrationTrendPlot(BasePlot):
-    """Rejection rate against the trend exponent of a Weibull trend-renewal process."""
+    """Rejection rate against the trend exponent of a Weibull trend-renewal process, one
+    row of panels per renewal shape, since the shape moves power more than a mean can show."""
 
     def build_matplotlib(
         self, result: PowerVsTrend, style: str = "default"
@@ -201,48 +208,59 @@ class CalibrationTrendPlot(BasePlot):
         if not isinstance(result, PowerVsTrend):
             raise TypeError("CalibrationTrendPlot expects a PowerVsTrend artifact")
         with style_context(style):
-            rows = list(result.rows_drawn) or sorted(result.power_by_row_and_n)
+            shapes = list(result.shapes)
+            first = result.power_by_shape[shapes[0]]
+            rows = list(result.rows_drawn) or sorted(first)
             fig, axes = plt.subplots(
-                1, len(rows), figsize=(4.0 * len(rows), 3.9), sharey=True
+                len(shapes),
+                len(rows),
+                figsize=(4.0 * len(rows), 3.4 * len(shapes) + 0.6),
+                sharex=True,
+                sharey=True,
+                squeeze=False,
             )
-            axes = np.atleast_1d(axes)
-            n_values = sorted(
-                {n for per_n in result.power_by_row_and_n.values() for n in per_n}
-            )
+            n_values = sorted({n for per_n in first.values() for n in per_n})
 
-            for ax, row in zip(axes, rows):
-                ax.axhline(result.alpha, **REFERENCE_LINE)
-                ax.axvline(1.0, **REFERENCE_LINE)
-                ax.text(
-                    1.0,
-                    0.98,
-                    "no trend",
-                    transform=ax.get_xaxis_transform(),
-                    ha="center",
-                    va="top",
-                )
-                for index, n in enumerate(n_values):
-                    ax.plot(
-                        result.b,
-                        result.power_by_row_and_n[row][n],
-                        marker="o",
-                        markersize=3.0,
-                        color=ordered_color(index, len(n_values)),
-                        label=f"n = {n}",
+            for shape_axes, shape in zip(axes, shapes):
+                power = result.power_by_shape[shape]
+                for ax, row in zip(shape_axes, rows):
+                    ax.axhline(result.alpha, **REFERENCE_LINE)
+                    ax.axvline(1.0, **REFERENCE_LINE)
+                    ax.text(
+                        1.0,
+                        0.98,
+                        "no trend",
+                        transform=ax.get_xaxis_transform(),
+                        ha="center",
+                        va="top",
                     )
+                    for index, n in enumerate(n_values):
+                        ax.plot(
+                            result.b,
+                            power[row][n],
+                            marker="o",
+                            markersize=3.0,
+                            color=ordered_color(index, len(n_values)),
+                            label=f"n = {n}",
+                        )
+                    ax.set_ylim(0.0, 1.0)
+                shape_axes[0].set_ylabel(
+                    f"Weibull shape {shape:g}\n"
+                    f"rejection rate at alpha = {result.alpha:g}"
+                )
+            for ax, row in zip(axes[0], rows):
                 ax.set_title(f"{_short(_check_of(row))} {_variant_of(row)}".strip())
+            for ax in axes[-1]:
                 ax.set_xlabel(
                     "Trend exponent b\n(b < 1 falling event rate, b > 1 rising)"
                 )
-                ax.set_ylim(0.0, 1.0)
-            axes[0].set_ylabel(f"Rejection rate at alpha = {result.alpha:g}")
-            # Outside the last panel: every panel has curves near 1 at both ends of b.
-            axes[-1].legend(
-                loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False
+            # Outside the panels: every panel has curves near 1 at both ends of b.
+            axes[0, -1].legend(
+                loc="upper left", bbox_to_anchor=(1.02, 1.0), frameon=False
             )
-            _power_footnote(fig, result.selection_reason, result.pooled_over)
+            _power_footnote(fig, result.selection_reason, [], result.cell_description)
             fig.suptitle("Power against trend - Arm D, Weibull trend-renewal process")
-            fig.tight_layout(rect=(0, 0.045, 0.95, 1))
+            fig.tight_layout(rect=(0, 0.06, 0.95, 1))
             return fig
 
     def build_plotly(self, result: PowerVsTrend):

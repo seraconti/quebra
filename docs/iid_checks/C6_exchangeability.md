@@ -57,8 +57,10 @@ the whole cell as one `not computed` row and reports no other check for it, C3 i
 **Power is low below n = 100.** Averaged over the bench's dependence grid
 (`jobs/bench/results/power_table.csv`, arm=E_copula_ar1_durations, mean over `rho` and
 shape), C6 has 22% power at n = 50, 34% at n = 100, 60% at n = 355 and 79% at n = 1000,
-slightly below C5 studentized at every n of the grid. Its rejection rate differs from C5
-studentized's by 0.019 on average and by at most 0.172 over the 288 power cells they share
+slightly below C5 studentized at every n of the grid. On that grid its rejection rate
+differs from C5 studentized's by 0.017 on average and by at most 0.077 (`power_table.csv`,
+Arm E rows). Over all 288 power cells the two share (108 on Arm C, 72 on Arm D, 108 on
+Arm E) the figures are 0.019 and 0.172, that maximum on an Arm D trend cell
 (`jobs/bench/report.py::check_agreement`).
 
 ## What we do
