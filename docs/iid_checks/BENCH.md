@@ -56,8 +56,9 @@ cells 1000, and permutation rows use B = 999 (`grid.py`: `N_REPLICATES_SIZE`,
 
 The Monte Carlo standard error of a size at a true 0.05 is `sqrt(0.05 * 0.95 / 2000)` =
 0.0049 for a size cell and 0.0069 at 1000 replicates. Every row carries its own `mc_se`, its
-`n_used` replicates and the first failure reason, the realised censoring, and the
-duration-level lag-1 the cell actually induced (`runner.py` module docstring).
+`n_used` replicates and the first failure reason, the realised censoring, and
+`mean_induced_lag1`, C5's uncentred `r_1` averaged over the cell, which reads about -1/N
+with no dependence, N the cell's event count (`runner.py` module docstring).
 
 ## 3. How the numbers are consumed
 
@@ -182,5 +183,6 @@ None of these fixes is implemented. Each is a proposal.
     every later cell. *Proposal:* seed from the cell's key.
 15. **The dependence grid is not calibrated to a record.** `rho` sets the strength of the
     generated dependence; no grid point is claimed to be a real record's. Power is reported
-    over the whole grid, with the lag-1 each `rho` induced (`report.py:dependence_grid_table`).
+    over the whole grid, with the rank correlation of neighbouring durations each `rho`
+    induces in the generator, `(6/pi) arcsin(rho/2)` (`report.py:dependence_grid_table`).
     No fix proposed.

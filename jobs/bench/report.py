@@ -49,6 +49,7 @@ from quebra.analyzers.calibration_summary import (
     FAMILYWISE_ALPHA,
     MIN_SUPPORT_FRACTION,
     bonferroni_z_crit,
+    neighbour_rank_correlation,
     null_se,
 )
 from quebra.analyzers.checks.result import CALIB_ASYMPTOTIC
@@ -342,8 +343,12 @@ def power_at(power: pd.DataFrame, check: str, n: int = 100) -> pd.DataFrame:
 
 
 def dependence_grid_table(power: pd.DataFrame) -> tuple[pd.DataFrame, str]:
-    """C5 and C6 power by (row, rho) and n, mean over the two Weibull shapes, with the
-    range of duration lag-1 each rho induces across its cells.
+    """C5 and C6 power by (row, rho) and n, mean over the two Weibull shapes, with the rank
+    correlation of neighbouring durations each rho induces,
+    `calibration_summary.neighbour_rank_correlation`. That is the generator's own value: 0
+    with no dependence and the same at every n, unlike the measured `mean_induced_lag1`,
+    which is C5's uncentred `r_1` and reads about -1/N with no dependence, N the cell's
+    event count.
 
     Also returns, as text, the grid points at which any row's power exceeds 0.5 at some
     n below 100: the dependence strength these checks need before a small-n silence says
@@ -355,11 +360,10 @@ def dependence_grid_table(power: pd.DataFrame) -> tuple[pd.DataFrame, str]:
         arm, parameter, _description = DIRECTED_AT[check]
         subset = power[(power["check"] == check) & (power["arm"] == arm)]
         for (row_label, value), group in subset.groupby(["row", parameter]):
-            lag1 = group["mean_induced_lag1"]
             entry = {
                 "row": row_label,
                 parameter: value,
-                "induced_lag1": f"{lag1.min():.3f} to {lag1.max():.3f}",
+                "neighbour_rank_corr": neighbour_rank_correlation(value),
             }
             for n, sub in group.groupby("n_target"):
                 rate = float(sub["rejection_rate"].mean())
@@ -419,6 +423,36 @@ def quantisation_effect(size: pd.DataFrame) -> pd.DataFrame:
         subset.groupby(["row", "quantised"])["rejection_rate"]
         .mean()
         .unstack("quantised")
+    )
+
+
+def centred_arm_c_cells(size: pd.DataFrame, power: pd.DataFrame) -> pd.DataFrame:
+    """One row per Arm C cell (clock, n, rho), with `centred_lag1` = `mean_induced_lag1` +
+    `1/mean_n_events`. Raises on a cell of more than one segment, where `-1/N` is not the
+    exchangeable mean of `r_1`; on a cell whose every replicate failed, which would
+    otherwise drop out of the summary unseen; and on a cell whose rows disagree."""
+    frame = pd.concat([size, power], ignore_index=True)
+    frame = frame[frame["arm"] == ARM_C]
+    failed = frame[frame["check"].isna()]
+    if len(failed):
+        raise ValueError(
+            f"{len(failed)} Arm C cells failed every replicate, the first at n = "
+            f"{failed['n_target'].iloc[0]}: {failed['fail_reason'].iloc[0]}"
+        )
+    by_cell = frame.assign(rho=frame["rho"].fillna(0.0)).groupby(
+        ["clock", "n_target", "rho"]
+    )
+    if (
+        by_cell[["mean_induced_lag1", "mean_n_events", "mean_n_segments"]].nunique() > 1
+    ).any(axis=None):
+        raise ValueError("the rows of one Arm C cell disagree on a cell-level column")
+    cells = by_cell.first().reset_index()
+    if (cells["mean_n_segments"] != 1.0).any():
+        raise ValueError(
+            "an Arm C cell has more than one segment; -1/N would not centre it"
+        )
+    return cells.assign(
+        centred_lag1=cells["mean_induced_lag1"] + 1.0 / cells["mean_n_events"]
     )
 
 
@@ -595,15 +629,14 @@ def build(runtime_note: str = "") -> str:
     # One figure per Weibull shape: the two cells are not interchangeable, and their mean
     # is in no cell of the table.
     # Arm C's induced duration-level lag-1, from the tables: rho = 0 lives in the size
-    # table and the rest of the rho grid in the power table.
-    _arm_c = pd.concat([size, power], ignore_index=True)
-    _arm_c = _arm_c[(_arm_c["arm"] == ARM_C) & _arm_c["mean_induced_lag1"].notna()]
-    _by_rho = _arm_c.groupby(_arm_c["rho"].fillna(0.0))["mean_induced_lag1"].mean()
+    # table and the rest of the rho grid in the power table. Centred per cell, as
+    # `calibration_summary.read_dependence` does for the figure.
+    _arm_c = centred_arm_c_cells(size, power)
+    _by_rho = _arm_c.groupby("rho")["centred_lag1"].mean()
     arm_c_lag1 = (
         f"{_by_rho.iloc[0]:+.3f} at rho = {_by_rho.index[0]:g} and "
         f"{_by_rho.iloc[-1]:+.3f} at rho = {_by_rho.index[-1]:g}, with every cell between "
-        f"{_arm_c['mean_induced_lag1'].min():+.3f} and "
-        f"{_arm_c['mean_induced_lag1'].max():+.3f}"
+        f"{_arm_c['centred_lag1'].min():+.3f} and {_arm_c['centred_lag1'].max():+.3f}"
         if len(_arm_c)
         else "(no Arm C cell)"
     )
@@ -715,8 +748,8 @@ def build(runtime_note: str = "") -> str:
     add(
         "C5 and C6 are scored on Arm E, whose `rho` sets the serial dependence between "
         "durations. Power by event count at every grid point, as the mean over the two "
-        "Weibull shapes, with the range of duration-level lag-1 each `rho` induces across "
-        "its cells:\n\n"
+        "Weibull shapes, with the rank correlation of neighbouring durations each `rho` "
+        "sets in the generator, (6/pi) arcsin(rho/2), the same at every n:\n\n"
     )
     add(_markdown_table(grid_table))
     add(
@@ -790,7 +823,9 @@ def build(runtime_note: str = "") -> str:
     add(
         "\n**1. Read-level dependence does not reach the durations.** Arm C was planned as "
         "the power arm for C5 and C6. It cannot be: correlated READS do not produce "
-        f"correlated DURATIONS. Measured induced duration-level lag-1 averages {arm_c_lag1}, "
+        "correlated DURATIONS. Measured induced duration-level lag-1, centred by adding 1/N "
+        "to each one-segment cell (its exchangeable mean is -1/N) and pooled over both "
+        f"clocks and every n, averages {arm_c_lag1}, "
         "because successive level "
         "crossings of a stationary Gaussian process are very nearly a renewal process. The "
         "power table below is flat at the nominal level across the whole rho grid, which is "
@@ -854,7 +889,9 @@ def build(runtime_note: str = "") -> str:
         "quantum, so `gamma_hat` is zero. Each row's own `n_used` is its denominator.\n\n"
     )
     thin = under_supported(pd.concat([size, power, serial]))
-    thin = thin.assign(segments_target=_segment_targets(thin))
+    thin = thin.assign(
+        segments_target=["-" if t is None else str(t) for t in _segment_targets(thin)]
+    )
     add(
         f"\n**Rows excluded from every size, verdict and serial table** (support below "
         f"{MIN_SUPPORT_FRACTION:.0%} of their cell's replicates). These are reported here "

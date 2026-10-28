@@ -168,9 +168,15 @@ class CalibrationPowerPlot(BasePlot):
                 ax.set_ylim(0.0, 1.0)
             axes[0].set_ylabel("Power")
             axes[-1].legend(loc="upper left", frameon=False)
-            # FIGURE_STANDARD: a panel drawing a subset says which, in the panel.
+            # FIGURE_STANDARD: a panel drawing a subset says which, in the panel; and a
+            # point that is a mean says what it pools (AGENTS.md section 4).
+            notes = []
             if result.selection_reason:
-                fig.text(0.5, 0.005, f"shown: {result.selection_reason}", ha="center")
+                notes.append(f"shown: {result.selection_reason}")
+            if result.pooled_over:
+                notes.append(f"each point a mean over {', '.join(result.pooled_over)}")
+            if notes:
+                fig.text(0.5, 0.005, "; ".join(notes), ha="center")
             fig.suptitle(
                 "Power against induced duration dependence - Arm E, copula AR(1)"
             )

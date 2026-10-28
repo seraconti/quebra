@@ -20,9 +20,9 @@ carve's doing and not the check's.
 
 **Arm C turned out to be a null arm, and Arm E was added because of it.** The plan had
 Arm C as the power arm for C5/C6, on the assumption that correlated reads yield correlated
-durations. They do not: the induced duration-level lag-1 never exceeds +0.002 over the
-whole rho grid (`promotion_report.md`, "Two findings the grid was not designed to
-produce"), because successive level crossings of a stationary Gaussian process are very
+durations. They do not: the induced duration-level lag-1, centred by its exchangeable
+mean, is consistent with zero over the whole rho grid (`promotion_report.md`, "Two
+findings the grid was not designed to produce"), because successive level crossings of a stationary Gaussian process are very
 nearly a renewal process. Arm C is kept exactly as briefed since that is a real and
 reportable finding, but Arm E is what actually varies duration dependence, and without it
 criterion 2 could not be scored for C5 or C6 at all.
@@ -372,9 +372,9 @@ def arm_c(
     the occupancy are unchanged. At `rho = 0` this is Arm B with a different random path,
     which is what makes the two comparable as a self-consistency check.
 
-    Read-level `rho` is NOT duration-level dependence. So the runner reports the INDUCED
-    duration-level lag-1 for every cell, and the power curve is read against that, not
-    against `rho`.
+    Read-level `rho` is NOT duration-level dependence. So the runner records C5's uncentred
+    duration-level `r_1` for every cell (`mean_induced_lag1`), and the report and figure
+    read it with its exchangeable mean `-1/N` added back.
     """
     if not -1.0 < rho < 1.0:
         raise ValueError(f"rho must be in (-1, 1); got {rho}")
@@ -397,12 +397,12 @@ def arm_e(
     push those through the Weibull quantile function. The result has EXACTLY Arm A's
     marginal distribution - so at `rho = 0` this arm is Arm A - while `rho` moves the rank
     dependence and nothing else. For a Gaussian copula the induced Spearman correlation is
-    `(6/pi)*arcsin(rho/2)`, which is within 4% of `rho` itself over the grid used here, so
+    `(6/pi)*arcsin(rho/2)`, which is 3.5-4.5% below `rho` itself over the grid used here, so
     the swept parameter is directly comparable to a duration-level lag-1.
 
     **Why this arm exists.** It was not in the plan; Arm C was to be the power arm for
-    C5 and C6. Measurement killed that: read-level AR(1) induces NO positive duration-level
-    dependence at any rho on the grid, because the level crossings of a stationary
+    C5 and C6. Measurement killed that: the duration-level dependence read-level AR(1)
+    induces is consistent with zero at every rho on the grid, because the level crossings of a stationary
     Gaussian process regenerate and successive excursion lengths are very nearly a
     renewal process. Arm C is kept exactly as specified because that null result is worth
     reporting, but without a generator that actually varies duration dependence,

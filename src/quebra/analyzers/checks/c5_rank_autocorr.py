@@ -20,12 +20,12 @@ uncentred (below). In `jobs/bench/results/power_table.csv` it rejects less often
 studentized one in 84 of the 88 Arm E cells where the two differ, and in 63 of 65 on Arm D,
 every one of them a single segment.
 
-Where they genuinely separate is short, numerous segments - the censored and gapped case.
-At 10 segments of 5 the lag pair counts run 40 down to 10, the null SD ratio reaches 1.64,
-and the unstudentized max lands on lag 1 in 43% of replicates against 21-29% once each lag
-is on its own scale. So the studentized form is a safeguard for the multi-process regime,
-not a general-purpose improvement, and running both in the bench is what lets it say which
-regime is which instead of taking the claim on trust.
+Where their SCALES genuinely separate is short, numerous segments - the censored and gapped
+case. At 10 segments of 5 the lag pair counts run 40 down to 10, the null SD ratio reaches
+1.64, and the unstudentized max lands on lag 1 in 43% of replicates against 21-29% once each
+lag is on its own scale. So the scaling half of studentizing is a safeguard for the
+multi-process regime, and the centring half matters on every record; running both variants
+in the bench is what lets it say which is which instead of taking the claim on trust.
 
 Both variants read the SAME permutation ensemble, so their difference in any bench cell is
 a paired difference and its Monte Carlo error is smaller than that of two independent runs.

@@ -40,8 +40,8 @@ def test_a_segment_target_past_the_arms_cap_raises_in_serial_cells(monkeypatch):
 def test_an_arm_el_cell_asking_for_what_it_cannot_draw_raises(asked):
     """Contract: Arm EL draws two continuous segments of its own, so a cell asking for
     quantised durations or a censoring target raises out of `run_cell` before its first
-    replicate. A raise inside a replicate would be counted as a failure and the run would
-    go on.
+    replicate, where a raise inside a replicate would be counted as a failure and the run
+    would go on, and out of `generate`, for a caller that builds one record by hand.
     """
     cell = grid.Cell(
         arm=ARM_EL,
@@ -54,5 +54,8 @@ def test_an_arm_el_cell_asking_for_what_it_cannot_draw_raises(asked):
     )
     served = runner.generate(cell, np.random.default_rng(0))
     assert served.n_segments == 2
+    refused = dataclasses.replace(cell, n_replicates=1, **asked)
     with pytest.raises(ValueError, match="Arm EL draws two continuous segments"):
-        runner.run_cell(dataclasses.replace(cell, n_replicates=1, **asked), 0)
+        runner.run_cell(refused, 0)
+    with pytest.raises(ValueError, match="Arm EL draws two continuous segments"):
+        runner.generate(refused, np.random.default_rng(0))

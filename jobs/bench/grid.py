@@ -20,8 +20,10 @@ dependence grid is a sweep, not a calibration to a record:
   n >= 20, so 0 and 0.03 bracket it; 0.25 is deliberately outside it, and exists only to
   show what C1 and C2's censoring machinery buys when there is enough censoring to matter.
 - `RHO_GRID` is dense at small `rho`, so the weak dependence a check is least likely to see
-  is resolved finely. The duration-level lag-1 each `rho` induces is recorded per
-  cell (`mean_induced_lag1`), and the power curve is read against that.
+  is resolved finely. The power curve is read against the rank correlation of neighbouring
+  durations each `rho` induces, `(6/pi) arcsin(rho/2)`; `mean_induced_lag1` records C5's
+  uncentred `r_1` per cell, which reads about -1/N with no dependence, N the cell's event
+  count.
 - `B_GRID` brackets 1 on both sides, so C1's power is measured against a decreasing
   intensity and an increasing one rather than only the direction that happens to be easier.
 - `SHAPE_GRID` is `{0.75, 1.5}` - over- and under-dispersed relative to exponential

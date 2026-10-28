@@ -15,7 +15,8 @@ what is needed to read it honestly:
 - `mean_induced_lag1`. The swept parameter is a latent correlation; this is the
   duration-level dependence it actually produced, which is the quantity a check sees. It
   averages C5's uncentred `r_1` (`extra["r_lag1"]`), so on a single-segment cell it
-  carries that statistic's null offset: a cell with no dependence reads about -1/n, not 0.
+  carries that statistic's null offset: a cell with no dependence reads about -1/N, not 0,
+  N being its event count.
   On a censored cell, which is several segments, the offset also moves with the layout, as
   in the serial cells below; there it is not the dependence the cell carries either.
 

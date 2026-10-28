@@ -25,7 +25,8 @@ RESULTS = Path(__file__).resolve().parents[1] / "jobs" / "bench" / "results"
 
 
 def _arm_e_power_table(*, rhos, ns, lag1):
-    """Arm E power rows for C5 (both variants) and C6, with a chosen `mean_induced_lag1`."""
+    """Arm E power rows for C5 (both variants) and C6 at two Weibull shapes, with a chosen
+    `mean_induced_lag1`. Shape 1.5 rejects 0.02 more often, so pooling shows as spread."""
     keys = [
         ("c5_rank_autocorr", "permutation", c5.VARIANT_STUDENTIZED),
         ("c5_rank_autocorr", "permutation", c5.VARIANT_RAW),
@@ -35,15 +36,20 @@ def _arm_e_power_table(*, rhos, ns, lag1):
         [
             {
                 "arm": ARM_E,
+                "clock": "in_spec",
                 "n_target": n,
+                "shape": shape,
+                "quantised": False,
+                "censoring_target": 0.0,
                 "rho": rho,
                 "check": check,
                 "calibration": calibration,
                 "variant": variant,
-                "rejection_rate": 0.05 + rho,
+                "rejection_rate": 0.05 + rho + (0.02 if shape == 1.5 else 0.0),
                 "mean_induced_lag1": lag1,
             }
             for n in ns
+            for shape in (0.75, 1.5)
             for rho in rhos
             for check, calibration, variant in keys
         ]
@@ -68,6 +74,60 @@ def test_the_power_axis_is_the_copula_rank_correlation_and_zero_without_dependen
     assert all(len(per_n) == 2 for per_n in artifact.power_by_row_and_n.values())
 
 
+@pytest.mark.unit
+def test_power_vs_dependence_names_its_pooling_and_refuses_what_it_cannot_draw():
+    """Contract: a power value is a mean over shapes, so the artifact names the pooling,
+    carries its spread and refuses a point that pools fewer cells than that. Another arm, a
+    curve missing a `rho`, a drawn cell whose every replicate failed and an unknown check
+    raise; a failed cell the artifact does not draw is ignored.
+    """
+    table = _arm_e_power_table(rhos=(0.0, 0.3), ns=(20, 1000), lag1=-0.05)
+    artifact = power_vs_dependence(table)
+    row = "c6_exchangeability [permutation]"
+    assert artifact.pooled_over == ["shape"]
+    assert artifact.power_lo_by_row_and_n[row][20] == pytest.approx([0.05, 0.35])
+    assert artifact.power_hi_by_row_and_n[row][20] == pytest.approx([0.07, 0.37])
+    assert artifact.power_by_row_and_n[row][20] == pytest.approx([0.06, 0.36])
+
+    with pytest.raises(ValueError, match="is not Arm E"):
+        power_vs_dependence(table, arm="D_trp_power_law")
+    gap = (table["check"] == "c6_exchangeability") & (table["n_target"] == 20)
+    with pytest.raises(ValueError, match="covers rho"):
+        power_vs_dependence(table[~(gap & (table["rho"] == 0.3))])
+
+    # What `run_cell` writes when every replicate of a cell fails: the cell's rows replaced
+    # by one row naming no check.
+    drawn = (table["n_target"] == 20) & (table["shape"] == 1.5) & (table["rho"] == 0.3)
+    failed = (
+        table[drawn]
+        .head(1)
+        .assign(
+            check=None,
+            calibration=None,
+            variant=None,
+            rejection_rate=np.nan,
+            fail_reason="ValueError: probe",
+        )
+    )
+    with pytest.raises(ValueError, match="failed every replicate"):
+        power_vs_dependence(pd.concat([table[~drawn], failed], ignore_index=True))
+    elsewhere = pd.concat(
+        [table, failed.assign(arm="D_trp_power_law")], ignore_index=True
+    )
+    assert (
+        power_vs_dependence(elsewhere).power_by_row_and_n == artifact.power_by_row_and_n
+    )
+    with pytest.raises(ValueError, match="pools 1 of 2"):
+        power_vs_dependence(table[~(drawn & (table["check"] == "c6_exchangeability"))])
+
+    # Two unknown keys that differ only where one is missing must still raise a ValueError.
+    strangers = table.head(2).assign(
+        check="c9_unknown", calibration=["permutation", None]
+    )
+    with pytest.raises(ValueError, match="BENCH_ROW_KEYS"):
+        power_vs_dependence(pd.concat([table, strangers], ignore_index=True))
+
+
 @pytest.mark.statistical
 def test_the_measured_lag1_plus_one_over_n_matches_the_copula_rank_correlation_at_n_1000():
     """Oracle: `(6/pi) arcsin(rho/2)`, the rank correlation Arm E's generator induces.
@@ -77,6 +137,13 @@ def test_the_measured_lag1_plus_one_over_n_matches_the_copula_rank_correlation_a
     count must sit within 3 Monte Carlo SE of the identity. The SE uses `r_1`'s null SD,
     `1/sqrt(N)`, over `n_used` replicates; an AR(1) dependence shrinks that SD rather than
     inflating it, so the band is if anything wide.
+
+    The 3 SE is per cell and not corrected for the 12 cells it reads (two shapes, six rho).
+    The cells also sit a little low on average: beyond its `-1/N` offset, `r_1` is biased
+    toward 0 under dependence by an amount that grows with `rho` and shrinks with N. Both
+    are tolerated here, not modelled. The test reads the committed table and calls no source
+    function: it is evidence that the identity describes the generator, and the guard on
+    the code that draws it is the axis test above.
     """
     power = pd.read_csv(RESULTS / "power_table.csv")
     arm_e = power[power["arm"] == ARM_E]
@@ -96,7 +163,7 @@ def test_no_calibration_artifact_carries_the_unstudentized_row():
     """Contract: C5's unstudentized row is in the bench tables only.
 
     The committed tables carry it, so a filter that let it through would show here; C5's
-    studentized row must still be there, and a row in no known list must raise.
+    studentized row must still be there, and an unknown check in a drawn cell must raise.
     """
     size = pd.read_csv(RESULTS / "size_table.csv")
     power = pd.read_csv(RESULTS / "power_table.csv")
@@ -114,9 +181,37 @@ def test_no_calibration_artifact_carries_the_unstudentized_row():
     assert not [label for label in labels if c5.VARIANT_RAW in label]
     assert any(label.endswith(f"/{c5.VARIANT_STUDENTIZED}]") for label in labels)
 
-    stranger = power.head(1).assign(check="c9_unknown")
+    stranger = power[power["arm"] == ARM_E].head(1).assign(check="c9_unknown")
     with pytest.raises(ValueError, match="BENCH_ROW_KEYS"):
         power_vs_dependence(pd.concat([power, stranger]))
+
+
+@pytest.mark.unit
+def test_size_vs_n_refuses_a_point_that_pools_fewer_cells_than_it_says():
+    """Contract: each size point is a mean over the two Weibull shapes. A drawn cell whose
+    every replicate failed, or a row missing from one shape, must raise rather than leave a
+    one-shape value labelled as the mean over both.
+    """
+    size = pd.read_csv(RESULTS / "size_table.csv")
+    drawn = (
+        (size["arm"] == "A_iid_weibull")
+        & (~size["quantised"].astype(bool))
+        & (size["censoring_target"] == 0.0)
+        & (size["n_target"] == 20)
+        & (size["shape"] == 1.5)
+    )
+    assert size_vs_n(size).pooled_over == ["shape"]
+    failed = (
+        size[drawn]
+        .head(1)
+        .assign(
+            check=None, calibration=None, variant=None, fail_reason="ValueError: probe"
+        )
+    )
+    with pytest.raises(ValueError, match="failed every replicate"):
+        size_vs_n(pd.concat([size[~drawn], failed], ignore_index=True))
+    with pytest.raises(ValueError, match="pools 1 of 2"):
+        size_vs_n(size[~(drawn & (size["check"] == "c6_exchangeability"))])
 
 
 @pytest.mark.unit
@@ -124,8 +219,10 @@ def test_read_dependence_adds_back_one_over_n_per_cell_and_refuses_several_segme
     """Oracle: on one segment the exchangeable mean of `r_1` is `-1/N` (Dufour and Roy 1985,
     Eq. (2.2), p. 260).
 
-    Cells whose measured lag-1 is exactly `-1/N`, at three event counts and two rows each,
-    must centre to 0 at every `rho`; a cell of two segments must raise.
+    Three cells per `rho`, each written as two rows, measure `-1/N + d` with `d` = +0.03, 0
+    and -0.03. Centred once per cell they average 0, with an SE across the three cells of
+    `0.03/sqrt(3)`; counting each cell once per row would shrink that SE. A cell of two
+    segments, a cell whose rows disagree and a cell whose every replicate failed must raise.
     """
     table = pd.DataFrame(
         [
@@ -135,11 +232,11 @@ def test_read_dependence_adds_back_one_over_n_per_cell_and_refuses_several_segme
                 "n_target": int(n_events),
                 "rho": rho,
                 "check": check,
-                "mean_induced_lag1": -1.0 / n_events,
+                "mean_induced_lag1": -1.0 / n_events + offset,
                 "mean_n_events": n_events,
                 "mean_n_segments": 1.0,
             }
-            for n_events in (20.0, 50.0, 400.0)
+            for n_events, offset in ((20.0, 0.03), (50.0, 0.0), (400.0, -0.03))
             for rho in (0.1, 0.5)
             for check in ("c5_rank_autocorr", "c6_exchangeability")
         ]
@@ -147,5 +244,20 @@ def test_read_dependence_adds_back_one_over_n_per_cell_and_refuses_several_segme
     artifact = read_dependence(table)
     assert artifact.read_rho == [0.1, 0.5]
     assert artifact.centred_lag1 == pytest.approx([0.0, 0.0], abs=1e-15)
+    assert artifact.centred_lag1_se == pytest.approx(
+        [0.03 / np.sqrt(3.0)] * 2, rel=1e-12
+    )
     with pytest.raises(ValueError, match="more than one segment"):
         read_dependence(table.assign(mean_n_segments=2.0))
+    split = table.copy()
+    split.loc[0, "mean_induced_lag1"] += 0.01
+    with pytest.raises(ValueError, match="differs between rows"):
+        read_dependence(split)
+    first_cell = (table["n_target"] == 20) & (table["rho"] == 0.1)
+    failed = (
+        table[first_cell]
+        .head(1)
+        .assign(check=None, mean_induced_lag1=np.nan, fail_reason="ValueError: probe")
+    )
+    with pytest.raises(ValueError, match="failed every replicate"):
+        read_dependence(pd.concat([table[~first_cell], failed], ignore_index=True))

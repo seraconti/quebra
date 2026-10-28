@@ -48,12 +48,44 @@ def _label(check: str, calibration: str, variant: str) -> str:
     return f"{check} [{calibration}{suffix}]"
 
 
-def _pipeline_rows(frame: pd.DataFrame) -> pd.DataFrame:
-    """The rows of `battery.ROW_KEYS`, the ones a ledger can carry.
+def _refuse_failed_cells(selection: pd.DataFrame, what: str) -> None:
+    """Raise if a cell in `selection` failed every replicate.
 
-    C5's unstudentized row is dropped: it is in `BENCH_ROW_KEYS` only. A row in neither list
-    raises, so a table carrying a check this code does not know is not drawn by omission.
+    `jobs/bench/runner.run_cell` writes such a cell as one row naming no check. Dropping it
+    would leave the point it belongs to pooling fewer cells while still labelled a mean over
+    all of them. Callers narrow `selection` to the cells they draw first, so a failed cell
+    elsewhere in the table does not stop them.
     """
+    failed = selection[selection["check"].isna()]
+    if len(failed):
+        first = failed.iloc[0]
+        raise ValueError(
+            f"{what}: {len(failed)} cell(s) it draws failed every replicate, the first "
+            f"{first['arm']} n={first['n_target']} shape={first.get('shape')} "
+            f"rho={first.get('rho')}: {first.get('fail_reason')}"
+        )
+
+
+def _require_full_pooling(counts: pd.Series, n_pooled: int, where: str) -> None:
+    """Raise unless every point pools all `n_pooled` cells, so a mean labelled as over the
+    pooled factors is one."""
+    short = counts[counts != n_pooled]
+    if len(short):
+        raise ValueError(
+            f"{where}: a point pools {int(short.iloc[0])} of {n_pooled} cells "
+            f"(at {short.index[0]}); a cell is missing from the table"
+        )
+
+
+def _drawn_rows(selection: pd.DataFrame, what: str) -> pd.DataFrame:
+    """The rows of `battery.ROW_KEYS` among the cells an artifact draws.
+
+    A cell that failed every replicate raises (`_refuse_failed_cells`). C5's unstudentized
+    row is dropped: it is in `BENCH_ROW_KEYS` only. Any other row in neither list raises, so
+    a table carrying a check this code does not know is not drawn by omission.
+    """
+    _refuse_failed_cells(selection, what)
+    frame = selection
     keys = list(
         zip(
             frame["check"],
@@ -62,7 +94,7 @@ def _pipeline_rows(frame: pd.DataFrame) -> pd.DataFrame:
             strict=True,
         )
     )
-    unknown = sorted(set(keys) - set(BENCH_ROW_KEYS))
+    unknown = sorted(set(keys) - set(BENCH_ROW_KEYS), key=str)
     if unknown:
         raise ValueError(f"rows outside battery.BENCH_ROW_KEYS: {unknown}")
     return frame[[key in ROW_KEYS for key in keys]]
@@ -120,13 +152,23 @@ class PowerVsDependence(StaleArtifactGuard):
     The x-axis is `neighbour_rank_correlation(rho)`, one value per `rho` shared by every n.
     It is 0 with no dependence and exact, so the curves for different n line up by
     construction. The measured `mean_induced_lag1` is not used: it is C5's uncentred `r_1`,
-    about `-1/n` with no dependence and pulled further toward 0 at small n under dependence,
+    about `-1/N` with no dependence and pulled further toward 0 at small N under dependence,
     so curves drawn against it shift with n.
     """
 
     rho: list[float] = field(default_factory=list)
     neighbour_rank_corr: list[float] = field(default_factory=list)
     power_by_row_and_n: dict[str, dict[int, list[float]]] = field(default_factory=dict)
+    # Each power value is a MEAN over the cells sharing (row, n, rho) - in practice the two
+    # Weibull shapes. `pooled_over` names what varies and the lo/hi dicts carry the spread,
+    # as `SizeVsN` does, so a reader is not shown a pooled mean as "the cell".
+    pooled_over: list[str] = field(default_factory=list)
+    power_lo_by_row_and_n: dict[str, dict[int, list[float]]] = field(
+        default_factory=dict
+    )
+    power_hi_by_row_and_n: dict[str, dict[int, list[float]]] = field(
+        default_factory=dict
+    )
     alpha: float = NOMINAL_ALPHA
     # One representative row per check, chosen HERE rather than at draw time. The artifact
     # keeps every row (completeness); this says which the figure shows and why.
@@ -191,14 +233,14 @@ def size_vs_n(
     shape factor - `pooled_over` names whatever survives it and `rate_lo/hi_by_row` carry
     the spread, so the figure can draw the pooling instead of hiding it.
     """
-    frame = _with_label(_pipeline_rows(size_table))
-    cell = frame[
-        (frame["arm"] == arm)
-        & (~frame["quantised"].astype(bool))
-        & (frame["censoring_target"] == 0.0)
+    selected = size_table[
+        (size_table["arm"] == arm)
+        & (~size_table["quantised"].astype(bool))
+        & (size_table["censoring_target"] == 0.0)
     ]
-    if not len(cell):
+    if not len(selected):
         raise ValueError(f"no {arm} continuous, uncensored size cells in the table")
+    cell = _with_label(_drawn_rows(selected, "size_vs_n"))
     n_values = sorted(int(n) for n in cell["n_target"].unique())
     # Which factors still vary after the filter. Anything listed here is averaged over,
     # and saying so is the whole difference between "the primary null cell" and a mean.
@@ -207,12 +249,18 @@ def size_vs_n(
         for column in ("shape", "quantised", "censoring_target")
         if cell[column].nunique() > 1
     ]
+    n_pooled = len(cell[pooled_over].drop_duplicates()) if pooled_over else 1
     rate_by_row: dict[str, list[float]] = {}
     se_by_row: dict[str, list[float]] = {}
     lo_by_row: dict[str, list[float]] = {}
     hi_by_row: dict[str, list[float]] = {}
     for row_label, group in cell.groupby("row"):
         by_n = group.groupby("n_target")
+        _require_full_pooling(
+            by_n.size().reindex(n_values, fill_value=0),
+            n_pooled,
+            f"size_vs_n {row_label}",
+        )
         rate_by_row[row_label] = [
             float(by_n.get_group(n)["rejection_rate"].mean()) for n in n_values
         ]
@@ -230,7 +278,6 @@ def size_vs_n(
             float(np.sqrt(alpha * (1.0 - alpha) / by_n.get_group(n)["n_used"].mean()))
             for n in n_values
         ]
-    n_pooled = int(round(len(cell) / max(len(rate_by_row), 1) / max(len(n_values), 1)))
     description = f"{arm}, continuous durations, censoring 0"
     if pooled_over:
         description += f" - mean over {n_pooled} cells varying {', '.join(pooled_over)}"
@@ -270,27 +317,48 @@ def power_vs_dependence(
         raise ValueError(
             f"the x-axis is Arm E's Gaussian-copula rank correlation; {arm!r} is not Arm E"
         )
-    frame = _with_label(_pipeline_rows(power_table))
-    cell = frame[frame["arm"] == arm]
-    if not len(cell):
+    selected = power_table[power_table["arm"] == arm]
+    if not len(selected):
         raise ValueError(f"no {arm} power cells in the table")
+    cell = _with_label(_drawn_rows(selected, "power_vs_dependence"))
     rho = sorted(float(r) for r in cell["rho"].unique())
+    pooled_over = [
+        column
+        for column in ("shape", "clock", "quantised", "censoring_target")
+        if cell[column].nunique() > 1
+    ]
+    n_pooled = len(cell[pooled_over].drop_duplicates()) if pooled_over else 1
     power: dict[str, dict[int, list[float]]] = {}
+    lo: dict[str, dict[int, list[float]]] = {}
+    hi: dict[str, dict[int, list[float]]] = {}
     for row_label, group in cell.groupby("row"):
         per_n: dict[int, list[float]] = {}
+        lo_n: dict[int, list[float]] = {}
+        hi_n: dict[int, list[float]] = {}
         for n, sub in group.groupby("n_target"):
-            ordered = sub.groupby("rho").mean(numeric_only=True).sort_index()
+            by_rho = sub.groupby("rho")["rejection_rate"]
+            ordered = by_rho.mean().sort_index()
             # The x-axis is shared by every curve, so every curve must cover the same rho.
             if [float(r) for r in ordered.index] != rho:
                 raise ValueError(
                     f"{row_label} at n={n} covers rho {list(ordered.index)}, not {rho}"
                 )
-            per_n[int(n)] = [float(v) for v in ordered["rejection_rate"]]
+            _require_full_pooling(
+                by_rho.size(), n_pooled, f"power_vs_dependence {row_label} at n={n}"
+            )
+            per_n[int(n)] = [float(v) for v in ordered]
+            lo_n[int(n)] = [float(v) for v in by_rho.min().sort_index()]
+            hi_n[int(n)] = [float(v) for v in by_rho.max().sort_index()]
         power[row_label] = per_n
+        lo[row_label] = lo_n
+        hi[row_label] = hi_n
     return PowerVsDependence(
         rho=rho,
         neighbour_rank_corr=[neighbour_rank_correlation(r) for r in rho],
         power_by_row_and_n=power,
+        pooled_over=pooled_over,
+        power_lo_by_row_and_n=lo,
+        power_hi_by_row_and_n=hi,
         alpha=alpha,
         rows_drawn=_representative_rows(power),
         selection_reason=(
@@ -328,8 +396,9 @@ def read_dependence(
 ) -> ReadDependence:
     """`centred_lag1` per read-level `rho`, one cell per event count; see `ReadDependence`.
 
-    Raises on a cell with more than one segment, where `-1/N` is not the exchangeable mean,
-    and on a cell whose rows disagree on `mean_induced_lag1`, which is a cell-level value.
+    Raises on a cell with more than one segment, where `-1/N` is not the exchangeable mean;
+    on a cell whose rows disagree on `mean_induced_lag1`, which is a cell-level value; and
+    on a cell whose every replicate failed, which would otherwise enter a mean as NaN.
 
     Validity assumptions
 
@@ -345,6 +414,7 @@ def read_dependence(
     frame = power_table[(power_table["arm"] == arm) & (power_table["clock"] == clock)]
     if not len(frame):
         raise ValueError(f"no {arm} power cells on the {clock} clock")
+    _refuse_failed_cells(frame, "read_dependence")
     by_cell = frame.groupby(["n_target", "rho"])
     if (by_cell["mean_induced_lag1"].nunique() > 1).any():
         raise ValueError("mean_induced_lag1 differs between rows of one cell")
@@ -457,8 +527,9 @@ __all__ = [
 # They can therefore disagree, by design and in both directions. A live example:
 # C2-asymptotic reads REJECT overall in the report but is accepted by the ledger on the
 # in-spec clock at every n from 50 up, which is the more useful statement for a record of a
-# few hundred windows. The other direction is a row the per-n rule flags at n = 20, which
-# the report, scoring only n >= 35, reads as calibrated.
+# few hundred windows. The other direction comes from the multiplicity: the ledger's per-n
+# threshold corrects for fewer cells than the report's, so a cell can exceed it while
+# staying inside the report's band.
 
 # Censoring the real data exhibits (0.000-0.026 wherever n >= 20). Cells beyond it are a
 # corner the data never reaches and must not condemn a check that works where it lives.
