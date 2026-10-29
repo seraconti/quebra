@@ -1,4 +1,4 @@
-"""The four calibration figures: what the bench established, drawn.
+"""The five calibration figures: what the bench established, drawn.
 
 Pure renderers. Every quantity comes from a typed artifact built by
 `analyzers/calibration_summary.py`; nothing here derives a scientific value, and no colour
@@ -18,6 +18,7 @@ import numpy as np
 
 from quebra.analyzers.calibration_summary import (
     PowerVsDependence,
+    PowerVsTrend,
     ReadDependence,
     SizeVsN,
     ValidationCurve,
@@ -101,7 +102,6 @@ class CalibrationSizePlot(BasePlot):
                         marker="o",
                         markersize=3.5,
                         color=calibration_color(_calibration_of(row)),
-                        linestyle="--" if variant == "unstudentized" else "-",
                         label=_calibration_of(row)
                         + (f" / {variant}" if variant else ""),
                     )
@@ -133,8 +133,28 @@ class CalibrationSizePlot(BasePlot):
         raise NotImplementedError("CalibrationSizePlot has no plotly backend")
 
 
+def _power_footnote(
+    fig: plt.Figure,
+    selection_reason: str,
+    pooled_over: list[str],
+    cell_description: str = "",
+) -> None:
+    """FIGURE_STANDARD: a panel drawing a subset says which, in the panel; a point that is
+    a mean says what it pools (AGENTS.md section 4); and the cells drawn are named."""
+    notes = []
+    if selection_reason:
+        notes.append(f"shown: {selection_reason}")
+    if pooled_over:
+        notes.append(f"each point a mean over {', '.join(pooled_over)}")
+    lines = ["; ".join(notes)] if notes else []
+    if cell_description:
+        lines.append(f"cells: {cell_description}")
+    if lines:
+        fig.text(0.5, 0.005, "\n".join(lines), ha="center", va="bottom")
+
+
 class CalibrationPowerPlot(BasePlot):
-    """Power against the duration dependence actually induced."""
+    """Power against the rank correlation of neighbouring durations the generator induces."""
 
     def build_matplotlib(
         self, result: PowerVsDependence, style: str = "default"
@@ -147,13 +167,15 @@ class CalibrationPowerPlot(BasePlot):
                 1, len(rows), figsize=(4.0 * len(rows), 3.9), sharey=True
             )
             axes = np.atleast_1d(axes)
-            n_values = sorted(result.induced_lag1_by_n)
+            n_values = sorted(
+                {n for per_n in result.power_by_row_and_n.values() for n in per_n}
+            )
 
             for ax, row in zip(axes, rows):
                 ax.axhline(result.alpha, **REFERENCE_LINE)
                 for index, n in enumerate(n_values):
                     ax.plot(
-                        result.induced_lag1_by_n[n],
+                        result.neighbour_rank_corr,
                         result.power_by_row_and_n[row][n],
                         marker="o",
                         markersize=3.0,
@@ -161,21 +183,88 @@ class CalibrationPowerPlot(BasePlot):
                         label=f"n = {n}",
                     )
                 ax.set_title(f"{_short(_check_of(row))} {_variant_of(row)}".strip())
-                ax.set_xlabel("Induced duration lag-1 autocorrelation")
+                ax.set_xlabel(
+                    "Rank correlation of neighbouring durations\ninduced by the generator"
+                )
                 ax.set_ylim(0.0, 1.0)
             axes[0].set_ylabel("Power")
             axes[-1].legend(loc="upper left", frameon=False)
-            # FIGURE_STANDARD: a panel drawing a subset says which, in the panel.
-            if result.selection_reason:
-                fig.text(0.5, 0.005, f"shown: {result.selection_reason}", ha="center")
-            fig.suptitle(
-                "Power against induced duration dependence - Arm E, copula AR(1)"
-            )
+            _power_footnote(fig, result.selection_reason, result.pooled_over)
+            fig.suptitle("Power against serial dependence - Arm E, copula AR(1)")
             fig.tight_layout(rect=(0, 0.045, 1, 1))
             return fig
 
     def build_plotly(self, result: PowerVsDependence):
         raise NotImplementedError("CalibrationPowerPlot has no plotly backend")
+
+
+class CalibrationTrendPlot(BasePlot):
+    """Rejection rate against the trend exponent of a Weibull trend-renewal process, one
+    row of panels per renewal shape, since the shape moves power more than a mean can show."""
+
+    def build_matplotlib(
+        self, result: PowerVsTrend, style: str = "default"
+    ) -> plt.Figure:
+        if not isinstance(result, PowerVsTrend):
+            raise TypeError("CalibrationTrendPlot expects a PowerVsTrend artifact")
+        with style_context(style):
+            shapes = list(result.shapes)
+            first = result.power_by_shape[shapes[0]]
+            rows = list(result.rows_drawn) or sorted(first)
+            fig, axes = plt.subplots(
+                len(shapes),
+                len(rows),
+                figsize=(4.0 * len(rows), 3.4 * len(shapes) + 0.6),
+                sharex=True,
+                sharey=True,
+                squeeze=False,
+            )
+            n_values = sorted({n for per_n in first.values() for n in per_n})
+
+            for shape_axes, shape in zip(axes, shapes):
+                power = result.power_by_shape[shape]
+                for ax, row in zip(shape_axes, rows):
+                    ax.axhline(result.alpha, **REFERENCE_LINE)
+                    ax.axvline(1.0, **REFERENCE_LINE)
+                    ax.text(
+                        1.0,
+                        0.98,
+                        "no trend",
+                        transform=ax.get_xaxis_transform(),
+                        ha="center",
+                        va="top",
+                    )
+                    for index, n in enumerate(n_values):
+                        ax.plot(
+                            result.b,
+                            power[row][n],
+                            marker="o",
+                            markersize=3.0,
+                            color=ordered_color(index, len(n_values)),
+                            label=f"n = {n}",
+                        )
+                    ax.set_ylim(0.0, 1.0)
+                shape_axes[0].set_ylabel(
+                    f"Weibull shape {shape:g}\n"
+                    f"rejection rate at alpha = {result.alpha:g}"
+                )
+            for ax, row in zip(axes[0], rows):
+                ax.set_title(f"{_short(_check_of(row))} {_variant_of(row)}".strip())
+            for ax in axes[-1]:
+                ax.set_xlabel(
+                    "Trend exponent b\n(b < 1 falling event rate, b > 1 rising)"
+                )
+            # Outside the panels: every panel has curves near 1 at both ends of b.
+            axes[0, -1].legend(
+                loc="upper left", bbox_to_anchor=(1.02, 1.0), frameon=False
+            )
+            _power_footnote(fig, result.selection_reason, [], result.cell_description)
+            fig.suptitle("Power against trend - Arm D, Weibull trend-renewal process")
+            fig.tight_layout(rect=(0, 0.06, 0.95, 1))
+            return fig
+
+    def build_plotly(self, result: PowerVsTrend):
+        raise NotImplementedError("CalibrationTrendPlot has no plotly backend")
 
 
 class CalibrationValidationPlot(BasePlot):
@@ -255,8 +344,8 @@ class CalibrationReadDependencePlot(BasePlot):
         with style_context(style):
             fig, ax = plt.subplots(figsize=(6.4, 4.2))
             rho = np.asarray(result.read_rho, dtype=float)
-            induced = np.asarray(result.induced_lag1, dtype=float)
-            se = np.asarray(result.induced_lag1_se, dtype=float)
+            induced = np.asarray(result.centred_lag1, dtype=float)
+            se = np.asarray(result.centred_lag1_se, dtype=float)
 
             ax.axhline(0.0, **REFERENCE_LINE)
             ax.plot(rho, rho, **REFERENCE_LINE)
@@ -268,7 +357,7 @@ class CalibrationReadDependencePlot(BasePlot):
                 markersize=4.0,
                 capsize=2.5,
                 color=calibration_color("permutation"),
-                label="induced, measured",
+                label="induced, measured, +1/N",
             )
             ax.annotate(
                 "if read correlation reached the durations,\nthe curve would follow this line",
@@ -284,7 +373,9 @@ class CalibrationReadDependencePlot(BasePlot):
                 },
             )
             ax.set_xlabel("Read-level AR(1) correlation")
-            ax.set_ylabel("Induced duration lag-1 autocorrelation")
+            ax.set_ylabel(
+                "Induced duration lag-1 rank autocorrelation,\ncentred (+1/N)"
+            )
             ax.set_title(
                 "Duration dependence induced by read correlation - Arm C, carved"
             )
@@ -302,5 +393,6 @@ __all__ = [
     "CalibrationPowerPlot",
     "CalibrationReadDependencePlot",
     "CalibrationSizePlot",
+    "CalibrationTrendPlot",
     "CalibrationValidationPlot",
 ]

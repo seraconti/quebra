@@ -49,6 +49,20 @@ TIER_ABSENT = "absent"
 # any plausible transcription error and far above cross-language float noise.
 AGREEMENT_TOL = 1e-9
 
+# A difference below this is float rounding. Its digits change with the numpy and scipy
+# release (a patch release moved one from 2.31e-16 to 2.20e-16), so the report prints the
+# bound, not the digits, and renders the same under every version CI resolves.
+ROUNDING_FLOOR = 1e-12
+
+# The rank autocorrelation C5 and C6 read, against R's `acf`: one row per case and lag.
+RANK_ACF_STATISTIC = "rank acf"
+RANK_ACF_CASES = ("durations_iid", "durations_trend")
+RANK_ACF_LAGS = (1, 2, 3, 4, 5)
+RANK_ACF_TEST = (
+    "tests/test_r_cross_implementation.py::"
+    "test_rank_autocorrelations_match_r_acf_at_lags_1_to_5"
+)
+
 
 @dataclass(frozen=True)
 class TierRow:
@@ -415,7 +429,16 @@ def build_cross_implementation(
     There, "the reference
     value" is a distribution and the honest comparison is membership, so the row carries
     `reference_is_random` and the observed spread instead of pretending to an equality.
+
+    The rank autocorrelation rows RAISE on a missing fixture row rather than skip it: C5's
+    and C6's tier-4 verdicts rest on these rows alone, and a silent skip could leave a
+    `pass` resting on none.
     """
+    from quebra.analyzers.checks._rank_serial import (
+        autocorrelations,
+        global_ranks,
+        lag_layout,
+    )
     from quebra.analyzers.shape_stats import chatterjee_xi, dcor
 
     def value(case: str, quantity: str) -> float | None:
@@ -473,6 +496,31 @@ def build_cross_implementation(
                 reference_spread=sd,
             )
         )
+
+    for case in RANK_ACF_CASES:
+        x, _unused = inputs(case)
+        layout = lag_layout([len(x)], max(RANK_ACF_LAGS))
+        if layout.lags != RANK_ACF_LAGS:
+            raise ValueError(f"{case}: usable lags {layout.lags}, not {RANK_ACF_LAGS}")
+        ours_by_lag = autocorrelations(global_ranks(x), layout)[0]
+        for lag, ours in zip(layout.lags, ours_by_lag):
+            reference = value(case, f"acf_rank_lag{lag}")
+            if reference is None:
+                raise ValueError(
+                    f"r_reference_values.csv has no single {case}/acf_rank_lag{lag} row. "
+                    "Regenerate it with jobs/rscripts/reference_values.R."
+                )
+            out.append(
+                CrossImplementation(
+                    case=case,
+                    statistic=f"{RANK_ACF_STATISTIC} lag {lag}",
+                    ours=float(ours),
+                    reference=reference,
+                    abs_difference=abs(float(ours) - reference),
+                    reference_is_random=False,
+                    reference_spread=0.0,
+                )
+            )
     return out
 
 
@@ -580,6 +628,22 @@ def build_instrument_validation(
     dcor_exact = [
         r for r in cross if r.statistic == "dcor" and not r.reference_is_random
     ]
+    rank_acf = [r for r in cross if r.statistic.startswith(RANK_ACF_STATISTIC)]
+    # np.max and all(), not the builtin max(): it skips a NaN that is not the first element.
+    rank_acf_max = float(np.max([r.abs_difference for r in rank_acf]))
+    rank_acf_agrees = all(r.abs_difference <= AGREEMENT_TOL for r in rank_acf)
+
+    def rank_acf_detail(not_pinned: str) -> str:
+        verb = "match" if rank_acf_agrees else "do not all match"
+        return (
+            f"lags 1-5 of the rank autocorrelation r_h {verb} R's acf on the "
+            f"{len(rank_acf)} rows of the tier-4 detail (max abs difference "
+            f"{_difference(rank_acf_max, '.1e')}), two series with no gaps and no ties ({RANK_ACF_TEST}, "
+            f"against jobs/reference/r_reference_values.csv). Not pinned: {not_pinned}, "
+            "and the pairing across gaps"
+        )
+
+    rank_acf_verdict = TIER_PASS if rank_acf_agrees else TIER_FAIL
     r_ref = {
         (str(r.case), str(r.quantity)): float(r.value)
         for r in r_values_df.itertuples(index=False)
@@ -672,11 +736,8 @@ def build_instrument_validation(
         TierRow(
             "C5 rank autocorr",
             4,
-            TIER_ABSENT,
-            "no independent implementation of C5's statistic is in hand. R's lag-1 rank "
-            "autocorrelation in the reference fixture is a Pearson correlation of the lagged "
-            "pairs; C5 divides every lag by the full centred sum of squares, so the two "
-            "differ by construction and one cannot vouch for the other",
+            rank_acf_verdict,
+            rank_acf_detail("the studentization, the max over lags"),
         ),
         TierRow(
             "C6 exchangeability",
@@ -687,8 +748,8 @@ def build_instrument_validation(
         TierRow(
             "C6 exchangeability",
             4,
-            TIER_ABSENT,
-            "no independent implementation in hand",
+            rank_acf_verdict,
+            rank_acf_detail("the studentization, the sum of squares"),
         ),
         TierRow(
             "CvM",
@@ -725,7 +786,8 @@ def build_instrument_validation(
             4,
             TIER_PASS,
             f"matches XICOR on the {len(xi_exact)} exact cases of the tier-4 detail (max "
-            f"abs difference {max(r.abs_difference for r in xi_exact):.1e}) and lies inside "
+            f"abs difference {_difference(max(r.abs_difference for r in xi_exact), '.1e')}) "
+            "and lies inside "
             "its tie-break distribution on tied data (tests/test_r_cross_implementation.py::"
             "test_xi_lies_inside_the_XICOR_tie_break_distribution_on_TIED_data); matches "
             "scipy.stats.chatterjeexi too (tests/test_r_cross_implementation.py::"
@@ -737,7 +799,8 @@ def build_instrument_validation(
             4,
             TIER_PASS,
             f"matches the energy package on the {len(dcor_exact)} cases of the tier-4 "
-            f"detail (max abs difference {max(r.abs_difference for r in dcor_exact):.1e})",
+            "detail (max abs difference "
+            f"{_difference(max(r.abs_difference for r in dcor_exact), '.1e')})",
         ),
         TierRow(
             "Kaplan-Meier",
@@ -809,6 +872,13 @@ def build_instrument_validation(
             "band_coverage_censor_at": BAND_COVERAGE_CENSOR_AT,
         },
     )
+
+
+def _difference(value: float, fmt: str) -> str:
+    """An absolute difference, formatted; `< 1e-12` when it is below `ROUNDING_FLOOR`."""
+    if abs(value) < ROUNDING_FLOOR:
+        return f"< {ROUNDING_FLOOR:.0e}"
+    return format(value, fmt)
 
 
 def _span(values: pd.Series, fmt: str) -> str:
@@ -900,7 +970,7 @@ def render_tier_table_markdown(data: InstrumentValidationData) -> str:
         )
         lines.append(
             f"| {row.case} | {row.statistic} | {row.ours:.10f} | {row.reference:.10f} | "
-            f"{row.abs_difference:.2e} | {note} |"
+            f"{_difference(row.abs_difference, '.2e')} | {note} |"
         )
 
     threshold = data.meta["divergence_threshold"]

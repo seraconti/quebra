@@ -20,8 +20,10 @@ dependence grid is a sweep, not a calibration to a record:
   n >= 20, so 0 and 0.03 bracket it; 0.25 is deliberately outside it, and exists only to
   show what C1 and C2's censoring machinery buys when there is enough censoring to matter.
 - `RHO_GRID` is dense at small `rho`, so the weak dependence a check is least likely to see
-  is resolved finely. The duration-level lag-1 each `rho` induces is recorded per
-  cell (`mean_induced_lag1`), and the power curve is read against that.
+  is resolved finely. The power curve is read against the rank correlation of neighbouring
+  durations each `rho` induces, `(6/pi) arcsin(rho/2)`; `mean_induced_lag1` records C5's
+  uncentred `r_1` per cell, which reads about -1/N with no dependence, N the cell's event
+  count.
 - `B_GRID` brackets 1 on both sides, so C1's power is measured against a decreasing
   intensity and an increasing one rather than only the direction that happens to be easier.
 - `SHAPE_GRID` is `{0.75, 1.5}` - over- and under-dispersed relative to exponential
@@ -29,21 +31,48 @@ dependence grid is a sweep, not a calibration to a record:
   (Technometrics 62(1) 2020, Section 6.1, Figure 1, p. 107) use exactly these two shapes and
   show the asymptotic calibrations degrade differently on the two sides.
 
-Censoring is an Arm A/D factor only. Arms B and C carve a uniformly spaced read series
-with no injected gaps, which can produce exactly one incomplete window (the terminal one),
-so their censoring is ~1/n and emergent. Sweeping a censoring level there would silently
-mean something different from what it means in Arm A, so it is not swept.
+Censoring is an Arm A/D factor only in the size and power cells. Arms B and C carve a
+uniformly spaced read series with no injected gaps, which can produce exactly one
+incomplete window (the terminal one), so their censoring is ~1/n and emergent. Sweeping a
+censoring level there would silently mean something different from what it means in Arm A,
+so it is not swept.
+
+The SERIAL cells (`serial_cells`, kind `serial`, their own table) put the rank checks on the
+layouts the size and power cells leave out:
+
+- Arm E split into a target of 3, 5 and 10 segments (`SERIAL_SEGMENT_GRID`) at n = 50 and
+  60, through the censoring knob, over `RHO_GRID` and `rho = 0`;
+- Arm E2, dependence at lag 2 only, on the same layouts over `RHO_GRID`;
+- Arm EL, two segments of `LEVEL_SHIFT_EVENTS_PER_SEGMENT` expected events with the second
+  shifted by `delta`, over `LEVEL_SHIFT_DELTA_GRID` x `LEVEL_SHIFT_PHI_GRID`, the latent
+  AR(1) coefficient carried in the `rho` column. `phi = 0` is a null cell at every `delta`.
+
+They use one Weibull shape, `SERIAL_SHAPE` = 0.75. C5 and C6 read ranks, and the copula
+map to durations is monotone, so the shape reaches them only through truncation: how many
+events a segment keeps before its `tau`. The over-dispersed shape makes that count the more
+variable of the two (the count variance of a renewal process scales with the squared
+coefficient of variation, about 1.8 against 0.46), so it is the harder layout to read.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from jobs.bench.arms import ARM_A, ARM_B, ARM_C, ARM_D, ARM_E
+from jobs.bench.arms import (
+    ARM_A,
+    ARM_B,
+    ARM_C,
+    ARM_D,
+    ARM_E,
+    ARM_E2,
+    ARM_EL,
+    n_segments_for_censoring,
+)
 from quebra.analyzers.checks.result import CLOCK_CALENDAR, CLOCK_IN_SPEC
 
 KIND_SIZE = "size"
 KIND_POWER = "power"
+KIND_SERIAL = "serial"
 
 ALPHA = 0.05
 N_PERM = 999
@@ -55,6 +84,13 @@ SHAPE_GRID = (0.75, 1.5)
 CENSORING_GRID = (0.0, 0.03, 0.25)
 RHO_GRID = (0.05, 0.1, 0.15, 0.2, 0.3, 0.5)
 B_GRID = (0.7, 0.85, 1.2, 1.5)
+
+SERIAL_SHAPE = 0.75
+SERIAL_N_GRID = (50, 60)
+SERIAL_SEGMENT_GRID = (3, 5, 10)
+LEVEL_SHIFT_EVENTS_PER_SEGMENT = 150
+LEVEL_SHIFT_DELTA_GRID = (0.0, 0.4, 0.8)
+LEVEL_SHIFT_PHI_GRID = (-0.12, 0.0, 0.12)
 
 MASTER_SEED = 20260806
 
@@ -70,6 +106,7 @@ class Cell:
     censoring: float = 0.0
     rho: float | None = None
     b: float | None = None
+    delta: float | None = None
     # False on the in-spec clock of a carved arm, where tau is not well posed - see
     # `analyzers.checks.battery.run_battery`.
     include_tau_checks: bool = True
@@ -86,6 +123,7 @@ class Cell:
             self.censoring,
             self.rho,
             self.b,
+            self.delta,
         )
 
     def label(self) -> str:
@@ -100,6 +138,8 @@ class Cell:
             parts.append(f"rho={self.rho}")
         if self.b is not None:
             parts.append(f"b={self.b}")
+        if self.delta is not None:
+            parts.append(f"delta={self.delta}")
         return " ".join(parts)
 
 
@@ -222,8 +262,66 @@ def power_cells() -> list[Cell]:
     return cells
 
 
+def censoring_for_segments(n: int, n_segments: int) -> float:
+    """The censoring target at which `arms.n_segments_for_censoring(n, .)` is `n_segments`:
+    one incomplete gap per segment, so `c = m / (n + m)`. Raises when that function caps
+    the count below `n_segments`, which it does once a segment would expect fewer than
+    `arms.MIN_EXPECTED_EVENTS_PER_SEGMENT` events."""
+    censoring = n_segments / (n + n_segments)
+    realised = n_segments_for_censoring(n, censoring)
+    if realised != n_segments:
+        raise ValueError(
+            f"{n_segments} segments at n = {n} realise as {realised}; "
+            "the cell would be labelled with a layout it does not have"
+        )
+    return censoring
+
+
+def serial_cells() -> list[Cell]:
+    """Gapped and lag-2 layouts for the rank checks, and the level shift; see the module
+    docstring. A `rho = 0` (or `phi = 0`) cell is a null cell and gets the size replicates."""
+
+    def replicates(rho: float) -> int:
+        return N_REPLICATES_SIZE if rho == 0.0 else N_REPLICATES_POWER
+
+    cells: list[Cell] = []
+    for n in SERIAL_N_GRID:
+        for n_segments in SERIAL_SEGMENT_GRID:
+            censoring = censoring_for_segments(n, n_segments)
+            for arm, rhos in ((ARM_E, (0.0, *RHO_GRID)), (ARM_E2, RHO_GRID)):
+                for rho in rhos:
+                    cells.append(
+                        Cell(
+                            arm=arm,
+                            n=n,
+                            clock=CLOCK_IN_SPEC,
+                            kind=KIND_SERIAL,
+                            shape=SERIAL_SHAPE,
+                            censoring=censoring,
+                            rho=rho,
+                            n_replicates=replicates(rho),
+                        )
+                    )
+    for delta in LEVEL_SHIFT_DELTA_GRID:
+        for phi in LEVEL_SHIFT_PHI_GRID:
+            cells.append(
+                Cell(
+                    arm=ARM_EL,
+                    n=2 * LEVEL_SHIFT_EVENTS_PER_SEGMENT,
+                    clock=CLOCK_IN_SPEC,
+                    kind=KIND_SERIAL,
+                    shape=SERIAL_SHAPE,
+                    rho=phi,
+                    delta=delta,
+                    n_replicates=replicates(phi),
+                )
+            )
+    return cells
+
+
 def all_cells() -> list[Cell]:
-    return [*size_cells(), *power_cells()]
+    # Serial cells go last, so every size and power cell keeps its index and its seed.
+    return [*size_cells(), *power_cells(), *serial_cells()]
 
 
 @dataclass(frozen=True)

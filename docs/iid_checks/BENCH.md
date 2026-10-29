@@ -10,7 +10,7 @@ The numbers quoted below are from those tables as committed with this page.
 ## 1. What is simulated
 
 A cell is one generating configuration at one event count on one clock
-(`jobs/bench/grid.py:Cell`). Five arms generate the data (`jobs/bench/arms.py`):
+(`jobs/bench/grid.py:Cell`). Seven arms generate the data (`jobs/bench/arms.py`):
 
 | arm | generator | stands for |
 |---|---|---|
@@ -19,6 +19,8 @@ A cell is one generating configuration at one event count on one clock
 | C, `arm_c` | AR(1) Gaussian reads at correlation `rho`, carved identically | read-level dependence; its power cells are null cells, because read correlation does not reach the durations |
 | D, `arm_d` | Weibull trend-renewal process, cumulative intensity `t^b` | the trend C1, C2 and CvM are directed at; `b = 1` is a second null |
 | E, `arm_e` | Weibull durations with a Gaussian-copula AR(1) dependence of strength `rho` | the serial dependence C5 and C6 are directed at; `rho = 0` is Arm A |
+| E2, `arm_e2` | Arm E with the latent dependence at lag 2 only, of strength `rho` | dependence C5 and C6 must find away from lag 1 |
+| EL, `arm_el` | two segments of Arm E, the second shifted by `delta` on the latent scale, latent AR(1) coefficient `phi` | a level difference between segments, which is part of every permutation row's null (`phi = 0`), alone and under dependence of either sign |
 
 The factors (`jobs/bench/grid.py`): event count `N_GRID` = 20, 35, 50, 75, 100, 355, 500,
 700, 1000; Weibull shape 0.75 and 1.5; quantised or continuous durations (Arm A); target
@@ -27,6 +29,16 @@ censoring 0, 0.03 and 0.25 (Arms A and D, through `arms.n_segments_for_censoring
 clocks, and their in-spec cells run only the rows that stay defined when `tau == T_N`: C5,
 C6 and CvM by permutation (`grid._carved_clocks`, `checks/battery.py:run_battery`).
 `grid.size_cells` and `grid.power_cells` give 216 and 288 cells.
+
+`grid.serial_cells` gives 87 more, written to their own table, `serial_table.csv`, which
+only `jobs/bench/report.py` reads, for `promotion_report.md`: Arms E and E2 split into a
+target of 3, 5 and 10 segments at n = 50 and 60, and Arm EL at 150 expected events per
+segment, `delta` 0, 0.4 and 0.8 and `phi` -0.12, 0 and 0.12. They use the one Weibull shape
+0.75; the grid docstring says why. Beside the size and power columns the table carries
+`delta`, the realised segment counts and segment-size quantiles, and `n_not_computed` per
+row. It leaves out `mean_induced_lag1`, which on several segments moves with the layout and
+with any difference in level (`runner.py` module docstring). The size table keeps the column
+on its censored cells, which are several segments too, and the same caveat applies there.
 
 The event counts cover the 6D2S check-ledger records, which reach 935 events. The
 censoring and quantisation levels were set from one record family, measured before the
@@ -39,13 +51,14 @@ compares another record's event counts, censoring or quantisation with the grid.
 Each replicate is generated, the whole battery runs on it, and a row counts a rejection
 when `p < 0.05` (`jobs/bench/runner.py:run_cell`). Size cells have 2000 replicates, power
 cells 1000, and permutation rows use B = 999 (`grid.py`: `N_REPLICATES_SIZE`,
-`N_REPLICATES_POWER`, `N_PERM`). The last run covered 504 cells and 720,000 replicates
+`N_REPLICATES_POWER`, `N_PERM`). The last run covered 591 cells and 816,000 replicates
 (`jobs/bench/results/runtime.txt`).
 
 The Monte Carlo standard error of a size at a true 0.05 is `sqrt(0.05 * 0.95 / 2000)` =
 0.0049 for a size cell and 0.0069 at 1000 replicates. Every row carries its own `mc_se`, its
-`n_used` replicates and the first failure reason, the realised censoring, and the
-duration-level lag-1 the cell actually induced (`runner.py` module docstring).
+`n_used` replicates and the first failure reason, the realised censoring, and
+`mean_induced_lag1`, C5's uncentred `r_1` averaged over the cell, which reads about -1/N
+with no dependence, N the cell's event count (`runner.py` module docstring).
 
 ## 3. How the numbers are consumed
 
@@ -76,8 +89,8 @@ still be accepted is 0.05 +/- 0.011, 0.013, 0.014 and 0.014 respectively
   - otherwise it is `underpowered`.
 
 **The figures.** `jobs/active/check_calibration.py` declares both tables as Datasets and draws
-`calibration_summary.size_vs_n`, `power_vs_dependence`, `read_dependence` and
-`validation_curve`.
+`calibration_summary.size_vs_n`, `power_vs_dependence`, `power_vs_trend` (one row of
+panels per renewal shape), `read_dependence` and `validation_curve`.
 
 **The reports.**
 - `jobs/bench/report.py:verdicts` sets the verdicts in `promotion_report.md`. It REJECTs a
@@ -133,10 +146,15 @@ None of these fixes is implemented. Each is a proposal.
    still look right. Only published values catch it (`tests/test_checks_published_values.py`,
    `docs/GOLD_STANDARD.md`). No fix proposed.
 8. **Multiplicity across groups is uncorrected.** The Bonferroni is per group, over 162
-   groups, so about eight false "miscalibrated" flags are expected even for exact tests.
-   Three exact permutation rows are flagged today: C5 studentized, in-spec, n = 700; C5
-   unstudentized, in-spec, n = 20; and CvM permutation, calendar, n = 100
-   (`bench_acceptance_at_n` computed from `size_table.csv`).
+   groups, so about eight false "miscalibrated" flags are expected across the table even if
+   every check were exact, about five of them among its 108 permutation groups.
+   Four exact permutation rows are flagged in the current tables: C5 studentized and C6,
+   in-spec, n = 700, both on the same cell (Arm A, continuous, uncensored) and both
+   conservative, at 0.0345 and 0.0355; C5 unstudentized, in-spec, n = 20; and CvM
+   permutation, calendar, n = 100 (`bench_acceptance_at_n` computed from `size_table.csv`).
+   C5 studentized and C6 read the same rank autocorrelations off the same permutations, so
+   their two flags are not independent. A flagged group demotes a ledger non-rejection at
+   that event count to `underpowered`.
    *Proposal:* correct across groups, or exempt permutation rows from the size criterion.
 9. **Ties are under-counted on quantised data.** `_permutation.permutation_p_value` counts
    ties with a float-exact `>=`. On a read grid, shuffles that tie the observed statistic
@@ -168,5 +186,6 @@ None of these fixes is implemented. Each is a proposal.
     every later cell. *Proposal:* seed from the cell's key.
 15. **The dependence grid is not calibrated to a record.** `rho` sets the strength of the
     generated dependence; no grid point is claimed to be a real record's. Power is reported
-    over the whole grid, with the lag-1 each `rho` induced (`report.py:dependence_grid_table`).
+    over the whole grid, with the rank correlation of neighbouring durations each `rho`
+    induces in the generator, `(6/pi) arcsin(rho/2)` (`report.py:dependence_grid_table`).
     No fix proposed.

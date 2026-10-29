@@ -156,10 +156,11 @@ def test_cvm_is_registered_in_the_bench_row_schema():
     """CvM is promoted; this test pins the promoted behaviour and is inverted, not
     deleted, so the change of decision is visible in the history rather than silent.
 
-    Registration alone is not the promotion. `ROW_KEYS` is the schema of the BENCH TABLES,
-    so a registered check with no bench rows makes `bench_acceptance_at_n` return None and
-    every CvM ledger cell reads `underpowered / no bench cell`. The second assertion is
-    therefore the one that matters: the bench must actually carry CvM size rows.
+    Registration alone is not the promotion. Every `ROW_KEYS` row is a row of the BENCH
+    TABLES, so a registered check with no bench rows makes `bench_acceptance_at_n` return
+    None and every CvM ledger cell reads `underpowered / no bench cell`. The second
+    assertion is therefore the one that matters: the bench must actually carry CvM size
+    rows.
     """
     from pathlib import Path
 

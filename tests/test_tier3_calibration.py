@@ -54,6 +54,9 @@ already made once, recorded in CLAUDE.md.
 The resolution is honest rather than flattering: at 2000 replicates the band is +/-0.020 at
 alpha = 0.10 and +/-0.0067 at alpha = 0.01, so the 0.01 cell can only catch a gross error.
 That is stated rather than hidden behind a passing assertion.
+
+The level-shift exactness test is a separate family, 2 checks x 3 alphas = 6 comparisons
+with its own Bonferroni band, so it leaves the 18-comparison band above unchanged.
 """
 
 from __future__ import annotations
@@ -70,7 +73,8 @@ import quebra.analyzers.checks.c6_exchangeability as c6
 import quebra.analyzers.checks.cvm_cramer_von_mises as cvm
 from quebra.analyzers.calibration_summary import bonferroni_z_crit, null_se
 from quebra.analyzers.checks._permutation import block_permutations, permutation_p_value
-from quebra.analyzers.checks.result import CALIB_ASYMPTOTIC, Segment
+from quebra.analyzers.checks.battery import row_key, run_battery
+from quebra.analyzers.checks.result import CALIB_ASYMPTOTIC, CALIB_PERMUTATION, Segment
 from quebra.analyzers.instrument_validation import (
     measure_asymptotic_size,
 )
@@ -153,6 +157,55 @@ def test_the_permutation_p_value_is_exact_under_exchangeability(
             f"{check_name} {layout_name}: rejection {rate:.4f} at nominal {alpha} "
             f"(band +/-{band:.4f} = {z_crit:.2f} null SE, Bonferroni over "
             f"{N_COMPARISONS} comparisons)"
+        )
+
+
+# Two segments whose gaps differ in level. Not a `LAYOUTS` entry: a fourth layout would
+# raise N_COMPARISONS and widen every band in the test above.
+LEVEL_SHIFT_SIZES = (15, 15)
+LEVEL_SHIFT_MEANS = (1.0, 3.0)
+LEVEL_SHIFT_ROWS = {
+    "c5": ("c5_rank_autocorr", CALIB_PERMUTATION, c5.VARIANT_STUDENTIZED),
+    "c6": ("c6_exchangeability", CALIB_PERMUTATION, ""),
+}
+LEVEL_SHIFT_SEEDS = {"c5": 90_100, "c6": 90_101}
+# 2 checks x 3 alphas.
+LEVEL_SHIFT_COMPARISONS = len(LEVEL_SHIFT_ROWS) * len(ALPHAS)
+
+
+@pytest.mark.parametrize("check_name", list(LEVEL_SHIFT_ROWS))
+def test_the_battery_p_value_is_exact_when_segments_differ_in_level(check_name):
+    """Oracle: the exactness argument, `P(p <= k/(B+1)) = k/(B+1)`, as above.
+
+    The gaps are iid exponential with mean 1 in one segment and 3 in the other, so each
+    segment is exchangeable and the record as a whole is not. The within-segment
+    permutation is still the exact null, so the identity must hold. The level difference
+    is what makes a permutation that crossed the gap visible: it would move gaps between
+    levels in every copy and leave the observed record extreme.
+
+    Run through `run_battery(rng=...)`, not through the check's own `run`, so the battery
+    builds the permutation set itself and a battery that drew it over the wrong blocks
+    fails here.
+    """
+    key = LEVEL_SHIFT_ROWS[check_name]
+    rng = np.random.default_rng(LEVEL_SHIFT_SEEDS[check_name])
+    p = np.empty(REPLICATES, dtype=float)
+    for i in range(REPLICATES):
+        segments = []
+        for size, mean in zip(LEVEL_SHIFT_SIZES, LEVEL_SHIFT_MEANS):
+            g = rng.exponential(mean, size=size)
+            segments.append(Segment(x=g, tau=float(g.sum() + g.mean())))
+        rows = run_battery(segments, rng=rng, n_perm=N_PERM, include_tau_checks=False)
+        p[i] = next(r.p_value for r in rows if row_key(r) == key)
+
+    z_crit = bonferroni_z_crit(LEVEL_SHIFT_COMPARISONS)
+    for alpha in ALPHAS:
+        rate = float(np.mean(p <= alpha))
+        band = z_crit * null_se(alpha, REPLICATES)
+        assert abs(rate - alpha) <= band, (
+            f"{check_name} level-shifted: rejection {rate:.4f} at nominal {alpha} "
+            f"(band +/-{band:.4f} = {z_crit:.2f} null SE, Bonferroni over "
+            f"{LEVEL_SHIFT_COMPARISONS} comparisons)"
         )
 
 

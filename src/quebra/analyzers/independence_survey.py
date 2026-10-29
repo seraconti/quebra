@@ -16,7 +16,8 @@ rather than on raw check results.
 **One grid per entry of `SURVEY_KEYS`**, which is `battery.ROW_KEYS` plus C3. C1, C2 and
 CvM each appear twice, once per calibration, because the asymptotic and permutation routes
 are different instruments that happen to share a statistic - the tier work measured them
-separately and they disagree. C5 appears twice for its two variants. C3 is drawn but is
+separately and they disagree. C5 appears once, studentized: its unstudentized variant is
+uncentred and runs only in the bench (`battery.BENCH_ROW_KEYS`). C3 is drawn but is
 the one instrument with no bench cell behind it, and the comment on `C3_KEY` below carries
 what that costs a reader.
 
@@ -40,15 +41,15 @@ from quebra.analyzers.check_ledger import (
 )
 from quebra.analyzers.checks.battery import ROW_KEYS
 
-# C3's key. It is NOT in `ROW_KEYS` and must not be: that tuple is the bench tables' row
-# schema, and the bench does not run C3 - it is an out-of-process R call with its own
+# C3's key. It is NOT in `ROW_KEYS` and must not be: every row there is scored against a
+# bench cell, and the bench does not run C3 - it is an out-of-process R call with its own
 # simulated null. But the SURVEY draws it, because a survey that runs an instrument and
 # then omits it from every figure answers a different question from the one it appears to.
 # The consequence travels with it: C3 is the one grid here with no bench cell behind it, so
 # its `pass` means "did not reject" and cannot mean "and it had the power to".
 C3_KEY = ("c3_serial_copula", "r_copula", "")
 
-# What the survey draws: everything the bench scores, plus C3.
+# What the survey draws: every row the pipeline's battery returns, plus C3.
 SURVEY_KEYS = tuple(ROW_KEYS) + (C3_KEY,)
 
 # Display names, looked up by key rather than by position. Kept here rather than in the plot because they name
@@ -63,11 +64,6 @@ CHECK_LABELS: dict[tuple[str, str, str], str] = {
         "permutation",
         "studentized",
     ): "C5 rank autocorrelation (studentized)",
-    (
-        "c5_rank_autocorr",
-        "permutation",
-        "unstudentized",
-    ): "C5 rank autocorrelation (raw)",
     ("c6_exchangeability", "permutation", ""): "C6 exchangeability",
     ("cvm_cramer_von_mises", "asymptotic", ""): "CvM Cramer-von Mises (asymptotic)",
     ("cvm_cramer_von_mises", "permutation", ""): "CvM Cramer-von Mises (permutation)",
@@ -94,11 +90,6 @@ CHECK_NULL: dict[tuple[str, str, str], str] = {
         "c5_rank_autocorr",
         "permutation",
         "studentized",
-    ): "rejects when consecutive durations are RANK-CORRELATED",
-    (
-        "c5_rank_autocorr",
-        "permutation",
-        "unstudentized",
     ): "rejects when consecutive durations are RANK-CORRELATED",
     (
         "c6_exchangeability",

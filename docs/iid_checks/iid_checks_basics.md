@@ -33,13 +33,15 @@ Six checks ask whether that assumption survives contact with the data.
 | C2 Anderson-Darling | renewal process | event times are not uniform on `[0, tau]` |
 | C3 copula serial independence | full serial independence at all lags | any lag shows dependence |
 | C5 rank autocorrelation | zero rank autocorrelation | consecutive durations covary |
-| C6 exchangeability | order carries no information | any departure from exchangeability |
+| C6 exchangeability | order carries no information | rank autocorrelations at lags 1-5 are jointly extreme |
 | CvM Cramer-von Mises | renewal process | event times are not uniform on `[0, tau]` |
 
-They are not redundant, but two of them are close. Measured against C6 as the reference,
-C5 agrees with it to a mean absolute difference of 0.017-0.018 in rejection rate over 288
-shared power cells, while C1/C2 differ from it by 0.256-0.267 over the 234 they share. C5 and
-C6 are largely measuring the same thing; C1/C2 measure a different one.
+Whether any two of them are redundant is open. C5's studentized variant and C6 read the
+same studentized rank autocorrelations and differ in how they combine lags; C1/C2 measure a
+different thing. Measured against C6 as the reference, C5 studentized differs from it in
+rejection rate by 0.019 on average and by at most 0.172 over the 288 power cells they share
+on Arms C, D and E, that maximum on an Arm D trend cell (`promotion_report.md`, criterion 4).
+On Arm E's dependence grid alone the figures are 0.017 and 0.077.
 
 ## Two clocks, because the mapping is not unique
 
@@ -89,7 +91,7 @@ p = 0.3860 / 0.4040 / 0.3790 while the provenance record stayed identical.
 ## What the bench establishes, and what it does not
 
 `jobs/bench/` measures empirical size and power at the event counts this project actually has,
-over 504 cells and 720,000 replicates. Its verdicts:
+over 591 cells and 816,000 replicates. Its verdicts:
 
 | | verdict | why |
 |---|---|---|
@@ -97,18 +99,20 @@ over 504 cells and 720,000 replicates. Its verdicts:
 | C1, C2 asymptotic | REJECT | oversized inside the envelope (worst z = 31.7 and 5.4) |
 | CvM permutation | PROMOTE | size holds across 144 null cells (worst z = 2.56) |
 | CvM asymptotic | REJECT | oversized inside the envelope (worst z = 4.41 over 86 null cells) |
-| C5, C6 | HOLD | correctly calibrated, but mean power at n = 100 is only 0.33-0.36 |
+| C5 | HOLD | correctly calibrated, but mean power at n = 100 is only 0.34-0.36 |
+| C6 | HOLD | correctly calibrated (worst z = -2.98 over 144 null cells), but mean power at n = 100 is only 0.34 |
 | C3 | RUNS, UNCALIBRATED | exercised under Rscript 4.5.3 with `copula`; smoke-tested on iid input only - no bench cell, no size or power evidence |
 
 **The number to read before trusting a non-rejection**: averaged over the bench's dependence
-grid, C5 and C6 have 21-24% power at n = 50, 33-36% at n = 100, 60-63% at n = 355 and 79-80%
-at n = 1000, and below n = 100 they exceed 50% only at the strongest dependence the grid
-tests (`promotion_report.md`, "Power across the dependence grid"). A non-rejection at a
+grid, C5 (studentized) has 24% power at n = 50, 36% at n = 100, 63% at n = 355 and 80% at
+n = 1000, and below n = 100 it exceeds 50% only at the strongest dependence the grid tests
+(`promotion_report.md`, "Power across the dependence grid"). C6 has 22% at n = 50, 34% at
+n = 100, 60% at n = 355 and 79% at n = 1000, under the same condition. A non-rejection at a
 threshold with 50 windows is close to uninformative unless the dependence is strong. A
 rejection still means something; the silence does not.
 
 That asymmetry is why `analyzers/check_ledger.py` requires three conditions for a `pass`
-and not one. On the 070423 record of qubit 1, 49 of its 63 non-rejections read
+and not one. On the 070423 record of qubit 1, 44 of its 56 non-rejections read
 `underpowered` or `not interpretable (ties)`, and would have printed `pass` under a p-value-only
 rule (`jobs/active/check_ledger_6d2s_q1.py`, its `q1_070423_check_ledger_data`).
 

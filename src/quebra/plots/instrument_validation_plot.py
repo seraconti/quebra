@@ -335,7 +335,7 @@ class CrossImplementationPlot(BasePlot):
                 "XICOR is by Holmes and Chatterjee; energy is by Rizzo and Szekely. "
                 "randtests::bartels.rank.test is NOT compared: it is the rank von Neumann "
                 "ratio, a different functional from our studentized max-over-lags C5. "
-                "The lag-1 rank autocorrelation the two share is pinned by test instead.",
+                "Lags 1-5 of the autocorrelation C5 and C6 use are pinned against R's acf.",
                 ha="center",
                 **theme.CAPTION,
                 wrap=True,

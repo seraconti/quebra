@@ -1,9 +1,9 @@
-"""Turn the two tables into `promotion_report.md`.
+"""Turn the bench tables into `promotion_report.md`.
 
 The report is generated, not written by hand, so every number in it is traceable to a row
-of `size_table.csv` or `power_table.csv` and regenerating after a rerun cannot leave a
-stale figure in the prose. Where a judgement is made, the RULE is printed next to the
-verdict rather than left implicit.
+of `size_table.csv`, `power_table.csv` or `serial_table.csv`, and regenerating after a
+rerun cannot leave a stale figure in the prose. Where a judgement is made, the RULE is
+printed next to the verdict rather than left implicit.
 
 Decision rule, stated once here and applied uniformly:
 
@@ -27,13 +27,29 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from jobs.bench.arms import ARM_A, ARM_B, ARM_C, ARM_D, ARM_E
-from jobs.bench.grid import ALPHA, N_GRID
+from jobs.bench.arms import (
+    ARM_A,
+    ARM_B,
+    ARM_C,
+    ARM_D,
+    ARM_E,
+    ARM_EL,
+    MIN_EVENTS_PER_SEGMENT,
+    n_segments_for_censoring,
+)
+from jobs.bench.grid import (
+    ALPHA,
+    KIND_SERIAL,
+    N_GRID,
+    SERIAL_N_GRID,
+    SERIAL_SEGMENT_GRID,
+)
 from quebra.analyzers.calibration_summary import (
     ENVELOPE_MAX_CENSORING,
     FAMILYWISE_ALPHA,
     MIN_SUPPORT_FRACTION,
     bonferroni_z_crit,
+    neighbour_rank_correlation,
     null_se,
 )
 from quebra.analyzers.checks.result import CALIB_ASYMPTOTIC
@@ -55,7 +71,7 @@ DIRECTED_AT = {
     "c1_lewis_robinson": (ARM_D, "b", "monotone trend in the intensity"),
     "c2_anderson_darling": (ARM_D, "b", "departure from a renewal process"),
     "c5_rank_autocorr": (ARM_E, "rho", "serial dependence between durations"),
-    "c6_exchangeability": (ARM_E, "rho", "any departure from exchangeability"),
+    "c6_exchangeability": (ARM_E, "rho", "serial dependence spread across lags 1-5"),
     # CvM is scored against Arm D like C2: it is the same class of
     # alternative - a departure from a renewal process - because CvM and C2 are two
     # functionals of the same tied-down bridge and differ only in the weight.
@@ -98,7 +114,17 @@ def _fmt(value: float, digits: int = 4) -> str:
     return "-" if pd.isna(value) else f"{value:.{digits}f}"
 
 
+def _spoken(values: tuple) -> str:
+    """`(3, 5, 10)` as `3, 5 and 10`."""
+    words = [f"{v:g}" for v in values]
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
 def _row_label(row: pd.Series) -> str:
+    # The one row `runner.run_cell` writes for a cell whose every replicate failed has no
+    # check to name.
+    if not isinstance(row["check"], str):
+        return "(every replicate failed)"
     variant = row["variant"] if isinstance(row["variant"], str) else ""
     suffix = f"/{variant}" if variant else ""
     return f"{row['check']} [{row['calibration']}{suffix}]"
@@ -114,6 +140,90 @@ def load() -> tuple[pd.DataFrame, pd.DataFrame]:
     size = pd.read_csv(RESULTS_DIR / "size_table.csv")
     power = pd.read_csv(RESULTS_DIR / "power_table.csv")
     return _label_column(size), _label_column(power)
+
+
+def load_serial() -> pd.DataFrame:
+    """`serial_table.csv`. Raises when it is missing rather than leaving its section out,
+    which would read as if the gapped, lag-2 and level-shift cells had never been run."""
+    path = RESULTS_DIR / "serial_table.csv"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} is missing. `jobs/bench/runner.py` writes it beside the size and "
+            "power tables; rerun the bench before building this report."
+        )
+    return _label_column(pd.read_csv(path))
+
+
+SERIAL_CELL = ["arm", "n_target", "segments_target", "rho", "delta"]
+SERIAL_LAYOUT = [
+    "mean_n_events",
+    "n_segments_min",
+    "mean_n_segments",
+    "n_segments_max",
+    "segment_size_min",
+    "segment_size_q25",
+    "segment_size_median",
+    "segment_size_q75",
+    "segment_size_max",
+]
+
+
+def _segment_targets(frame: pd.DataFrame) -> list[int | None]:
+    """A serial row's segment target, decoded from the censoring fraction that encodes it;
+    None for a size or power row, which is keyed by the fraction itself."""
+    return [
+        (2 if arm == ARM_EL else n_segments_for_censoring(int(n), float(c)))
+        if kind == KIND_SERIAL
+        else None
+        for kind, arm, n, c in zip(
+            frame["kind"], frame["arm"], frame["n_target"], frame["censoring_target"]
+        )
+    ]
+
+
+def _serial_cells(serial: pd.DataFrame) -> pd.DataFrame:
+    """The serial table with its cell keys made printable: the segment target instead of
+    the censoring fraction that encodes it, and `-` for an absent `delta`."""
+    return serial.assign(
+        segments_target=_segment_targets(serial),
+        rho=["-" if pd.isna(v) else f"{v:g}" for v in serial["rho"]],
+        delta=["-" if pd.isna(v) else f"{v:g}" for v in serial["delta"]],
+    )
+
+
+def serial_rates(
+    serial: pd.DataFrame, checks: tuple[str, ...] | None = None
+) -> pd.DataFrame:
+    """Rejection rate per serial cell and row, in grid order, with the Monte Carlo SE and
+    `n_used` in brackets. A row `under_supported` prints no rate, only `excluded` and its
+    `n_used`, as the size and verdict tables leave such rows out."""
+    frame = _serial_cells(serial)
+    if checks is not None:
+        frame = frame[frame["check"].isin(checks)]
+    excluded = frame.index.isin(under_supported(frame).index)
+    frame = frame.assign(
+        rate=[
+            f"excluded (n {used})"
+            if out
+            else f"{_fmt(rate, 3)} ({_fmt(se, 3)}, n {used})"
+            for rate, se, used, out in zip(
+                frame["rejection_rate"], frame["mc_se"], frame["n_used"], excluded
+            )
+        ]
+    )
+    table = frame.pivot_table(
+        index=SERIAL_CELL, columns="row", values="rate", aggfunc="first", sort=False
+    )
+    return table.reset_index()
+
+
+def serial_layouts(serial: pd.DataFrame) -> pd.DataFrame:
+    """What each serial cell realised, and the most replicates any of its rows has no
+    p-value for."""
+    grouped = _serial_cells(serial).groupby(SERIAL_CELL, sort=False)
+    table = grouped[SERIAL_LAYOUT].first().round(2)
+    table["n_not_computed_max"] = grouped["n_not_computed"].max()
+    return table.reset_index()
 
 
 def _markdown_table(frame: pd.DataFrame, columns: list | None = None) -> str:
@@ -233,8 +343,12 @@ def power_at(power: pd.DataFrame, check: str, n: int = 100) -> pd.DataFrame:
 
 
 def dependence_grid_table(power: pd.DataFrame) -> tuple[pd.DataFrame, str]:
-    """C5 and C6 power by (row, rho) and n, mean over the two Weibull shapes, with the
-    range of duration lag-1 each rho induces across its cells.
+    """C5 and C6 power by (row, rho) and n, mean over the two Weibull shapes, with the rank
+    correlation of neighbouring durations each rho induces,
+    `calibration_summary.neighbour_rank_correlation`. That is the generator's own value: 0
+    with no dependence and the same at every n, unlike the measured `mean_induced_lag1`,
+    which is C5's uncentred `r_1` and reads about -1/N with no dependence, N the cell's
+    event count.
 
     Also returns, as text, the grid points at which any row's power exceeds 0.5 at some
     n below 100: the dependence strength these checks need before a small-n silence says
@@ -246,11 +360,10 @@ def dependence_grid_table(power: pd.DataFrame) -> tuple[pd.DataFrame, str]:
         arm, parameter, _description = DIRECTED_AT[check]
         subset = power[(power["check"] == check) & (power["arm"] == arm)]
         for (row_label, value), group in subset.groupby(["row", parameter]):
-            lag1 = group["mean_induced_lag1"]
             entry = {
                 "row": row_label,
                 parameter: value,
-                "induced_lag1": f"{lag1.min():.3f} to {lag1.max():.3f}",
+                "neighbour_rank_corr": neighbour_rank_correlation(value),
             }
             for n, sub in group.groupby("n_target"):
                 rate = float(sub["rejection_rate"].mean())
@@ -310,6 +423,36 @@ def quantisation_effect(size: pd.DataFrame) -> pd.DataFrame:
         subset.groupby(["row", "quantised"])["rejection_rate"]
         .mean()
         .unstack("quantised")
+    )
+
+
+def centred_arm_c_cells(size: pd.DataFrame, power: pd.DataFrame) -> pd.DataFrame:
+    """One row per Arm C cell (clock, n, rho), with `centred_lag1` = `mean_induced_lag1` +
+    `1/mean_n_events`. Raises on a cell of more than one segment, where `-1/N` is not the
+    exchangeable mean of `r_1`; on a cell whose every replicate failed, which would
+    otherwise drop out of the summary unseen; and on a cell whose rows disagree."""
+    frame = pd.concat([size, power], ignore_index=True)
+    frame = frame[frame["arm"] == ARM_C]
+    failed = frame[frame["check"].isna()]
+    if len(failed):
+        raise ValueError(
+            f"{len(failed)} Arm C cells failed every replicate, the first at n = "
+            f"{failed['n_target'].iloc[0]}: {failed['fail_reason'].iloc[0]}"
+        )
+    by_cell = frame.assign(rho=frame["rho"].fillna(0.0)).groupby(
+        ["clock", "n_target", "rho"]
+    )
+    if (
+        by_cell[["mean_induced_lag1", "mean_n_events", "mean_n_segments"]].nunique() > 1
+    ).any(axis=None):
+        raise ValueError("the rows of one Arm C cell disagree on a cell-level column")
+    cells = by_cell.first().reset_index()
+    if (cells["mean_n_segments"] != 1.0).any():
+        raise ValueError(
+            "an Arm C cell has more than one segment; -1/N would not centre it"
+        )
+    return cells.assign(
+        centred_lag1=cells["mean_induced_lag1"] + 1.0 / cells["mean_n_events"]
     )
 
 
@@ -470,6 +613,7 @@ def verdicts(size: pd.DataFrame, power: pd.DataFrame) -> pd.DataFrame:
 
 def build(runtime_note: str = "") -> str:
     size, power = load()
+    serial = load_serial()
     # Computed from the table, not quoted: the earlier draft hand-typed a figure that
     # matched no cell in it, ten lines below a claim that nothing is transcribed by hand.
     _c2_asym_n20 = with_support(
@@ -485,15 +629,14 @@ def build(runtime_note: str = "") -> str:
     # One figure per Weibull shape: the two cells are not interchangeable, and their mean
     # is in no cell of the table.
     # Arm C's induced duration-level lag-1, from the tables: rho = 0 lives in the size
-    # table and the rest of the rho grid in the power table.
-    _arm_c = pd.concat([size, power], ignore_index=True)
-    _arm_c = _arm_c[(_arm_c["arm"] == ARM_C) & _arm_c["mean_induced_lag1"].notna()]
-    _by_rho = _arm_c.groupby(_arm_c["rho"].fillna(0.0))["mean_induced_lag1"].mean()
+    # table and the rest of the rho grid in the power table. Centred per cell, as
+    # `calibration_summary.read_dependence` does for the figure.
+    _arm_c = centred_arm_c_cells(size, power)
+    _by_rho = _arm_c.groupby("rho")["centred_lag1"].mean()
     arm_c_lag1 = (
         f"{_by_rho.iloc[0]:+.3f} at rho = {_by_rho.index[0]:g} and "
         f"{_by_rho.iloc[-1]:+.3f} at rho = {_by_rho.index[-1]:g}, with every cell between "
-        f"{_arm_c['mean_induced_lag1'].min():+.3f} and "
-        f"{_arm_c['mean_induced_lag1'].max():+.3f}"
+        f"{_arm_c['centred_lag1'].min():+.3f} and {_arm_c['centred_lag1'].max():+.3f}"
         if len(_arm_c)
         else "(no Arm C cell)"
     )
@@ -513,7 +656,8 @@ def build(runtime_note: str = "") -> str:
 
     add("# Promotion report - the six checks against the calibration bench\n")
     add(
-        "Generated by `bench/report.py` from `size_table.csv` and `power_table.csv`. "
+        "Generated by `bench/report.py` from `size_table.csv`, `power_table.csv` and "
+        "`serial_table.csv`. "
         "Every number below is a row of those tables; nothing is transcribed by hand.\n"
     )
 
@@ -604,8 +748,8 @@ def build(runtime_note: str = "") -> str:
     add(
         "C5 and C6 are scored on Arm E, whose `rho` sets the serial dependence between "
         "durations. Power by event count at every grid point, as the mean over the two "
-        "Weibull shapes, with the range of duration-level lag-1 each `rho` induces across "
-        "its cells:\n\n"
+        "Weibull shapes, with the rank correlation of neighbouring durations each `rho` "
+        "sets in the generator, (6/pi) arcsin(rho/2), the same at every n:\n\n"
     )
     add(_markdown_table(grid_table))
     add(
@@ -659,15 +803,15 @@ def build(runtime_note: str = "") -> str:
         "than that of two independent estimates. (Across ARMS the comparison is not "
         "paired - Arm B and Arm C realise different segment sizes, so no shared "
         "permutation set exists. Those are compared unpaired, with both SEs shown.)\n\n"
-        "C6 is the natural reference: it is a pure permutation test of exchangeability, so "
-        "its validity rests on no approximation and no citation.\n\n"
+        "C6 is the reference row. Its p-value is exact under within-segment "
+        "exchangeability, as every permutation row's is, so the choice is a convention, "
+        "not a ranking of validity.\n\n"
     )
     add(
         "**Agreement between checks, computed.** Each pair's rejection rates are compared "
         "across the shared power cells of the arm both are directed at; because every row "
         "in a cell reads the same permutation set, the difference is paired. C6 is the "
-        "reference: a pure permutation test of exchangeability, resting on no "
-        "approximation and no citation.\n\n"
+        "reference row, by convention.\n\n"
     )
     agreement = check_agreement(power)
     add(_markdown_table(agreement) if len(agreement) else "No shared cells to compare.")
@@ -679,7 +823,9 @@ def build(runtime_note: str = "") -> str:
     add(
         "\n**1. Read-level dependence does not reach the durations.** Arm C was planned as "
         "the power arm for C5 and C6. It cannot be: correlated READS do not produce "
-        f"correlated DURATIONS. Measured induced duration-level lag-1 averages {arm_c_lag1}, "
+        "correlated DURATIONS. Measured induced duration-level lag-1, centred by adding 1/N "
+        "to each one-segment cell (its exchangeable mean is -1/N) and pooled over both "
+        f"clocks and every n, averages {arm_c_lag1}, "
         "because successive level "
         "crossings of a stationary Gaussian process are very nearly a renewal process. The "
         "power table below is flat at the nominal level across the whole rho grid, which is "
@@ -701,6 +847,40 @@ def build(runtime_note: str = "") -> str:
         "a selectable variant with this caveat recorded.\n"
     )
 
+    add("\n## Serial cells - gapped layouts, lag-2 dependence and level shifts\n")
+    add(
+        "\nFrom `serial_table.csv`. Arm E is split into a target of "
+        f"{_spoken(SERIAL_SEGMENT_GRID)} segments at n = {_spoken(SERIAL_N_GRID)}. "
+        "Arm E2 carries the dependence at lag 2 only, on the same layouts. "
+        "Arm EL is two segments of equal expected size, the second shifted by `delta` on "
+        "the latent scale, with its latent AR(1) coefficient in the `rho` column. A cell at "
+        "`rho = 0` is a null cell at every `delta`, so there each permutation row's rate is "
+        "a size. Rates are over the replicates a row computed, with the Monte Carlo SE and "
+        "`n_used` in brackets. A row resting on less than "
+        f"{MIN_SUPPORT_FRACTION:.0%} of its cell's replicates prints `excluded` instead "
+        "and is listed with the other excluded rows under the degenerate cells below.\n\n"
+        "**Rank rows, Arms E and E2:**\n\n"
+    )
+    add(
+        _markdown_table(
+            serial_rates(
+                serial[serial["arm"] != ARM_EL],
+                checks=("c5_rank_autocorr", "c6_exchangeability"),
+            )
+        )
+    )
+    add("\n\n**Every row, Arm EL:**\n\n")
+    add(_markdown_table(serial_rates(serial[serial["arm"] == ARM_EL])))
+    add(
+        "\n\n**What each cell realised.** In Arms E and E2 a segment short of "
+        f"{MIN_EVENTS_PER_SEGMENT} events is dropped, so a layout can fall below its "
+        "target. In Arm EL such a segment raises instead, and the replicate is not "
+        "computed for any row. `n_not_computed_max` is the most replicates any row of the "
+        "cell has no p-value for.\n\n"
+    )
+    add(_markdown_table(serial_layouts(serial)))
+    add("\n")
+
     add("\n## Degenerate and failed cells\n")
     add(
         "A replicate whose statistic is undefined is counted, never silently treated as a "
@@ -708,26 +888,35 @@ def build(runtime_note: str = "") -> str:
         "but the rank checks still ran - typically a segment whose durations are all one "
         "quantum, so `gamma_hat` is zero. Each row's own `n_used` is its denominator.\n\n"
     )
-    thin = under_supported(pd.concat([size, power]))
+    thin = under_supported(pd.concat([size, power, serial]))
+    thin = thin.assign(
+        segments_target=["-" if t is None else str(t) for t in _segment_targets(thin)]
+    )
     add(
-        f"\n**Rows excluded from every size and verdict table** (support below "
+        f"\n**Rows excluded from every size, verdict and serial table** (support below "
         f"{MIN_SUPPORT_FRACTION:.0%} of their cell's replicates). These are reported here "
         "and nowhere else, because a rate computed from the surviving replicates is "
         "conditional on whatever killed the others:\n\n"
     )
     if len(thin):
         columns = [
+            "kind",
             "arm",
+            "clock",
             "n_target",
+            "shape",
             "quantised",
             "censoring_target",
-            "check",
-            "calibration",
+            "segments_target",
+            "rho",
+            "delta",
+            "row",
             "n_replicates",
             "n_used",
             "rejection_rate",
         ]
-        add(_markdown_table(thin[columns].round(4)))
+        excluded = thin[columns].round(4)
+        add(_markdown_table(excluded.astype(object).where(excluded.notna(), "-")))
         add(
             "\n\nThe `c2_anderson_darling` and `cvm_cramer_von_mises` `[asymptotic]` entries "
             "at `n_used` of 1 and 5 are not a degeneracy at all - both asymptotic "

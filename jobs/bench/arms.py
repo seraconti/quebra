@@ -1,15 +1,18 @@
-"""The four data-generating arms.
+"""The data-generating arms.
 
 Each arm returns `list[Segment]` - whatever it does internally, the checks see the same
 object, so a size number from Arm A and one from Arm B are comparable.
 
-    A  iid Weibull durations, direct                  null for C1, C2, C5, C6
-    B  iid Gaussian reads, thresholded and CARVED     null, through the real carve
-    C  AR(1) READ-level dependence, carved            null (see below) - not a power arm
-    D  Weibull TRP, power-law trend, direct           power for C1, C2 (b != 1)
-    E  copula AR(1) DURATION-level dependence         power for C2, C5, C6 (rho > 0)
+    A   iid Weibull durations, direct                 null for C1, C2, C5, C6
+    B   iid Gaussian reads, thresholded and CARVED    null, through the real carve
+    C   AR(1) READ-level dependence, carved           null (see below) - not a power arm
+    D   Weibull TRP, power-law trend, direct          power for C1, C2 (b != 1)
+    E   copula AR(1) DURATION-level dependence        power for C2, C5, C6 (rho > 0)
+    E2  copula dependence at lag 2 only, direct       power for C5, C6 at a lag other than 1
+    EL  Arm E on two segments, the second shifted     the level-shift null (phi = 0) and
+        up by delta on the latent scale               dependence on top of a level shift
 
-A, D and E produce durations directly; B and C produce READS and put them through
+A, D, E, E2 and EL produce durations directly; B and C produce READS and put them through
 `bench/carve.py`, so they measure the checks against the pipeline's own window definition
 rather than against an idealisation of it. The pair (A, B) at the same n is the bench's own
 consistency check: if carving an iid read series changes a size, the difference is the
@@ -17,9 +20,9 @@ carve's doing and not the check's.
 
 **Arm C turned out to be a null arm, and Arm E was added because of it.** The plan had
 Arm C as the power arm for C5/C6, on the assumption that correlated reads yield correlated
-durations. They do not: the induced duration-level lag-1 never exceeds +0.002 over the
-whole rho grid (`promotion_report.md`, "Two findings the grid was not designed to
-produce"), because successive level crossings of a stationary Gaussian process are very
+durations. They do not: the induced duration-level lag-1, centred by its exchangeable
+mean, is consistent with zero over the whole rho grid (`promotion_report.md`, "Two
+findings the grid was not designed to produce"), because successive level crossings of a stationary Gaussian process are very
 nearly a renewal process. Arm C is kept exactly as briefed since that is a real and
 reportable finding, but Arm E is what actually varies duration dependence, and without it
 criterion 2 could not be scored for C5 or C6 at all.
@@ -68,9 +71,10 @@ more than a nominal 0.25 that fails most of the time.
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import lru_cache
 
 import numpy as np
-from scipy import stats
+from scipy import integrate, stats
 from scipy.signal import lfilter
 from scipy.special import gamma as gamma_fn
 
@@ -83,7 +87,9 @@ ARM_B = "B_iid_reads_carved"
 ARM_C = "C_ar1_reads_carved"
 ARM_D = "D_trp_power_law"
 ARM_E = "E_copula_ar1_durations"
-ARMS = (ARM_A, ARM_B, ARM_C, ARM_D, ARM_E)
+ARM_E2 = "E2_copula_lag2_durations"
+ARM_EL = "EL_copula_ar1_level_shift"
+ARMS = (ARM_A, ARM_B, ARM_C, ARM_D, ARM_E, ARM_E2, ARM_EL)
 
 # Reads per unit of mean duration in the quantised variant of Arms A and D. Chosen to sit
 # in the regime the real data occupies at the 4-7 us thresholds, where 79% of windows are
@@ -366,9 +372,9 @@ def arm_c(
     the occupancy are unchanged. At `rho = 0` this is Arm B with a different random path,
     which is what makes the two comparable as a self-consistency check.
 
-    Read-level `rho` is NOT duration-level dependence. So the runner reports the INDUCED
-    duration-level lag-1 for every cell, and the power curve is read against that, not
-    against `rho`.
+    Read-level `rho` is NOT duration-level dependence. So the runner records C5's uncentred
+    duration-level `r_1` for every cell (`mean_induced_lag1`), and the report and figure
+    read it with its exchangeable mean `-1/N` added back.
     """
     if not -1.0 < rho < 1.0:
         raise ValueError(f"rho must be in (-1, 1); got {rho}")
@@ -391,12 +397,12 @@ def arm_e(
     push those through the Weibull quantile function. The result has EXACTLY Arm A's
     marginal distribution - so at `rho = 0` this arm is Arm A - while `rho` moves the rank
     dependence and nothing else. For a Gaussian copula the induced Spearman correlation is
-    `(6/pi)*arcsin(rho/2)`, which is within 4% of `rho` itself over the grid used here, so
+    `(6/pi)*arcsin(rho/2)`, which is 3.5-4.5% below `rho` itself over the grid used here, so
     the swept parameter is directly comparable to a duration-level lag-1.
 
     **Why this arm exists.** It was not in the plan; Arm C was to be the power arm for
-    C5 and C6. Measurement killed that: read-level AR(1) induces NO positive duration-level
-    dependence at any rho on the grid, because the level crossings of a stationary
+    C5 and C6. Measurement killed that: the duration-level dependence read-level AR(1)
+    induces is consistent with zero at every rho on the grid, because the level crossings of a stationary
     Gaussian process regenerate and successive excursion lengths are very nearly a
     renewal process. Arm C is kept exactly as specified because that null result is worth
     reporting, but without a generator that actually varies duration dependence,
@@ -417,3 +423,116 @@ def arm_e(
         return _truncate_at(gaps, tau), tau
 
     return _direct_segments(n, censoring, build)
+
+
+def lag2_theta(rho: float) -> float:
+    """The MA coefficient at lag 2 whose latent lag-2 correlation is `rho`.
+
+    `w_t = (e_t + theta e_{t-2}) / sqrt(1 + theta^2)` has lag-2 correlation
+    `theta / (1 + theta^2)`, which reaches at most 0.5 in absolute value.
+    """
+    if rho == 0.0:
+        return 0.0
+    if abs(rho) > 0.5:
+        raise ValueError(f"an MA at lag 2 cannot reach correlation {rho}; |rho| <= 0.5")
+    return float((1.0 - np.sqrt(1.0 - 4.0 * rho**2)) / (2.0 * rho))
+
+
+def _latent_lag2(size: int, rho: float, rng: np.random.Generator) -> np.ndarray:
+    theta = lag2_theta(rho)
+    noise = rng.standard_normal(size + 2)
+    return (noise[2:] + theta * noise[:-2]) / np.sqrt(1.0 + theta**2)
+
+
+def arm_e2(
+    n: int,
+    rng: np.random.Generator,
+    *,
+    shape: float = 1.0,
+    rho: float = 0.0,
+    quantised: bool = False,
+    censoring: float = 0.0,
+) -> list[Segment]:
+    """Arm E with the latent dependence at lag 2 only.
+
+    Same Weibull marginal, Gaussian copula, truncation and censoring-as-segments as
+    `arm_e`; the latent process is a unit-variance MA whose only nonzero autocorrelation
+    is `rho` at lag 2. The two durations of a lag-1 pair are independent, but successive
+    lag-1 pairs are linked through lag 2. For `rho > 0`, the only sign on the grid, that
+    inflates the variance of a lag-1 statistic, so a test that reads lag 1 alone still
+    rejects above its size; a negative `rho` shrinks it instead. The dependence itself sits
+    at lag 2.
+    """
+
+    def build(expected: int) -> tuple[np.ndarray, float]:
+        tau = _tau_for(expected, quantised)
+        latent = _latent_lag2(_overdraw(expected), rho, rng)
+        uniforms = stats.norm.cdf(latent)
+        gaps = (-np.log1p(-uniforms)) ** (1.0 / shape) / float(
+            gamma_fn(1.0 + 1.0 / shape)
+        )
+        if quantised:
+            gaps = _quantise(gaps)
+        return _truncate_at(gaps, tau), tau
+
+    return _direct_segments(n, censoring, build)
+
+
+def _shifted_weibull_gaps(latent: np.ndarray, shape: float, delta: float) -> np.ndarray:
+    """`F^-1(Phi(w + delta))` for the unit-mean Weibull `F`, through `norm.logsf`.
+
+    `-log(1 - Phi(x))` is `-norm.logsf(x)`. Writing it as `log1p(-norm.cdf(x))` returns
+    `-inf` once `Phi(x)` rounds to 1, which a shift makes reachable.
+    """
+    return (-stats.norm.logsf(latent + delta)) ** (1.0 / shape) / float(
+        gamma_fn(1.0 + 1.0 / shape)
+    )
+
+
+@lru_cache(maxsize=None)
+def level_shift_mean_gap(shape: float, delta: float) -> float:
+    """`E[F^-1(Phi(W + delta))]` for `W ~ N(0, 1)`, by quadrature; 1 at `delta = 0`."""
+    value, _error = integrate.quad(
+        lambda w: (
+            float(_shifted_weibull_gaps(np.array([w]), shape, delta)[0])
+            * stats.norm.pdf(w)
+        ),
+        -np.inf,
+        np.inf,
+    )
+    return float(value)
+
+
+def arm_el(
+    rng: np.random.Generator,
+    *,
+    events_per_segment: int,
+    shape: float = 1.0,
+    phi: float = 0.0,
+    delta: float = 0.0,
+) -> list[Segment]:
+    """Two segments of Arm E, the second shifted up by `delta` on the latent scale.
+
+    Each segment draws its own stationary latent AR(1, `phi`) and maps it through the
+    copula-Weibull of `arm_e`, with `delta` added to the latent of segment 2 only. Inside a
+    segment the durations are exchangeable when `phi = 0` at every `delta`, so those cells
+    are null cells for every permutation row; `phi != 0` puts dependence of either sign on
+    top of the shift.
+
+    Segment 2's truncation time is `events_per_segment` times its mean gap
+    (`level_shift_mean_gap`), so both segments expect the same number of events: the shift
+    moves segment 2's durations up without thinning it. The loop is local because each
+    segment needs its own shift, which `_direct_segments` has no way to pass.
+    """
+    segments: list[Segment] = []
+    for shift in (0.0, float(delta)):
+        tau = float(events_per_segment) * level_shift_mean_gap(shape, shift)
+        latent = _stationary_ar1(_overdraw(events_per_segment), phi, rng)
+        gaps = _truncate_at(_shifted_weibull_gaps(latent, shape, shift), tau)
+        if len(gaps) < MIN_EVENTS_PER_SEGMENT:
+            raise ValueError(
+                f"a level-shift segment kept {len(gaps)} events at delta={shift}; "
+                f"the arm needs {MIN_EVENTS_PER_SEGMENT} in each"
+            )
+        segments.append(Segment(x=gaps, tau=tau, n_censored_dropped=1))
+    return segments

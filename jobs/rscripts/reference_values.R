@@ -146,6 +146,14 @@ add_value("durations_iid", "lag1_rank_autocorr",
 bt <- randtests::bartels.rank.test(durations)
 add_value("durations_iid", "bartels_statistic", unname(bt$statistic))
 add_value("durations_iid", "bartels_p_value", bt$p.value)
+# Lags 1-5 of `acf` on the ranks: one fully centred denominator shared by every lag, the
+# form `_rank_serial.autocorrelations` computes and C5 and C6 read. The Ljung-Box value is
+# context, like Bartels: it is not centred at the null means and weights each lag by
+# n(n+2)/(n-h), so it is not C6's statistic.
+acf_iid <- acf(rank(durations), lag.max = 5, plot = FALSE)$acf[2:6]
+for (h in 1:5) add_value("durations_iid", paste0("acf_rank_lag", h), acf_iid[h])
+add_value("durations_iid", "ljung_box_rank_lag5",
+          unname(Box.test(rank(durations), lag = 5, type = "Ljung-Box")$statistic))
 
 # A trended series, so the same instruments are pinned somewhere they should react.
 set.seed(606)
@@ -157,6 +165,10 @@ add_value("durations_trend", "lag1_rank_autocorr",
 bt2 <- randtests::bartels.rank.test(durations_trend)
 add_value("durations_trend", "bartels_statistic", unname(bt2$statistic))
 add_value("durations_trend", "bartels_p_value", bt2$p.value)
+acf_trend <- acf(rank(durations_trend), lag.max = 5, plot = FALSE)$acf[2:6]
+for (h in 1:5) add_value("durations_trend", paste0("acf_rank_lag", h), acf_trend[h])
+add_value("durations_trend", "ljung_box_rank_lag5",
+          unname(Box.test(rank(durations_trend), lag = 5, type = "Ljung-Box")$statistic))
 
 # ------------------------------------------------------------------- C3, copula::serialIndepTest
 # Pinned with an explicit simulation seed. The statistic is seed-invariant; the p-value is

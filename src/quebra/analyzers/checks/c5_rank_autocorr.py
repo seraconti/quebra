@@ -10,22 +10,43 @@ nothing else, the max picks it up at full strength while a portmanteau (C6) dilu
 across every lag it also looked at. The two are shipped as a pair for that reason, not
 as redundancy.
 
-**The unstudentized variant ships alongside, on purpose - and measurement changed what is
-claimed for it.** The expectation was that `max_h |r_h|` would misbehave generally. It does
-not. Because every lag shares one denominator, the per-lag null spreads are nearly
-identical on an ungapped record (SD ratio 1.04 across lags 1-5 at N = 60), so there the
-two variants are near-identical by construction and any bench cell showing them differing
-would indicate a bug rather than a finding.
+**The unstudentized variant runs beside it in the bench, on purpose - and measurement
+changed what is claimed for it.** The expectation was that the SCALE of `max_h |r_h|` would
+misbehave generally. It does not. Because every lag shares one denominator, the per-lag null
+spreads are nearly identical on an ungapped record (SD ratio 1.04 across lags 1-5 at
+N = 60), so there studentizing barely changes any lag's scale. It still moves each lag's
+centre, and that alone separates the two variants on one segment: the unstudentized one is
+uncentred (below). In `jobs/bench/results/power_table.csv` it rejects less often than the
+studentized one in 84 of the 88 Arm E cells where the two differ, and in 63 of 65 on Arm D,
+every one of them a single segment.
 
-Where they genuinely separate is short, numerous segments - the censored and gapped case.
-At 10 segments of 5 the lag pair counts run 40 down to 10, the null SD ratio reaches 1.64,
-and the unstudentized max lands on lag 1 in 43% of replicates against 21-29% once each lag
-is on its own scale. So the studentized form is a safeguard for the multi-process regime,
-not a general-purpose improvement, and shipping both is what lets the bench say which
-regime is which instead of taking the claim on trust.
+Where their SCALES genuinely separate is short, numerous segments - the censored and gapped
+case. At 10 segments of 5 the lag pair counts run 40 down to 10, the null SD ratio reaches
+1.64, and the unstudentized max lands on lag 1 in 43% of replicates against 21-29% once each
+lag is on its own scale. So the scaling half of studentizing is a safeguard for the
+multi-process regime, and the centring half matters on every record; running both variants
+in the bench is what lets it say which is which instead of taking the claim on trust.
 
 Both variants read the SAME permutation ensemble, so their difference in any bench cell is
 a paired difference and its Monte Carlo error is smaller than that of two independent runs.
+
+**The unstudentized variant is also uncentred, which is why it runs only in the bench.**
+Under exchangeability `r_h` does not average zero. On one segment its mean is
+`-(n - h)/(n(n - 1))`, which is `-1/n` at lag 1 (Dufour and Roy 1985, Eq. (2.2), p. 260).
+On segments at different levels every within-segment product leans positive, so the mean
+moves up by an amount that grows with the difference in level; the closed form is
+pinned by `tests/test_checks_statistics.py::test_the_gapped_null_mean_is_the_closed_form`.
+`max_h |r_h|` then leans as an uncentred sum does: dependence of one sign is inflated and
+the other deflated. Permutation calibration keeps its size exact, so what the offset
+distorts is power, in a direction set by the sign of the dependence. It is the bench's
+measure of what studentizing buys, and nothing else: `battery.run_battery` computes it
+only with `include_c5_raw=True`, which the bench passes, so no ledger, survey or band
+carries it.
+
+`extra["r_lag1"]` is the same uncentred `r_1` of the observed record, with the same
+offsets: about `-1/n` on one segment, and the level effect across gaps. Its sign is not the
+direction of the dependence. Read that from the sign of `z_1`, which C6 reports in
+`extra["z"]`.
 """
 
 from __future__ import annotations
@@ -123,8 +144,9 @@ def run(
         extra={
             "lags": list(layout.lags),
             "n_pairs_per_lag": list(layout.n_pairs),
-            # The raw lag-1 autocorrelation, kept because the bench reports the INDUCED
-            # duration-level dependence of every cell, and this is that number.
+            # The uncentred lag-1 autocorrelation, which the bench averages into
+            # `mean_induced_lag1`. It carries the null offset in the module docstring, so
+            # its sign is not the direction of the dependence.
             "r_lag1": float(observed_r[0]),
         },
     )

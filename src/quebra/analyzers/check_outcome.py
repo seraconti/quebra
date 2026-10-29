@@ -40,12 +40,12 @@ from quebra.core._artifact_guard import StaleArtifactGuard
 
 RowKey = tuple[str, str, str]
 
-# Everything selectable: the nine rows the bench scores, plus C3.
+# Everything selectable: the eight rows of `battery.ROW_KEYS`, plus C3.
 ALL_KEYS: tuple[RowKey, ...] = tuple(SURVEY_KEYS)
 
 # The rows `include_tau_checks=False` drops. MEASURED by running the battery both ways on a
 # single well-posed segment, not transcribed from the flag's docstring: the three asymptotic
-# rows plus C1's and C2's permutation rows, five of nine. CvM's PERMUTATION row survives,
+# rows plus C1's and C2's permutation rows, five of eight. CvM's PERMUTATION row survives,
 # which is easy to get wrong from prose alone because its asymptotic sibling does not.
 TAU_DEPENDENT_KEYS: frozenset[RowKey] = frozenset(
     {

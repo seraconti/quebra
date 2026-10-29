@@ -31,6 +31,11 @@ import pandas as pd
 import pytest
 from scipy.stats import rankdata, spearmanr
 
+from quebra.analyzers.checks._rank_serial import (
+    autocorrelations,
+    global_ranks,
+    lag_layout,
+)
 from quebra.analyzers.shape_stats import chatterjee_xi, dcor
 from tests.fixtures import R_REFERENCE_INPUTS, R_REFERENCE_VALUES
 
@@ -214,18 +219,38 @@ def test_the_three_statistics_disagree_where_they_should():
 
 @pytest.mark.parametrize("case", ["durations_iid", "durations_trend"])
 def test_lag1_rank_autocorrelation_matches_r(case):
-    """The quantity C5 is built on, isolated from C5's max-over-lags aggregation.
+    """Oracle: R's `cor` on the two lagged rank vectors, via r_reference_values.csv.
 
-    Cross-checking C5's own statistic against `randtests::bartels.rank.test` would be an
-    apples-to-oranges comparison and is NOT done here: Bartels is the rank von Neumann
-    RATIO, a different functional of the same ranks, and our C5 is a studentized maximum
-    over lags. What the two genuinely share is the lag-1 rank autocorrelation, so that is
-    what is pinned. The Bartels values are in the fixture as context, not as a target.
+    This pins scipy and numpy against R on a Pearson correlation of the overlapping pairs,
+    each side centred and scaled by its own moments. It calls no quebra function, and it is
+    NOT the quantity C5 and C6 read: those divide every lag by the full centred sum of
+    squares, R's `acf` form, which `test_rank_autocorrelations_match_r_acf_at_lags_1_to_5`
+    pins. Bartels is the rank von Neumann RATIO, a different functional again, so its values
+    are in the fixture as context, not as a target.
     """
     durations, _ = r_inputs(case)
     ranks = rankdata(durations)
     ours = float(np.corrcoef(ranks[:-1], ranks[1:])[0, 1])
     assert ours == pytest.approx(r_value(case, "lag1_rank_autocorr"), abs=1e-9)
+
+
+@pytest.mark.parametrize("case", ["durations_iid", "durations_trend"])
+def test_rank_autocorrelations_match_r_acf_at_lags_1_to_5(case):
+    """Oracle: R's `stats::acf` of the ranks, lags 1-5, via r_reference_values.csv.
+
+    `_rank_serial.autocorrelations` is the quantity C5 and C6 are built on, and on one
+    segment it is `acf` exactly: centred by the full mean, every lag over the one full
+    centred sum of squares. Both series have no gaps and no ties, so this pins the
+    per-lag values only. The studentization, the max and the sum, and the pairing across
+    gaps are not pinned here.
+    """
+    durations, _ = r_inputs(case)
+    # Five lags because the fixture holds five (`lag.max = 5` in the R script).
+    layout = lag_layout([len(durations)], 5)
+    assert layout.lags == (1, 2, 3, 4, 5)
+    ours = autocorrelations(global_ranks(durations), layout)[0]
+    reference = np.array([r_value(case, f"acf_rank_lag{h}") for h in layout.lags])
+    np.testing.assert_allclose(ours, reference, rtol=0.0, atol=1e-12)
 
 
 def test_the_c3_reference_is_pinned_with_its_simulation_seed():

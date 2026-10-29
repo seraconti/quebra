@@ -7,12 +7,13 @@ reader who took any single ledger row at face value.
 
 This is the binding one. Power depends on how strong the dependence is, and the bench
 sweeps it: Arm E, `rho` 0.05-0.5, inducing a duration-level lag-1 from about 0 to 0.48.
-Averaged over that grid (`jobs/bench/results/power_table.csv`, arm=E_copula_ar1_durations, mean over `rho` and shape), C5 and C6 have:
+Averaged over that grid (`jobs/bench/results/power_table.csv`, arm=E_copula_ar1_durations, mean over `rho` and shape), C5 and C6 have
+the power below.
 
 | n | 20 | 35 | 50 | 75 | 100 | 355 | 500 | 700 | 1000 |
 |---|---|---|---|---|---|---|---|---|---|
 | C5 studentized | 0.106 | 0.174 | 0.236 | 0.307 | 0.357 | 0.626 | 0.691 | 0.750 | 0.804 |
-| C6 | 0.087 | 0.153 | 0.208 | 0.285 | 0.332 | 0.599 | 0.670 | 0.729 | 0.788 |
+| C6 | 0.097 | 0.166 | 0.220 | 0.295 | 0.343 | 0.605 | 0.674 | 0.732 | 0.791 |
 
 Below n = 100 neither exceeds 0.5 except at the strongest grid point, `rho` = 0.5
 (`promotion_report.md`, "Power across the dependence grid"). So below n = 100 a
@@ -21,7 +22,7 @@ the dependence is strong. A REJECTION is meaningful, because the checks are corr
 silence that carries no information.
 
 `analyzers/check_ledger.py` enforces this: a `pass` requires the p-value AND a sufficient
-event count AND that the bench found the check calibrated at that count. On the 070423 record of qubit 1, 49 of its 63 non-rejections read
+event count AND that the bench found the check calibrated at that count. On the 070423 record of qubit 1, 44 of its 56 non-rejections read
 `underpowered` or `not interpretable (ties)`, and would have printed `pass` under a p-value-only
 rule (`jobs/active/check_ledger_6d2s_q1.py`, its `q1_070423_check_ledger_data`).
 
@@ -107,3 +108,30 @@ would this check do on a record of this shape and size", not "what is this recor
 The one place that gap is visible: after segments began splitting at read gaps, the real
 record moved into an m > 1 regime that the bench measured only OUTSIDE its censoring
 envelope. That regime has no in-envelope bench support.
+
+## 9. A level difference between segments is part of the null
+
+Every permutation-based row (C1, C2 and CvM by permutation, C5, C6) reshuffles durations
+only inside a segment, because moving one across a gap would break the exactness of the
+test (`analyzers/checks/_permutation.py`). So none of them can see a record whose segments
+differ only in level: at any size of shift, such a record is rejected no more often than
+the nominal size. A shift between segments is part of the null these rows test, so a
+non-rejection says nothing about whether the segments share a level.
+
+## 10. C5's unstudentized row and `r_lag1` are uncentred
+
+Under exchangeability the rank autocorrelation `r_h` does not average zero. On one segment its
+mean is `-(n - h)/(n(n - 1))`, which is `-1/n` at lag 1 (Dufour and Roy 1985, Eq. (2.2),
+p. 260). On segments at different levels every within-segment product leans positive, so the
+mean moves up by an amount that grows with the difference in level.
+
+C6 and C5's studentized row centre each lag at its own permutation mean, so the offset does not
+reach them. C5's unstudentized row, `max_h |r_h|`, is not centred, and it leans as an uncentred
+sum does: dependence of one sign is inflated and the other deflated. Its size stays exact, so
+what the offset distorts is power, in a direction set by the sign of the dependence. It runs
+only in the bench, as its measure of what studentizing buys: the pipeline's battery leaves it
+out, so no ledger, survey or band carries it (`battery.BENCH_ROW_KEYS`).
+
+C5's `extra["r_lag1"]`, and the bench's `mean_induced_lag1` that averages it, carry the same
+offset: about `-1/n` on one segment, and the level effect across gaps. Neither gives the
+direction of a dependence. The sign of `z_1` in C6's `extra["z"]` does.

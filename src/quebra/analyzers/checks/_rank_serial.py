@@ -27,11 +27,13 @@ observations means more noise. Measured null SD per lag:
     one segment of 60      lags 1-5, pairs 59..55   SD 0.1269..0.1224   ratio 1.04
     10 segments of 5       lags 1-4, pairs 40..10   SD 0.0985..0.0600   ratio 1.64
 
-So on an ungapped record studentization is very nearly a no-op, and the two C5 variants
-should agree. It bites when segments are short and numerous - the censored/gapped case -
-where an unstudentized `max_h |r_h|` picks lag 1 in 43% of replicates against 21-29% once
-each lag is put on its own scale. Shipping both variants is what turns that from a claim
-into a number the bench reports.
+So on an ungapped record studentization barely changes the scale of a lag. It still moves
+its centre, since `r_h` does not average zero under exchangeability (`c5_rank_autocorr`), so
+the two C5 variants differ even there. The scale bites when segments are short and numerous,
+the censored or gapped case, where an unstudentized `max_h |r_h|` picks lag 1 in 43% of
+replicates against 21-29% once each lag is put on its own scale. Running both variants in
+the bench is what turns that from a claim into a number it reports; the pipeline's battery
+runs only the studentized one.
 
 The moments are computed from the observed value TOGETHER WITH the permutations, not from
 the permutations alone: that makes the scaling a symmetric function of the augmented
@@ -48,10 +50,18 @@ from scipy import stats
 
 # Cap on the number of lags. Beyond a handful of lags the pair count collapses and each
 # extra coordinate costs power in the max/portmanteau without plausibly carrying signal.
+# Ljung and Box (1978, Sect. 4.3, p. 302) found a smaller lag count gave their portmanteau
+# more power "for this particular alternative"; not shown in general.
 MAX_LAG_CAP = 5
 
 # A lag needs at least this many within-segment pairs to be included at all.
 MIN_PAIRS_PER_LAG = 2
+
+# A lag whose range across the augmented sample is at most this has no spread. On midranks
+# every product in the numerator of `r_h` is a multiple of 1/4 and sums exactly, so a range
+# is either exactly zero or at least 3 / (N (N^2 - 1)): 3.0e-9 at N = 1000, and above 1e-12
+# up to N = 14,400.
+ZERO_SPREAD_TOL = 1e-12
 
 
 @dataclass(frozen=True)
@@ -123,8 +133,8 @@ def autocorrelations(rank_matrix: np.ndarray, layout: LagLayout) -> np.ndarray:
 
     Returns `(rows, n_lags)`. The denominator is the FULL centred sum of squares, shared
     by every lag, so the values are comparable across lags in the usual autocorrelation
-    sense; the pair-count differences between lags are then handled by studentization
-    (C5) or by explicit weighting (C6).
+    sense; the pair-count differences between lags, and each lag's null mean, are then
+    handled by studentization, which C6 and C5's studentized variant share.
     """
     rank_matrix = np.atleast_2d(np.asarray(rank_matrix, dtype=float))
     centred = rank_matrix - rank_matrix.mean(axis=1, keepdims=True)
@@ -146,6 +156,10 @@ def studentize(observed: np.ndarray, null: np.ndarray) -> tuple[np.ndarray, np.n
     row and the studentized null matrix. Pooling the observed row into the moments is
     what makes the transformation symmetric across the augmented sample - see the module
     docstring.
+
+    Raises when a lag's range across the augmented sample is at most `ZERO_SPREAD_TOL`.
+    The range of equal values is exactly zero, while their standard deviation can round
+    to a small positive number, which would scale every `z_h` at that lag to +/-1.
     """
     observed = np.asarray(observed, dtype=float).reshape(1, -1)
     null = np.asarray(null, dtype=float)
@@ -155,12 +169,13 @@ def studentize(observed: np.ndarray, null: np.ndarray) -> tuple[np.ndarray, np.n
             f"{null.shape[1]}"
         )
     augmented = np.vstack([observed, null])
+    if np.any(np.ptp(augmented, axis=0) <= ZERO_SPREAD_TOL):
+        raise ValueError(
+            "a lag has no spread across the permutation ensemble, so it cannot be "
+            "studentized. Every permutation gave the same autocorrelation at that lag, "
+            "as it does when every segment holds two events, or every segment that pairs "
+            "at that lag is constant inside."
+        )
     centre = augmented.mean(axis=0, keepdims=True)
     scale = augmented.std(axis=0, keepdims=True)
-    if np.any(scale <= 0.0):
-        raise ValueError(
-            "a lag has zero spread across the permutation ensemble, so it cannot be "
-            "studentized. Every permutation gave the same autocorrelation at that lag, "
-            "which means the duration vector is effectively constant."
-        )
     return ((observed - centre) / scale)[0], (null - centre) / scale
