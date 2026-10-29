@@ -189,10 +189,70 @@ def band_edges(obs: ObservedReads) -> tuple[float, float]:
     return 1.0 / obs.median_spacing_s, 1.0 / (2.0 * obs.median_spacing_s)
 
 
-def window_at_first_alias(obs: ObservedReads) -> float:
-    """Q1.1: W(f_s), the spectral window at the first alias frequency."""
+@dataclass(frozen=True, slots=True)
+class WindowBandMax:
+    window_band_max: float
+    # Where the maximum lies, as f* / f_s.
+    window_band_peak_over_fs: float
+
+
+def window_band_maximum(obs: ObservedReads) -> WindowBandMax:
+    """Q1.1: the largest W(f) over f_s/2 <= f <= 3 f_s/2, and where it lies, as f*/f_s.
+
+    The band is the first harmonic's cell: it runs halfway to the neighbouring harmonics 0
+    and 2 f_s, ends included. Its lower end is the Nyquist frequency f_e = f_s/2, far above
+    the main lobe at 0, which is about 1/T wide. A peak of W in the cell is a frequency above
+    the band edge that can fold onto the band. W(f_s) alone is not enough: on a schedule close to a lattice at a rate
+    a little off f_s, W has a peak about 1/T wide beside f_s, and the single ordinate reads
+    its tail. f_s = 1/Delta_bar only sets the cell.
+
+    The grid is uniform, with step f_s / (2 ceil(2 T f_s)) <= 1/(4T), T the record's span,
+    and both of the cell's ends are grid points. The number of steps is even, so f_s itself
+    is the middle grid point, whatever the rounding of T f_s. Every frequency in the cell
+    lies within half a step, 1/(8T), of a grid point, where a 1/T-wide peak keeps
+    sinc^2(1/8) = 0.9496 of its height on many reads (0.94 on ten): about 95%. Any peak whose
+    phasors all align keeps at least cos^2(pi/8) = 0.85 there, since 1/(8T) moves every
+    read's phase by at most pi/8 about the span's centre. The cost is about N times
+    4 f_s T complex exponentials, small for the record sizes here.
+
+    With read times that have no structure, the band maximum is still above zero, of order
+    (ln M)/N, where N is the number of reads and M = f_s T is the number of independent
+    frequencies in the band. It is a scale for reading the value, not a threshold, and
+    nothing is decided on it.
+
+    Validity assumptions:
+
+    - Assumption: W depends on the read times only, every read counted, repeated times
+      included.
+      Diagnostic: not applicable; `spectrum.spectral_window` reads nothing else.
+      Consequence of violation: not applicable.
+      Reference: `spectrum.spectral_window`.
+    - Assumption: the schedule's rate lies inside the cell, between f_s/2 and 3 f_s/2, so
+      the cell holds its alias peak.
+      Diagnostic: none shipped; W at 2 f_s, or the next cell's maximum, would show it.
+      Consequence of violation: a schedule whose rate is under half or over 1.5 times
+      1/Delta_bar has its alias peak outside the cell, and the maximum reads a lesser one,
+      at an ordinary-looking f*/f_s: reads on a 10 s lattice with two thirds of the
+      spacings 20 s have W(2 f_s) = 1 and a band maximum near the noise.
+      Reference: no source located.
+    - Assumption: a peak of W is about 1/T wide or wider, which the grid step relies on.
+      Diagnostic: none shipped.
+      Consequence of violation: reads in a few bursts far apart make W oscillate on the
+      scale 1/T, with narrower peaks; two equal bursts at the ends of the span reach the
+      floor, a grid point reading cos^2(pi/8) = 0.85 of a peak.
+      Reference: no source located.
+    """
     first_alias_hz, _ = band_edges(obs)
-    return float(spectrum.spectral_window(obs.t_rel_s, first_alias_hz)[0])
+    t = obs.t_rel_s
+    n_steps = 2 * math.ceil(2.0 * float(t[-1] - t[0]) * first_alias_hz)
+    # f / f_s, from 1/2 to 3/2 inclusive; the middle point, n_steps / 2, is exactly 1.
+    over_fs = 0.5 + np.arange(0, n_steps + 1) / n_steps
+    w = spectrum.spectral_window(t, first_alias_hz * over_fs)
+    peak = int(np.argmax(w))
+    return WindowBandMax(
+        window_band_max=float(w[peak]),
+        window_band_peak_over_fs=float(over_fs[peak]),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -893,7 +953,12 @@ METRIC_GROUPS: dict[str, tuple[str, ...]] = {
         "mean_spacing_s",
         "spacing_cv",
     ),
-    "window": ("first_alias_hz", "band_edge_hz", "spectral_window_at_first_alias"),
+    "window": (
+        "first_alias_hz",
+        "band_edge_hz",
+        "window_band_max",
+        "window_band_peak_over_fs",
+    ),
     "spectrum": ("spectrum_frequency_hz", "spectrum_per_hz", "edge_level_per_hz"),
     "noise_floor": ("noise_floor_per_hz", "edge_noise_ratio"),
     "second_difference": (
@@ -1034,7 +1099,8 @@ class MetricTellability(StaleArtifactGuard):
     spacing_cv: float | None
     first_alias_hz: float | None
     band_edge_hz: float | None
-    spectral_window_at_first_alias: float | None
+    window_band_max: float | None
+    window_band_peak_over_fs: float | None
     spectrum_frequency_hz: np.ndarray | None
     spectrum_per_hz: np.ndarray | None
     edge_level_per_hz: float | None
@@ -1230,8 +1296,7 @@ def _metric_rows(
         return _attempt(st, group, compute)
 
     spacing = _attempt(st, "spacing", lambda: spacing_row(obs))
-    edges = _attempt(st, "window", lambda: band_edges(obs))
-    window = window_at_first_alias(obs) if edges is not None else None
+    window = _attempt(st, "window", lambda: (band_edges(obs), window_band_maximum(obs)))
     rows = _attempt(st, "spectrum", lambda: spectrum_rows(obs))
     if rows is None:
         # A sigma row says first that it has no sigma, and only then that it has no spectrum.
@@ -1273,9 +1338,10 @@ def _metric_rows(
         effective_spacing_s=spacing.effective_spacing_s if spacing else None,
         mean_spacing_s=spacing.mean_spacing_s if spacing else None,
         spacing_cv=spacing.spacing_cv if spacing else None,
-        first_alias_hz=edges[0] if edges else None,
-        band_edge_hz=edges[1] if edges else None,
-        spectral_window_at_first_alias=window,
+        first_alias_hz=window[0][0] if window else None,
+        band_edge_hz=window[0][1] if window else None,
+        window_band_max=window[1].window_band_max if window else None,
+        window_band_peak_over_fs=window[1].window_band_peak_over_fs if window else None,
         spectrum_frequency_hz=rows.frequency_hz if rows else None,
         spectrum_per_hz=rows.spectrum_per_hz if rows else None,
         edge_level_per_hz=rows.edge_level_per_hz if rows else None,

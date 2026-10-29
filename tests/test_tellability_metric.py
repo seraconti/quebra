@@ -4,7 +4,13 @@ the clipped fraction.
 Oracles:
 - arithmetic on hand-built read times: the effective spacing sum(delta^2) / sum(delta) is
   the spacing on a regular grid and 550 / 19 s on seven 10 s and three 40 s spacings;
-- analytic: the spectral window is 1 at the first alias of a perfect lattice;
+- analytic: the band maximum of the spectral window is 1, at f_s, on a perfect lattice, and f_s
+  is a grid point whatever the span; on a jittered lattice W at the lattice rate averages the
+  jitter's characteristic function squared, and the band maximum 0.983 of it, the mean of
+  sinc^2 over an offset within half a grid step; an alias at 2 f_s and the main lobe at 0 lie
+  outside the cell, and an alias exactly on its lower end, f_s / 2, is read there;
+- constructed truth: on reads near a lattice at a rate off f_s, the band maximum finds the peak
+  beside f_s that W(f_s) misses;
 - simulation truth: white noise whose per-read sigma is known gives a noise floor equal to
   the edge level (four times it when sigma is reported twice too large), a linear trend plus
   white noise gives a second-difference scale equal to sigma, and the second-difference
@@ -64,10 +70,123 @@ def test_the_effective_spacing_is_length_biased() -> None:
 
 
 @pytest.mark.unit
-def test_the_window_at_the_first_alias_is_one_on_a_lattice() -> None:
-    """Oracle: analytic. f_s = 1 / Delta_bar is an alias of a perfect lattice."""
-    t = np.arange(300) * 24.0
-    assert tl.window_at_first_alias(_obs(t, np.ones(t.size))) == pytest.approx(1.0)
+def test_the_window_band_maximum_is_one_at_f_s_on_a_lattice() -> None:
+    """Oracle: analytic. f_s = 1 / Delta_bar is an alias of a perfect lattice, where W is 1.
+    At 0.1 s, 4 T f_s rounds to 1196.0000000000018, which an odd step count would put half a
+    step off f_s."""
+    for spacing_s in (24.0, 0.1):
+        t = np.arange(300) * spacing_s
+        band = tl.window_band_maximum(_obs(t, np.ones(t.size)))
+        assert band.window_band_max == pytest.approx(1.0), spacing_s
+        assert band.window_band_peak_over_fs == 1.0, spacing_s
+
+
+@pytest.mark.unit
+def test_f_s_is_a_grid_point_when_the_span_is_not_a_multiple_of_the_spacing() -> None:
+    """Oracle: analytic. 501 reads 24 s apart and one more 6 s after the last: the median
+    spacing stays 24 s and the span is 12006 s, 500.25 spacings. The step count is even, so
+    f_s is the middle grid point and the maximum is W(f_s) itself."""
+    t = np.r_[np.arange(501) * 24.0, 500 * 24.0 + 6.0]
+    obs = _obs(t, np.ones(t.size))
+    first_alias, _ = tl.band_edges(obs)
+    band = tl.window_band_maximum(obs)
+    assert band.window_band_peak_over_fs == 1.0
+    assert band.window_band_max == pytest.approx(
+        spectrum.spectral_window(t, first_alias)[0], rel=1e-12
+    )
+
+
+@pytest.mark.statistical
+def test_the_window_band_maximum_of_a_jittered_lattice_reads_its_coherence() -> None:
+    """Oracle: analytic. On t_n = n Delta + N(0, sigma^2), W at the lattice rate 1 / Delta has
+    mean 1/N + (1 - 1/N) exp(-(2 pi sigma / Delta)^2), the jitter's characteristic function
+    squared. The lattice rate is not f_s = 1 / median spacing, so it falls at an offset from
+    the grid that varies with the seed, uniform within half a step, 1/(8T). A 1/T-wide peak
+    read there keeps on average the mean of sinc^2(u) over u in [0, 1/8], 0.983. Over 200
+    seeds, W at the rate agrees with the analytic mean, and the band maximum with 0.983 of
+    it, each within 4 standard errors.
+    """
+    n, delta, sigma, seeds = 500, 24.0, 0.05 * 24.0, 200
+    expected = 1.0 / n + (1.0 - 1.0 / n) * math.exp(
+        -((2.0 * math.pi * sigma / delta) ** 2)
+    )
+    at_rate, band = [], []
+    for seed in range(seeds):
+        rng = np.random.default_rng(seed)
+        t = np.sort(np.arange(n) * delta + rng.normal(0.0, sigma, n))
+        at_rate.append(spectrum.spectral_window(t, 1.0 / delta)[0])
+        band.append(tl.window_band_maximum(_obs(t, np.ones(n))).window_band_max)
+    se_rate = float(np.std(at_rate, ddof=1)) / math.sqrt(seeds)
+    se_band = float(np.std(band, ddof=1)) / math.sqrt(seeds)
+    assert abs(float(np.mean(at_rate)) - expected) <= 4.0 * se_rate
+    u = np.linspace(0.0, 0.125, 100_001)[1:]
+    grid_loss = float(np.mean((np.sin(np.pi * u) / (np.pi * u)) ** 2))
+    assert abs(float(np.mean(band)) - grid_loss * expected) <= 4.0 * se_band
+
+
+@pytest.mark.unit
+def test_the_window_band_maximum_finds_the_peak_beside_f_s() -> None:
+    """Oracle: constructed truth. Nine spacings of 24 s, then one of 28.8 s, repeated: the
+    median spacing is 24 s, but the reads sit close to a lattice at the mean spacing, 24.48
+    s. W(f_s) reads the tail of that lattice's peak; the band maximum finds the peak, at
+    24 / 24.48 of f_s, within one grid step, which is at most 1/(4T)."""
+    steps = np.tile(np.r_[np.full(9, 24.0), 28.8], 50)[:499]
+    t = np.r_[0.0, np.cumsum(steps)]
+    obs = _obs(t, np.ones(t.size))
+    first_alias, _ = tl.band_edges(obs)
+    band = tl.window_band_maximum(obs)
+    max_step_over_fs = 1.0 / (4.0 * (t[-1] - t[0]) * first_alias)
+    assert spectrum.spectral_window(t, first_alias)[0] < 0.01
+    assert band.window_band_max >= 0.5
+    assert abs(band.window_band_peak_over_fs - 24.0 / 24.48) <= max_step_over_fs
+
+
+@pytest.mark.unit
+def test_the_alias_at_twice_f_s_lies_outside_the_cell() -> None:
+    """Oracle: analytic. Reads on a 10 s lattice, two thirds of the spacings 20 s: the median
+    spacing is 20 s, so f_s = 0.05 Hz, and every read is a multiple of 10 s, so W(0.1 Hz) =
+    W(2 f_s) = 1. That alias is the next harmonic's, outside the cell, and the band maximum
+    stays near the noise: the limit the second validity assumption names."""
+    rng = np.random.default_rng(21)
+    steps = rng.choice([10.0, 20.0], size=599, p=[1.0 / 3.0, 2.0 / 3.0])
+    t = np.r_[0.0, np.cumsum(steps)]
+    obs = _obs(t, np.ones(t.size))
+    first_alias, _ = tl.band_edges(obs)
+    assert first_alias == 1.0 / 20.0
+    assert spectrum.spectral_window(t, 2.0 * first_alias)[0] == pytest.approx(1.0)
+    assert tl.window_band_maximum(obs).window_band_max < 0.2
+
+
+@pytest.mark.unit
+def test_the_cell_keeps_the_main_lobe_out() -> None:
+    """Oracle: analytic. W tends to 1 as f tends to 0 for any read times. On 1000 uniform
+    random times nothing else is coherent, so a maximum near 1, or one below f_s / 2, could
+    only come from the main lobe the cell's lower edge excludes."""
+    rng = np.random.default_rng(22)
+    t = np.sort(rng.uniform(0.0, 50_000.0, size=1000))
+    band = tl.window_band_maximum(_obs(t, np.ones(t.size)))
+    assert band.window_band_max < 0.1
+    assert 0.5 < band.window_band_peak_over_fs < 1.5
+
+
+@pytest.mark.unit
+def test_an_alias_on_the_cells_lower_end_is_read_there() -> None:
+    """Oracle: analytic. Alternating 10 s and 30 s spacings: the median spacing is 20 s, so
+    f_s = 0.05 Hz, and the reads repeat every 40 s, so W peaks at 0.025 Hz = f_s / 2, where
+    each pair's two phasors sit a quarter turn apart and W = |1 + e^(-i pi/2)|^2 / 4 = 0.5.
+    The pairs give the same 0.5 at 3 f_s / 2; one last read 35 s after the final pair, in
+    phase with them at f_s / 2 and against them at 3 f_s / 2, makes the lower end the
+    maximum, (300 sqrt(2) + 1)^2 / 601^2 = 0.5007. Both ends belong to the cell."""
+    steps = np.r_[np.tile([10.0, 30.0], 300)[:-1], 35.0]
+    t = np.r_[0.0, np.cumsum(steps)]
+    obs = _obs(t, np.ones(t.size))
+    first_alias, _ = tl.band_edges(obs)
+    assert first_alias == 0.05
+    band = tl.window_band_maximum(obs)
+    assert band.window_band_peak_over_fs == 0.5
+    assert band.window_band_max == pytest.approx(
+        (300.0 * math.sqrt(2.0) + 1.0) ** 2 / 601.0**2, rel=1e-9
+    )
 
 
 @pytest.mark.statistical
@@ -199,9 +318,12 @@ def test_repeated_times_collapse_for_the_spectrum_and_halves_but_not_the_window(
     )
     assert tl.g10_halves(obs) == tl.g10_halves(collapsed)
     first_alias, _ = tl.band_edges(obs)
-    every_read = spectrum.spectral_window(t, first_alias)[0]
-    assert tl.window_at_first_alias(obs) == every_read
-    assert every_read != spectrum.spectral_window(collapsed.t_rel_s, first_alias)[0]
+    band = tl.window_band_maximum(obs)
+    peak_hz = band.window_band_peak_over_fs * first_alias
+    every_read = spectrum.spectral_window(t, peak_hz)[0]
+    assert band.window_band_max == pytest.approx(every_read, rel=1e-9)
+    collapsed_read = spectrum.spectral_window(collapsed.t_rel_s, peak_hz)[0]
+    assert collapsed_read != pytest.approx(every_read, rel=1e-6)
 
 
 @pytest.mark.unit

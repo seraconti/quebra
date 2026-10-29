@@ -2,7 +2,8 @@
 
 Oracles:
 - the spectral window: exactly 1 at the alias frequencies of a perfect lattice, and 1 / N in
-  expectation for scattered read times (N unit phasors with independent phases);
+  expectation for scattered read times (N unit phasors with independent phases); computed in
+  blocks of frequencies, it equals the same window computed in one block;
 - the white level: white noise of variance sigma^2 has the one-sided density 2 sigma^2
   Delta_bar, on a gapped irregular record too (a SCALE test, named as such);
 - a sinusoid peaks in its own frequency bin;
@@ -57,6 +58,21 @@ def test_the_window_is_one_over_n_in_expectation_for_scattered_times() -> None:
         for _ in range(400)
     ]
     assert abs(np.mean(draws) - 1.0) < 0.2
+
+
+@pytest.mark.unit
+def test_the_window_in_blocks_equals_the_window_in_one(monkeypatch) -> None:
+    """Oracle: the window's formula evaluated in one array, here in the test. Blocks of 7
+    frequencies split 40 frequencies over 25 reads into five full blocks and a short one; a
+    budget of 3 elements, under one read's worth, still evaluates one frequency per block.
+    Every value must equal the formula's."""
+    rng = np.random.default_rng(11)
+    t = np.sort(rng.uniform(0.0, 1000.0, size=25))
+    f = np.linspace(0.001, 0.05, 40)
+    whole = np.abs(np.exp(-2j * np.pi * np.outer(f, t)).sum(axis=1)) ** 2 / t.size**2
+    for budget in (7 * t.size + 3, 3):
+        monkeypatch.setattr(sp, "_CHUNK_ELEMENTS", budget)
+        np.testing.assert_array_equal(sp.spectral_window(t, f), whole)
 
 
 @pytest.mark.unit

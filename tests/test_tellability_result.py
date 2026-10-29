@@ -300,6 +300,7 @@ def test_run_reports_what_the_row_functions_give() -> None:
     assert len(obs.segments()) == 2
     spacing = tl.spacing_row(obs)
     first_alias, edge = tl.band_edges(obs)
+    band = tl.window_band_maximum(obs)
     rows = tl.spectrum_rows(obs)
     floor, ratio = tl.noise_floor_ratio(obs, rows, obs.sigma)
     second = tl.second_difference_row(obs)
@@ -312,7 +313,8 @@ def test_run_reports_what_the_row_functions_give() -> None:
         "spacing_cv": spacing.spacing_cv,
         "first_alias_hz": first_alias,
         "band_edge_hz": edge,
-        "spectral_window_at_first_alias": tl.window_at_first_alias(obs),
+        "window_band_max": band.window_band_max,
+        "window_band_peak_over_fs": band.window_band_peak_over_fs,
         "spectrum_frequency_hz": rows.frequency_hz,
         "spectrum_per_hz": rows.spectrum_per_hz,
         "edge_level_per_hz": rows.edge_level_per_hz,

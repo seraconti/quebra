@@ -99,8 +99,9 @@ Notation: the reads are at times `t_1 < ... < t_N`; `Delta_bar` is the median po
 - **First alias frequency** `f_s = 1 / Delta_bar`. **Band edge** `f_e = 1 / (2 Delta_bar)`.
 - **Frequency grid**: the independent frequencies `k / T`, `k = 1, 2, ...`, up to `f_e`.
 - **Spectral window** `W(f) = |sum_n exp(-2 pi i f t_n)|^2 / N^2`. It depends on the read times
-  only. It is 1 at every alias of a perfect lattice and about `1 / N` for scattered times, so
-  `W(f_s)` near 0 means nothing above the band edge can fold onto it.
+  only. It is 1 at every alias of a perfect lattice and about `1 / N` at any one frequency for
+  scattered times. A peak of `W` between `f_s / 2` and `3 f_s / 2` is a frequency above the band
+  edge that can fold onto the band.
 - **Spectrum** `S(f) = 2 Delta_bar P(f)`, with `P` the floating-mean Lomb-Scargle power of the
   values (`scipy.signal.lombscargle`), unweighted. For white noise of variance `sigma^2`, `P`
   averages `sigma^2`, so `S` is the one-sided density `2 sigma^2 Delta_bar`, which integrates to
@@ -127,7 +128,18 @@ Notation: the reads are at times `t_1 < ... < t_N`; `Delta_bar` is the median po
   mean length of the interval a crossing lands in (Sera's L0 specification, section 8.3).
   Beside it, the mean spacing and the CV, with the `1/n` variance, so that `Delta_eff = mean x
   (1 + CV^2)`.
-- **Q1.1** `W(f_s)`.
+- **Q1.1** the band maximum of `W` over `f_s / 2 <= f <= 3 f_s / 2` (`window_band_max`), and
+  where it lies, `f* / f_s` (`window_band_peak_over_fs`). The band is the first harmonic's cell:
+  it runs halfway to the neighbouring harmonics `0` and `2 f_s`, ends included. Its lower end is
+  the Nyquist frequency `f_e`, far above the main lobe at `0`, which is about `1 / T` wide. `W(f_s)` alone is not enough: on a schedule close
+  to a lattice at a rate a little off `f_s`, `W` has a peak about `1 / T` wide beside `f_s`, and
+  the single ordinate reads its tail. The grid is uniform, with a step of at most `1 / (4 T)`;
+  `f_s` and both of the cell's ends are grid points. It keeps about 95% of a `1 / T`-wide peak (`sinc^2(1/8) =
+  0.9496` on many reads), and at least `cos^2(pi/8) = 0.85` of any peak whose phasors all align.
+  With read times that have no structure, the band maximum is still above zero, of order
+  `(ln M) / N`, where `N` is the number of reads and `M = f_s T` is the number of independent
+  frequencies in the band. It is a scale for reading the value, not a threshold, and nothing is
+  decided on it.
 - **Q1.2** `floor / S(f_e)`, with `floor = 2 sigma_bar^2 Delta_bar`, `sigma_bar^2 =
   mean(sigma_i^2)` over the reads with a finite sigma (repeated times collapsed), and `S(f_e)`
   the mean of `S` over the top 10% of the band, `[0.9 f_e, f_e]`. On irregular reads the edge

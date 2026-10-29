@@ -289,10 +289,11 @@ reference values written by `jobs/rscripts/reference_values.R`. It sits beside t
 declare it as a Dataset. `reference_values.R` is never run by the test suite; the fixtures are
 committed so pytest works without R.
 
-`jobs/bench/` holds a TRACKED calibration study for `analyzers/checks/`: five generating arms,
-the real carve via `analyzers/windows.py` primitives, `results/` (`size_table.csv`,
-`power_table.csv`) and `promotion_report.md`. It is a study, not a pipeline layer. NOTHING
-outside `jobs/bench/` may import it; `tests/test_bench_isolation.py` asserts this across every
+`jobs/bench/` holds a TRACKED calibration study for `analyzers/checks/`: seven generating arms
+(A, B, C, D, E, E2, EL), the real carve via `analyzers/windows.py` primitives, `results/`
+(`size_table.csv`, `power_table.csv`, `serial_table.csv`) and `promotion_report.md`. It is a
+study, not a pipeline layer. NOTHING outside `jobs/bench/` may import it;
+`tests/test_bench_isolation.py` asserts this across every
 pipeline package. Figures needing its numbers declare `jobs/bench/results/*.csv` as a Dataset and
 `job.load_df` it, so the dependency runs through provenance instead of around it.
 

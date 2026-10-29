@@ -31,7 +31,8 @@ import math
 import numpy as np
 from scipy.signal import lombscargle
 
-# Frequencies x reads evaluated per call to `lombscargle`, which holds arrays of that size.
+# Frequencies x reads evaluated per call to `lombscargle`, which holds arrays of that size,
+# and per block of the spectral window.
 _CHUNK_ELEMENTS = 4_000_000
 
 
@@ -40,8 +41,10 @@ def spectral_window(
 ) -> np.ndarray:
     """W(f) = |sum_n exp(-2 pi i f t_n)|^2 / N^2 at each frequency.
 
-    Sampling convolves the true spectrum with W. W(f_s) near 0 means nothing above the band
-    edge can fold coherently onto it; W(f_s) near 1 means it could.
+    Sampling convolves the true spectrum with W, so W(f) near 0 means power at f cannot fold
+    coherently, and W(f) near 1 means it could. Whether the first harmonic can fold onto the
+    band is read over its whole cell, f_s/2 <= f <= 3 f_s/2, not at f_s alone
+    (`tellability.window_band_maximum`).
 
     Validity assumptions:
 
@@ -55,10 +58,16 @@ def spectral_window(
     t = np.asarray(t_rel_s, dtype=float)
     if t.ndim != 1 or t.size == 0 or not np.all(np.isfinite(t)):
         raise ValueError("the spectral window needs a 1-D array of finite read times")
-    # A scalar frequency is accepted: `window_at_first_alias` asks for one.
+    # A scalar frequency is accepted.
     f = _check_frequencies(np.atleast_1d(np.asarray(frequency_hz, dtype=float)))
-    phase = np.exp(-2j * np.pi * np.outer(f, t))
-    return np.abs(phase.sum(axis=1)) ** 2 / t.size**2
+    # In chunks of frequencies: one frequencies x reads array over a band of ~4 f_s T
+    # frequencies on the largest record is about 1.5 GB.
+    rows = max(1, _CHUNK_ELEMENTS // t.size)
+    power = np.full(f.size, np.nan)
+    for start in range(0, f.size, rows):
+        phase = np.exp(-2j * np.pi * np.outer(f[start : start + rows], t))
+        power[start : start + rows] = np.abs(phase.sum(axis=1)) ** 2
+    return power / t.size**2
 
 
 def _check_frequencies(f: np.ndarray) -> np.ndarray:
@@ -199,8 +208,8 @@ def g10(frequency_hz: np.ndarray, spectrum: np.ndarray) -> float:
     Validity assumptions:
 
     - Assumption: the periodogram does not move power between frequencies.
-      Diagnostic: none shipped; W(f_s) measures folding from above the band edge, not
-      leakage inside the band.
+      Diagnostic: none shipped; the band maximum of W (Q1.1) measures folding from above the
+      band edge, not leakage inside the band.
       Consequence of violation: on irregular reads, leakage moves G10 up for a spectrum
       that falls across the band, so a small G10 means a red spectrum. A large G10 can be a
       red spectrum read through leakage; on sparse, gappy schedules a red spectrum can read
