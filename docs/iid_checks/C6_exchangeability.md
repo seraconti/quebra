@@ -72,5 +72,5 @@ on HOLD: correctly calibrated across the 144 null cells inside the envelope, wor
 Arm A, in-spec, n = 700, continuous and uncensored (z = -2.98 against 3.58), but with mean
 power 0.343 at n = 100 (`promotion_report.md`, verdicts and size per row). Judged per event
 count, as the ledger judges it, that cell is flagged at n = 700 (z = -2.98 against 2.96 over
-16 cells): conservative, not oversized, and a non-rejection there reads `underpowered`
+16 cells): conservative, not oversized, and a non-rejection there reads `inconclusive`
 (`BENCH.md`, section 5, item 8).

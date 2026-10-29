@@ -31,11 +31,11 @@ from quebra.plots.base import BasePlot
 # The tier vocabulary maps onto the ledger's verdict palette rather than inventing a second
 # one. "absent" reuses `not computed` because that is exactly what it means here - no
 # evidence was gathered - and the ledger already desaturates it so it cannot be misread as
-# a result.
+# a result. "partial" has its own key, in the tone of the ledger's `inconclusive`.
 _TIER_VERDICT_COLOR = {
     TIER_PASS: "pass",
     TIER_FAIL: "fail",
-    TIER_PARTIAL: "underpowered",
+    TIER_PARTIAL: "partial",
     TIER_ABSENT: "not computed",
 }
 
@@ -142,9 +142,7 @@ class PublishedValuesPlot(BasePlot):
             100.0 * r.relative_difference if np.isfinite(r.relative_difference) else 0.0
             for r in rows
         ]
-        colors = [
-            theme.verdict_color("pass" if r.agrees else "underpowered") for r in rows
-        ]
+        colors = [theme.verdict_color("pass" if r.agrees else "partial") for r in rows]
 
         with theme.style_context(style):
             fig, (ax_val, ax_rel) = plt.subplots(

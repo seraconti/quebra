@@ -8,7 +8,7 @@ on the record we happened to look at first?"
 **Coloured by VERDICT, not by p-value.** A p-value heatmap would be the obvious thing and
 would be wrong: on a short window "did not reject" carries no information, and a pale cell
 would read as evidence of independence when it is evidence of nothing. The ledger already
-computes the three-way distinction - `pass`, `fail`, `underpowered`/`not interpretable` -
+computes the three-way distinction - `pass`, `fail`, `inconclusive`/`not interpretable` -
 against the calibration bench, so this reuses that verdict and prints the p inside the cell
 as a secondary detail. That is the whole reason the survey is built on `check_ledger.run`
 rather than on raw check results.
@@ -34,10 +34,10 @@ import pandas as pd
 
 from quebra.analyzers.check_ledger import (
     VERDICT_FAIL,
+    VERDICT_INCONCLUSIVE,
     VERDICT_NOT_COMPUTED,
     VERDICT_PASS,
     VERDICT_TIES,
-    VERDICT_UNDERPOWERED,
 )
 from quebra.analyzers.checks.battery import ROW_KEYS
 
@@ -46,7 +46,7 @@ from quebra.analyzers.checks.battery import ROW_KEYS
 # simulated null. But the SURVEY draws it, because a survey that runs an instrument and
 # then omits it from every figure answers a different question from the one it appears to.
 # The consequence travels with it: C3 is the one grid here with no bench cell behind it, so
-# its `pass` means "did not reject" and cannot mean "and it had the power to".
+# `_verdict` never returns `pass` for it and every C3 non-rejection reads `inconclusive`.
 C3_KEY = ("c3_serial_copula", "r_copula", "")
 
 # What the survey draws: every row the pipeline's battery returns, plus C3.
@@ -112,7 +112,7 @@ CHECK_NULL: dict[tuple[str, str, str], str] = {
 VERDICT_ORDER = (
     VERDICT_PASS,
     VERDICT_FAIL,
-    VERDICT_UNDERPOWERED,
+    VERDICT_INCONCLUSIVE,
     VERDICT_TIES,
     VERDICT_NOT_COMPUTED,
 )
@@ -139,12 +139,12 @@ class InstrumentGrid:
     def rejection_share_of_decided(self) -> float:
         """`fail / (pass + fail)`. The denominator is DECIDED cells, not all cells.
 
-        Dividing by every cell would let an underpowered grid look reassuring: 40 cells with
-        no power and 4 rejections is not "10% rejection", it is "4 of 4 decided cells
+        Dividing by every cell would let a mostly inconclusive grid look reassuring: 36
+        inconclusive cells and 4 rejections is not "10% rejection", it is "4 of 4 decided cells
         rejected". NaN when nothing was decided, which is itself the finding.
 
         ALSO NaN when `pass` never occurred. For an instrument the bench has no cell for,
-        `_verdict` sends every non-rejection to `underpowered`, so `pass` is unreachable and
+        `_verdict` sends every non-rejection to `inconclusive`, so `pass` is unreachable and
         this ratio is 1.0 by construction whenever anything rejected at all. Reporting that
         as a rejection SHARE would put a forced constant where a reader expects a measured
         rate: the shipped C3 grid reads 46 fail, 0 pass, and 1.000 is not a finding about
@@ -324,7 +324,7 @@ def survey_summary(data: IndependenceSurveyData) -> pd.DataFrame:
                 "clock": g.clock,
                 "pass": c[VERDICT_PASS],
                 "fail": c[VERDICT_FAIL],
-                "underpowered": c[VERDICT_UNDERPOWERED],
+                "inconclusive": c[VERDICT_INCONCLUSIVE],
                 "not_interpretable": c[VERDICT_TIES],
                 "not_computed": c[VERDICT_NOT_COMPUTED],
                 "rejection_share_of_decided": g.rejection_share_of_decided,

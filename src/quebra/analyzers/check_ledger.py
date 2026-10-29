@@ -5,7 +5,8 @@ a calibrated check on 355 windows and "this test cannot see anything" from the s
 on 20. So every row carries three things beside the p-value, and a `pass` requires all
 three to hold:
 
-    n_events            enough events for the check to have power
+    n_events            at least min_events_pass events (a policy floor, not a power
+                        threshold)
     bench_size_at_n     the check was calibrated at that event count, per the bench
     tie_fraction        the durations are not so tied that a rank test is meaningless
 
@@ -62,7 +63,7 @@ from quebra.core._artifact_guard import StaleArtifactGuard
 
 VERDICT_PASS = "pass"
 VERDICT_FAIL = "fail"
-VERDICT_UNDERPOWERED = "underpowered"
+VERDICT_INCONCLUSIVE = "inconclusive"
 VERDICT_TIES = "not interpretable (ties)"
 VERDICT_NOT_COMPUTED = "not computed"
 # Not produced by `_verdict` and deliberately NOT in `VERDICTS` below: the ledger never emits
@@ -75,7 +76,7 @@ VERDICT_ABSENT = "no row"
 VERDICTS = (
     VERDICT_PASS,
     VERDICT_FAIL,
-    VERDICT_UNDERPOWERED,
+    VERDICT_INCONCLUSIVE,
     VERDICT_TIES,
     VERDICT_NOT_COMPUTED,
 )
@@ -279,7 +280,12 @@ def _verdict(
     tie_cutoff: int,
     bench_accepted: bool | None,
 ) -> tuple[str, str]:
-    """The verdict and the reason it is not `pass`, in precedence order."""
+    """The verdict and the reason it is not `pass`, in precedence order.
+
+    Neither `pass` nor `inconclusive` measures power. How much a `pass` excludes is read
+    from the bench's power table (`jobs/bench/results/power_table.csv`) at the row's
+    `bench_n_target`, the nearest grid n, and only against the bench's own alternatives.
+    """
     if result.p_value is None:
         return VERDICT_NOT_COMPUTED, result.notes
     if result.check in TIE_SENSITIVE_CHECKS and n_distinct < tie_cutoff:
@@ -292,7 +298,7 @@ def _verdict(
         # note carries that even when the verdict does not.
         #
         # BOTH calibration states are named here, not just one. The non-rejection branch
-        # below demotes `bench_accepted is None` to `underpowered` because a non-rejection
+        # below demotes `bench_accepted is None` to `inconclusive` because a non-rejection
         # from a check of unknown size is not evidence for the null. The same is true of a
         # rejection: with no bench cell there is no measured level, so `p <= alpha` does not
         # mean the test rejects at alpha. The verdict stays `fail` because the statistic did
@@ -316,7 +322,7 @@ def _verdict(
         unmet.append("no bench cell for this check at this event count")
     if unmet:
         # A non-rejection that cannot be read as evidence for the null.
-        return VERDICT_UNDERPOWERED, "; ".join(unmet)
+        return VERDICT_INCONCLUSIVE, "; ".join(unmet)
     return VERDICT_PASS, ""
 
 

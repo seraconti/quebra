@@ -21,8 +21,8 @@ import pytest
 
 from quebra.analyzers.check_ledger import (
     VERDICT_FAIL,
+    VERDICT_INCONCLUSIVE,
     VERDICT_PASS,
-    VERDICT_UNDERPOWERED,
 )
 from quebra.analyzers.checks.battery import ROW_KEYS
 from quebra.analyzers.independence_survey import (
@@ -159,7 +159,7 @@ def test_the_km_job_scores_on_the_ledger_knobs_with_a_seed_of_its_own():
     """`km_with_checks_6d2s` scores records the ledger jobs also score.
 
     Its verdict knobs must equal `LEDGER_KNOBS`, or one record could read `pass` in one
-    figure and `underpowered` in the other. Its seed must differ: a shared permutation seed
+    figure and `inconclusive` in the other. Its seed must differ: a shared permutation seed
     makes the two jobs' Monte Carlo error identical, so a p-value near alpha would land the
     same way in both and read as corroboration when it is one draw counted twice.
     """
@@ -424,11 +424,11 @@ def test_threshold_order_follows_the_ladder_not_alphabetical_sort():
 def test_rejection_share_divides_by_DECIDED_cells_not_by_every_cell():
     """The claim CLAUDE.md's aggregation rule is about: state what the denominator is.
 
-    A grid of 2 rejections and 38 powerless cells is "2 of 2 decided cells rejected", not
+    A grid of 2 rejections and 38 inconclusive cells is "2 of 2 decided cells rejected", not
     "5% rejection". The second reads as reassurance and is not a rate of anything.
     """
     verdicts = pd.DataFrame(
-        [[VERDICT_FAIL, VERDICT_UNDERPOWERED], [VERDICT_UNDERPOWERED, VERDICT_PASS]]
+        [[VERDICT_FAIL, VERDICT_INCONCLUSIVE], [VERDICT_INCONCLUSIVE, VERDICT_PASS]]
     )
     grid = InstrumentGrid(
         key=ROW_KEYS[0],
@@ -439,13 +439,13 @@ def test_rejection_share_divides_by_DECIDED_cells_not_by_every_cell():
         p_values=verdicts,
         n_events=verdicts,
     )
-    assert grid.counts[VERDICT_UNDERPOWERED] == 2
+    assert grid.counts[VERDICT_INCONCLUSIVE] == 2
     assert grid.rejection_share_of_decided == pytest.approx(0.5)
 
 
 def test_a_grid_with_nothing_decided_reports_nan_not_zero():
     """Zero would read as 'nothing rejected', which is not what 'nothing was decided' means."""
-    verdicts = pd.DataFrame([[VERDICT_UNDERPOWERED, VERDICT_UNDERPOWERED]])
+    verdicts = pd.DataFrame([[VERDICT_INCONCLUSIVE, VERDICT_INCONCLUSIVE]])
     grid = InstrumentGrid(
         key=ROW_KEYS[0],
         label="x",
@@ -458,7 +458,11 @@ def test_a_grid_with_nothing_decided_reports_nan_not_zero():
     assert np.isnan(grid.rejection_share_of_decided)
 
 
-def test_the_summary_has_one_row_per_grid():
+def test_the_summary_has_one_row_per_grid_and_one_count_per_verdict():
     a = _fake_ledger("A", {"1 µs": VERDICT_PASS})
     data = build_independence_survey(a, dataset_labels=("A",))
-    assert len(survey_summary(data)) == len(data.grids)
+    summary = survey_summary(data)
+    assert len(summary) == len(data.grids)
+    assert {"pass", "fail", "inconclusive", "not_interpretable", "not_computed"} <= set(
+        summary.columns
+    )

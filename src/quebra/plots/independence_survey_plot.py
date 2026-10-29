@@ -92,12 +92,13 @@ class _InstrumentSurveyPlot(BasePlot):
                 0.5,
                 0.035,
                 f"This instrument {first.null_statement}. A red cell is a statement about "
-                f"the DATA, not a failed test. Grey cells carry no information - a "
-                f"non-rejection on too few events is not evidence of independence. "
+                f"the DATA, not a failed test. Pale cells carry no information: an "
+                f"inconclusive non-rejection (too few events, a size the bench found "
+                f"wrong, or no bench cell) is not evidence of independence. "
                 f"{'; '.join(decided)}. "
                 + (
-                    "C3 has NO bench cell, so a green cell here means 'did not reject' "
-                    "and cannot mean 'and it had the power to' - unlike every other "
+                    "C3 has NO bench cell, so it never reads pass: every C3 "
+                    "non-rejection here is inconclusive - unlike every other "
                     "instrument in this survey."
                     if first.key[0] == "c3_serial_copula"
                     else "Every instrument here except C3 is scored against a measured "

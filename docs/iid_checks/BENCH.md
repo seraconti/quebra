@@ -86,7 +86,7 @@ still be accepted is 0.05 +/- 0.011, 0.013, 0.014 and 0.014 respectively
     n or has no cell for it;
   - a non-rejection is `pass` only if the record has at least `min_events_pass` events
     (35 by default, `CheckLedgerInputs`) AND the bench accepted the check at that n;
-  - otherwise it is `underpowered`.
+  - otherwise it is `inconclusive`.
 
 **The figures.** `jobs/active/check_calibration.py` declares both tables as Datasets and draws
 `calibration_summary.size_vs_n`, `power_vs_dependence`, `power_vs_trend` (one row of
@@ -154,7 +154,7 @@ None of these fixes is implemented. Each is a proposal.
    permutation, calendar, n = 100 (`bench_acceptance_at_n` computed from `size_table.csv`).
    C5 studentized and C6 read the same rank autocorrelations off the same permutations, so
    their two flags are not independent. A flagged group demotes a ledger non-rejection at
-   that event count to `underpowered`.
+   that event count to `inconclusive`.
    *Proposal:* correct across groups, or exempt permutation rows from the size criterion.
 9. **Ties are under-counted on quantised data.** `_permutation.permutation_p_value` counts
    ties with a float-exact `>=`. On a read grid, shuffles that tie the observed statistic

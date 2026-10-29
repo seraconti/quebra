@@ -19,10 +19,10 @@ import pytest
 from quebra.analyzers import windows
 from quebra.analyzers.check_ledger import (
     VERDICT_FAIL,
+    VERDICT_INCONCLUSIVE,
     VERDICT_NOT_COMPUTED,
     VERDICT_PASS,
     VERDICT_TIES,
-    VERDICT_UNDERPOWERED,
     _verdict,
     stream_for,
 )
@@ -59,23 +59,34 @@ BASE = dict(
 
 
 def test_all_three_conditions_met_is_the_only_route_to_pass():
+    """Oracle: the verdict rule, at the event floor itself: n_events == min_events_pass
+    meets the floor."""
     verdict, reason = _verdict(_result(), **BASE)
+    assert verdict == VERDICT_PASS and reason == ""
+    verdict, reason = _verdict(_result(), **{**BASE, "n_events": 35})
     assert verdict == VERDICT_PASS and reason == ""
 
 
 @pytest.mark.parametrize(
-    "override, expected_fragment",
+    "override, expected_reason",
     [
-        ({"n_events": 20}, "n_events 20 < 35"),
-        ({"bench_accepted": False}, "miscalibrated"),
-        ({"bench_accepted": None}, "no bench cell"),
+        ({"n_events": 34}, "n_events 34 < 35"),
+        (
+            {"bench_accepted": False},
+            "bench found this check miscalibrated at this event count",
+        ),
+        ({"bench_accepted": None}, "no bench cell for this check at this event count"),
     ],
 )
-def test_each_condition_alone_blocks_a_pass(override, expected_fragment):
-    """A non-rejection with any one condition unmet is `underpowered`, never `pass`."""
+def test_each_condition_alone_makes_a_non_rejection_inconclusive(
+    override, expected_reason
+):
+    """Oracle: the verdict rule. A non-rejection with any one of the three conditions unmet
+    (too few events, a size the bench found wrong, no bench cell) is `inconclusive`, never
+    `pass`, and its reason is that condition alone, one below the event floor included."""
     verdict, reason = _verdict(_result(), **{**BASE, **override})
-    assert verdict == VERDICT_UNDERPOWERED
-    assert expected_fragment in reason
+    assert verdict == VERDICT_INCONCLUSIVE
+    assert reason == expected_reason
 
 
 def test_a_rejection_is_a_fail_and_carries_the_calibration_caveat():
@@ -520,7 +531,7 @@ def test_every_surveyed_check_is_benched_or_declared_uncalibrated():
 
     A check with no bench cell has no measured size, so neither its rejections nor its
     non-rejections carry a level. The ledger already demotes the non-rejection to
-    `underpowered`; the rejection keeps `fail` and must say so in its note. Nothing pinned
+    `inconclusive`; the rejection keeps `fail` and must say so in its note. Nothing pinned
     WHICH checks are in that state, so a later pass could bench C3, or register a seventh
     check with no calibration, and the distinction would quietly stop matching the tables.
     """
@@ -551,7 +562,7 @@ def test_every_surveyed_check_is_benched_or_declared_uncalibrated():
 def test_an_uncalibrated_rejection_says_no_level_stands_behind_it():
     """Oracle: AGENTS.md section 3 - a check outcome never stops execution, and section 4.
 
-    The twin of the `underpowered` demotion on the non-rejection path. Without it a
+    The twin of the `inconclusive` demotion on the non-rejection path. Without it a
     rejection from a check the bench has never run reads exactly like a calibrated one, and
     the survey draws 60 such cells today.
     """

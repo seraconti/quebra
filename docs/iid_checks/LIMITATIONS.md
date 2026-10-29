@@ -23,7 +23,7 @@ silence that carries no information.
 
 `analyzers/check_ledger.py` enforces this: a `pass` requires the p-value AND a sufficient
 event count AND that the bench found the check calibrated at that count. On the 070423 record of qubit 1, 44 of its 56 non-rejections read
-`underpowered` or `not interpretable (ties)`, and would have printed `pass` under a p-value-only
+`inconclusive` or `not interpretable (ties)`, and would have printed `pass` under a p-value-only
 rule (`jobs/active/check_ledger_6d2s_q1.py`, its `q1_070423_check_ledger_data`).
 
 ## 2. Multiplicity across the ladder is not corrected

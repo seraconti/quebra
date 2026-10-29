@@ -75,8 +75,9 @@ exceeds 0.5 only at the strongest grid point, `rho` = 0.5.
 
 Report it, and require more than its p-value before calling anything a pass. The bench put
 C5 on HOLD - correctly calibrated (studentized variant: worst z = -3.18 against 3.58) but
-underpowered (mean power 0.357 at n = 100) - so `analyzers/check_ledger.py` marks a
-non-rejection below `min_events_pass` as `underpowered`, never `pass`.
+with low power (mean power 0.357 at n = 100). The ledger does not correct for that: at or
+above `min_events_pass`, with the bench accepting C5 at the record's n, a non-rejection
+reads `pass`, and what it excludes is read from the power above.
 
 The studentized variant takes the largest `|z_h|`, and C6 sums the squares of the same
 `z_h`. Over the 288 power cells they share (108 on Arm C, 72 on Arm D, 108 on Arm E),

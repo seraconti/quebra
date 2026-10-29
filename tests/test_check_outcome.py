@@ -7,7 +7,7 @@ it selects and pivots rows that `check_ledger.run` already scored.
 The load-bearing claim is the one Sera restated: **a check outcome must never prevent
 execution.** Control flow that depends on what the data happened to say is unpredictable, and
 the whole design is that the band draws in every case and the checks annotate it. So the tests
-below drive every unhappy result - `fail`, `underpowered`, `not computed`, a missing row, an
+below drive every unhappy result - `fail`, `inconclusive`, `not computed`, a missing row, an
 empty ledger - and assert that each one BUILDS and RENDERS. Only wiring mistakes raise.
 """
 
@@ -31,9 +31,9 @@ from quebra.analyzers.check_ledger import (
     LEDGER_COLUMNS,
     VERDICT_ABSENT,
     VERDICT_FAIL,
+    VERDICT_INCONCLUSIVE,
     VERDICT_NOT_COMPUTED,
     VERDICT_PASS,
-    VERDICT_UNDERPOWERED,
 )
 from quebra.plots.check_outcome_plot import CheckOutcomePlot
 
@@ -73,7 +73,7 @@ def _every_verdict_ledger() -> pd.DataFrame:
     return _ledger(
         _row("rec_a", "in_spec", C1_PERM, VERDICT_PASS, 0.62),
         _row("rec_a", "calendar", C1_PERM, VERDICT_FAIL, 0.004, "rejected"),
-        _row("rec_b", "in_spec", C1_PERM, VERDICT_UNDERPOWERED, 0.31),
+        _row("rec_b", "in_spec", C1_PERM, VERDICT_INCONCLUSIVE, 0.31),
         _row("rec_b", "calendar", C1_PERM, VERDICT_NOT_COMPUTED, None, "tau singular"),
         _row("rec_a", "in_spec", C6_PERM, VERDICT_PASS, 0.55),
         _row("rec_a", "calendar", C6_PERM, VERDICT_PASS, 0.51),
@@ -99,7 +99,7 @@ def _build(ledger, run_set=(C1_PERM, C6_PERM), display_set=(C1_PERM, C6_PERM)):
 
 @pytest.mark.parametrize(
     "verdict",
-    [VERDICT_PASS, VERDICT_FAIL, VERDICT_UNDERPOWERED, VERDICT_NOT_COMPUTED],
+    [VERDICT_PASS, VERDICT_FAIL, VERDICT_INCONCLUSIVE, VERDICT_NOT_COMPUTED],
 )
 def test_every_verdict_builds_and_renders(verdict):
     """The rule, one verdict at a time. A `fail` must not raise, must not empty the grid,
@@ -189,7 +189,7 @@ def test_the_grid_axes_are_datasets_by_clocks_in_the_order_given():
     assert grid.clocks == CLOCKS
     assert grid.verdicts[0][0] == VERDICT_PASS  # rec_a / in_spec
     assert grid.verdicts[0][1] == VERDICT_FAIL  # rec_a / calendar
-    assert grid.verdicts[1][0] == VERDICT_UNDERPOWERED  # rec_b / in_spec
+    assert grid.verdicts[1][0] == VERDICT_INCONCLUSIVE  # rec_b / in_spec
 
 
 def test_the_display_set_selects_and_the_run_set_is_still_recorded():

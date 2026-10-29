@@ -158,7 +158,7 @@ def test_cvm_is_registered_in_the_bench_row_schema():
 
     Registration alone is not the promotion. Every `ROW_KEYS` row is a row of the BENCH
     TABLES, so a registered check with no bench rows makes `bench_acceptance_at_n` return
-    None and every CvM ledger cell reads `underpowered / no bench cell`. The second
+    None and every CvM non-rejection reads `inconclusive / no bench cell`. The second
     assertion is therefore the one that matters: the bench must actually carry CvM size
     rows.
     """

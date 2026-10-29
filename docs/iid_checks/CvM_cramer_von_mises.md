@@ -68,7 +68,7 @@ is entitled to that case.
 
 Every `ROW_KEYS` row is also a bench row (`BENCH_ROW_KEYS` adds C5's unstudentized variant),
 so registering a check without re-running the bench makes `bench_acceptance_at_n` return
-None and every ledger row read `underpowered / no bench cell`.
+None and every non-rejection read `inconclusive / no bench cell`.
 
 ## Limitations
 

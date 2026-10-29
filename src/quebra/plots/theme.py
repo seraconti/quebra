@@ -310,10 +310,11 @@ def calibration_color(calibration: str) -> str:
 
 # Ledger verdicts. The palette encodes a THREE-WAY distinction, not a two-way one, because
 # the whole point of the ledger is that "did not reject" is not "passed":
-#   pass / fail          the check ran, was calibrated at this event count, and answered
-#   underpowered         it answered, but the answer carries no information
+#   pass / fail          the check ran and answered (a `fail` from an uncalibrated check
+#                        says so in its note)
+#   inconclusive         it did not reject, but that cannot be read as a pass
 #   not interpretable    ties or a missing dependency mean there is no answer at all
-# The two "no information" verdicts are deliberately DESATURATED so they cannot be mistaken
+# `inconclusive` and `not interpretable` carry no information and are deliberately DESATURATED so they cannot be mistaken
 # for a result at a glance; a reader skimming the table should see the grey and stop.
 #   no row               `check_ledger.VERDICT_ABSENT`: no row for that cell at all. The
 #                        ledger never emits it; a downstream output-builder does.
@@ -322,13 +323,17 @@ def calibration_color(calibration: str) -> str:
 # both, and SPEC 0008 R8.3 requires them to be distinguishable - a cell that was asked for and
 # answered nothing must not read the same as one nobody asked for. It is the palest tone
 # because it carries the least.
+_INCONCLUSIVE_TONE = "#B9A87A"
 VERDICT_COLORS = {
     "pass": "#12776A",
     "fail": "#7E1A11",
-    "underpowered": "#B9A87A",
+    "inconclusive": _INCONCLUSIVE_TONE,
     "not interpretable (ties)": "#9A9A9A",
     "not computed": "#D8D8D8",
     "no row": "#F0F0F0",
+    # Instrument validation's own key, for its `partial` tier and a published value that
+    # disagrees. Not a ledger verdict, so not the ledger's word, but the same tone.
+    "partial": _INCONCLUSIVE_TONE,
 }
 
 

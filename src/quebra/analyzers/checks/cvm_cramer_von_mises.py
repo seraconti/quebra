@@ -43,7 +43,7 @@ than a second transcription of the same formula would be.
 
 **Registered in `battery.ROW_KEYS`.** Every row there is a row of the bench
 tables, so registration alone would have made `bench_acceptance_at_n` return None and every
-CvM ledger row read `underpowered / no bench cell`. `jobs/bench/results/size_table.csv`
+CvM non-rejection read `inconclusive / no bench cell`. `jobs/bench/results/size_table.csv`
 carries 219 CvM size rows and the power table 348. Over the twelve arm=A_iid_weibull /
 in_spec / unquantised / uncensored asymptotic cells there, mean |size - 0.05| is 0.0055 for
 CvM, against 0.0051 for C1 and 0.0058 for C2: margins smaller than the Monte Carlo error of
