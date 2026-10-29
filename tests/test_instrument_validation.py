@@ -312,6 +312,42 @@ def test_one_rank_acf_row_off_r_fails_the_c5_and_c6_tier_4_verdicts(offset):
             assert "max abs difference nan" in verdict.detail, verdict.detail
 
 
+def test_a_rounding_level_move_in_an_exact_reference_leaves_the_report_unchanged():
+    """Oracle: the report rendered from the fixture with four exact reference values moved by
+    four float steps, the size of change a numpy or scipy release makes.
+
+    The moved rows hold the largest difference for xi, dcor and the rank acf, plus the row a
+    numpy patch release moved under CI, so every place the report prints a difference sees
+    the move. All stay far below `AGREEMENT_TOL`, so the rendered report must not change. A
+    move above `ROUNDING_FLOOR` is information, and its digits must still print.
+    """
+    moved = [
+        ("xi_tie_free", "xicor"),
+        ("xi_tied", "dcor"),
+        ("durations_trend", "acf_rank_lag5"),
+        ("durations_iid", "acf_rank_lag4"),
+    ]
+    values = R_VALUES.copy()
+    for case, quantity in moved:
+        row = (values["case"] == case) & (values["quantity"] == quantity)
+        assert row.sum() == 1
+        value = float(values.loc[row, "value"].iloc[0])
+        values.loc[row, "value"] = value + 4.0 * np.spacing(value)
+    rounding = build_instrument_validation(
+        GAPS, PUBLISHED, R_INPUTS, values, _tie_frame()
+    )
+    assert render_tier_table_markdown(rounding) == render_tier_table_markdown(_build())
+
+    values.loc[row, "value"] = value + 1e-6
+    above = build_instrument_validation(GAPS, PUBLISHED, R_INPUTS, values, _tie_frame())
+    line = next(
+        line
+        for line in render_tier_table_markdown(above).splitlines()
+        if line.startswith("| durations_iid | rank acf lag 4 |")
+    )
+    assert "| 1.00e-06 |" in line, line
+
+
 def test_the_divergence_is_reported_in_levels_not_only_tie_fraction():
     """Tie fraction saturates; levels is the actionable form.
 

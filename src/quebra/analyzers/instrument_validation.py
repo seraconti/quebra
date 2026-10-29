@@ -49,6 +49,11 @@ TIER_ABSENT = "absent"
 # any plausible transcription error and far above cross-language float noise.
 AGREEMENT_TOL = 1e-9
 
+# A difference below this is float rounding. Its digits change with the numpy and scipy
+# release (a patch release moved one from 2.31e-16 to 2.20e-16), so the report prints the
+# bound, not the digits, and renders the same under every version CI resolves.
+ROUNDING_FLOOR = 1e-12
+
 # The rank autocorrelation C5 and C6 read, against R's `acf`: one row per case and lag.
 RANK_ACF_STATISTIC = "rank acf"
 RANK_ACF_CASES = ("durations_iid", "durations_trend")
@@ -633,7 +638,7 @@ def build_instrument_validation(
         return (
             f"lags 1-5 of the rank autocorrelation r_h {verb} R's acf on the "
             f"{len(rank_acf)} rows of the tier-4 detail (max abs difference "
-            f"{rank_acf_max:.1e}), two series with no gaps and no ties ({RANK_ACF_TEST}, "
+            f"{_difference(rank_acf_max, '.1e')}), two series with no gaps and no ties ({RANK_ACF_TEST}, "
             f"against jobs/reference/r_reference_values.csv). Not pinned: {not_pinned}, "
             "and the pairing across gaps"
         )
@@ -781,7 +786,8 @@ def build_instrument_validation(
             4,
             TIER_PASS,
             f"matches XICOR on the {len(xi_exact)} exact cases of the tier-4 detail (max "
-            f"abs difference {max(r.abs_difference for r in xi_exact):.1e}) and lies inside "
+            f"abs difference {_difference(max(r.abs_difference for r in xi_exact), '.1e')}) "
+            "and lies inside "
             "its tie-break distribution on tied data (tests/test_r_cross_implementation.py::"
             "test_xi_lies_inside_the_XICOR_tie_break_distribution_on_TIED_data); matches "
             "scipy.stats.chatterjeexi too (tests/test_r_cross_implementation.py::"
@@ -793,7 +799,8 @@ def build_instrument_validation(
             4,
             TIER_PASS,
             f"matches the energy package on the {len(dcor_exact)} cases of the tier-4 "
-            f"detail (max abs difference {max(r.abs_difference for r in dcor_exact):.1e})",
+            "detail (max abs difference "
+            f"{_difference(max(r.abs_difference for r in dcor_exact), '.1e')})",
         ),
         TierRow(
             "Kaplan-Meier",
@@ -865,6 +872,13 @@ def build_instrument_validation(
             "band_coverage_censor_at": BAND_COVERAGE_CENSOR_AT,
         },
     )
+
+
+def _difference(value: float, fmt: str) -> str:
+    """An absolute difference, formatted; `< 1e-12` when it is below `ROUNDING_FLOOR`."""
+    if abs(value) < ROUNDING_FLOOR:
+        return f"< {ROUNDING_FLOOR:.0e}"
+    return format(value, fmt)
 
 
 def _span(values: pd.Series, fmt: str) -> str:
@@ -956,7 +970,7 @@ def render_tier_table_markdown(data: InstrumentValidationData) -> str:
         )
         lines.append(
             f"| {row.case} | {row.statistic} | {row.ours:.10f} | {row.reference:.10f} | "
-            f"{row.abs_difference:.2e} | {note} |"
+            f"{_difference(row.abs_difference, '.2e')} | {note} |"
         )
 
     threshold = data.meta["divergence_threshold"]
