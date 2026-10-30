@@ -17,3 +17,7 @@ R_REFERENCE_VALUES = _REFERENCE_DIR / "r_reference_values.csv"
 R_SURVIVAL_INPUTS = _REFERENCE_DIR / "r_survival_inputs.csv"
 R_SURVIVAL_VALUES = _REFERENCE_DIR / "r_survival_values.csv"
 R_TURNBULL_INPUTS = _REFERENCE_DIR / "r_turnbull_inputs.csv"
+# Written by `rscripts/comparison_reference.R`, read by
+# `tests/test_record_comparison_r_reference.py`.
+R_COMPARISON_INPUTS = _REFERENCE_DIR / "r_comparison_inputs.csv"
+R_COMPARISON_VALUES = _REFERENCE_DIR / "r_comparison_values.csv"

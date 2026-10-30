@@ -59,9 +59,9 @@ test: require-selector
 test-all:
 	pytest -m "not real"
 
-## Local only today; the CI job is deferred. Needs Rscript plus copula, and also XICOR,
-## energy and randtests: one test checks the committed fixture's recorded versions against
-## the local R and asks for all four.
+## Local only today; the CI job is deferred. Needs Rscript plus copula, XICOR, energy,
+## randtests, survival and metafor: the version tests check each committed fixture's
+## recorded versions against the local R.
 test-r:
 	pytest -m "r"
 

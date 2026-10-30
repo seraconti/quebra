@@ -9,10 +9,12 @@ The pipeline is a lazy DAG: nothing runs until a sink (figure or materialize) re
 **Implemented today:** Kaplan-Meier, the Nelson-Aalen cumulative hazard, curve quantiles and
 the restricted mean (RMST), Turnbull's estimate, the placement bracket, MTBF and MTBC, window
 carving on both sides of a threshold with an explicit gap policy, an independence check
-battery, the metric analyzers, and the tellability of a record (its spectral window,
-spectrum and G10, count exponent, crossing placement, run-length ratio and sigma rows).
-**Not implemented:** log-rank, MCF, a smoothed hazard h(t). `grep -rli` finds no module for any
-of them. Do not describe them as shipping.
+battery, the metric analyzers, the tellability of a record (its spectral window,
+spectrum and G10, count exponent, crossing placement, run-length ratio and sigma rows), and
+the comparison of two records (the two-sample log-rank test and the restricted-mean
+difference).
+**Not implemented:** a k-sample log-rank (more than two records in one test), MCF, a smoothed
+hazard h(t). No module implements any of them. Do not describe them as shipping.
 
 This is the only agent-facing file, and `CLAUDE.md` is a symlink to it so it loads every
 session. Read `spec/quebraplan.md` only when told which phase to work on.
@@ -173,8 +175,10 @@ threshold crossings; measured loss is roughly 25 to 45 percent of real crossings
 thresholds. If a function needs regular spacing, it is the wrong function.
 
 **Statistical licensing.** The Kaplan-Meier confidence band rests on the renewal assumption
-(`analyzers/assumptions.a1_renewal_durations`), and so would a k-sample log-rank comparison when
-one exists - it does not today, and `kaplan_meier.compare()` returns a DISTANCE, not a test.
+(`analyzers/assumptions.a1_renewal_durations`), and so does the two-sample log-rank test in
+`analyzers/record_comparison.py`, which carries a check-outcome field per record, empty (NOT
+ASSESSED) until a step fills it.
+`kaplan_meier.compare()` returns a DISTANCE, not a test.
 
 **A band is never reported without its check outcome attached**, and the attached outcome must
 name which checks were asked for and which produced no answer. Attachment is a FIELD on the band
@@ -237,6 +241,8 @@ analyzers/   allan.py, fidelity.py, t2star.py, tlf.py, mtbf.py
              the tellability panel with its status (docs/TELLABILITY_SEMANTICS.md)
              event_table.py  the event table every survival estimator reads
              survival.py  Nelson-Aalen, curve summaries, Turnbull, placement bracket
+             record_comparison.py  comparisons across records: the comparison tau, the
+             two-sample log-rank test and the restricted-mean difference
              check_attachment.py  standings and check-outcome fields; a leaf, imports
              nothing from quebra
              signal_band.py, distinguish_band.py, reliability_band.py  the three nested
