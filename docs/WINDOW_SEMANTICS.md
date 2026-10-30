@@ -122,7 +122,8 @@ calibration log enter that way (`analyzers/mtbf.intervals_event_table`).
 
 Each result in `analyzers/survival.py` and `analyzers/record_comparison.py` names its
 standing in a field, from `analyzers/check_attachment`: `standing`, or `point_standing` and
-`interval_standing` on the curve summaries and the pair comparison. Nothing else carries the
+`interval_standing` on the curve summaries and the pair comparison, `standing` on the
+random-effects summary. Nothing else carries the
 field, the Kaplan-Meier curve and the in-spec quantities included; the table gives their
 standing by the same rule.
 
@@ -130,7 +131,7 @@ standing by the same rule.
 |---|---|---|
 | survives a rejection | true of this record whatever the independence checks say | in-spec fraction, mean window length, placement bracket |
 | descriptive, `n_censored` shown | exact when nothing is censored; with censoring it leans on one hazard shared by every window at risk | Kaplan-Meier points, quantile points, restricted mean, the difference of two restricted means |
-| rests on exchangeability | carries the check outcome | every band, interval and SE; the Nelson-Aalen shape; Turnbull; the log-rank p |
+| rests on exchangeability | carries the check outcome | every band, interval and SE; the Nelson-Aalen shape; Turnbull; the log-rank p; the pooled restricted mean and its intervals |
 
 **The check outcome** attached to a result names the `a1_renewal_durations` assumption (for
 calibration cycles, `a2_renewal_cycles`), the checks asked, and those that gave no answer.

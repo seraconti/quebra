@@ -25,6 +25,7 @@ _INPUTS = pd.read_csv(R_COMPARISON_INPUTS)
 _VALUES = pd.read_csv(R_COMPARISON_VALUES)
 CASES = sorted(_INPUTS["case"].unique())
 PAIR_CASES = [c for c in CASES if c.startswith("pair_")]
+POOL_CASES = [c for c in CASES if c.startswith("pool_")]
 REL = 1e-9
 RULE = record_comparison.TAU_RULE_MIN_LARGEST_AGE
 
@@ -68,6 +69,7 @@ def _version(package: str) -> tuple[int, ...]:
 def test_the_fixture_was_written_by_the_versions_the_docstrings_cite() -> None:
     """Oracle: the versions `analyzers/record_comparison.py` cites."""
     assert _version("survival") == (3, 8, 6)
+    assert _version("metafor") == (5, 2, 1)
 
 
 @pytest.mark.r
@@ -130,3 +132,56 @@ def test_the_restricted_mean_difference_and_its_se_match_r(case: str) -> None:
     assert pair.rmst_difference_se_s == pytest.approx(
         _r1(case, "rmean_diff_se"), rel=REL
     )
+
+
+def _summary(case: str) -> record_comparison.RandomEffectsSummary:
+    summary = record_comparison.random_effects_summary(_tables(case), tau_rule=RULE)
+    assert summary.not_pooled_reason is None
+    assert all(row.pooled for row in summary.rows)
+    return summary
+
+
+def _zero_or_rel(ours: float | None, theirs: float) -> None:
+    """Equal to R at REL, and exactly 0 where R reports 0 (a truncated tau^2 or bound)."""
+    assert ours is not None
+    if theirs == 0.0:
+        assert ours == 0.0
+    else:
+        assert ours == pytest.approx(theirs, rel=REL)
+
+
+@pytest.mark.parametrize("case", POOL_CASES)
+def test_the_dersimonian_laird_summary_matches_metafor_rma(case: str) -> None:
+    """Oracle: metafor `rma(method = "DL")` on R's own per-record restricted means."""
+    summary = _summary(case)
+    rows = summary.rows
+    np.testing.assert_allclose(
+        [row.summary.rmst_s for row in rows], _r(case, "yi"), rtol=REL
+    )
+    np.testing.assert_allclose(
+        [row.summary.rmst_se_s**2 for row in rows], _r(case, "vi"), rtol=REL
+    )
+    assert summary.k_pooled == len(rows) and summary.q_df == len(rows) - 1
+    assert summary.pooled_s == pytest.approx(_r1(case, "dl_mu"), rel=REL)
+    assert summary.pooled_se_s == pytest.approx(_r1(case, "dl_se"), rel=REL)
+    assert summary.pooled_lower_s == pytest.approx(_r1(case, "dl_ci_lb"), rel=REL)
+    assert summary.pooled_upper_s == pytest.approx(_r1(case, "dl_ci_ub"), rel=REL)
+    _zero_or_rel(summary.between_var_s2, _r1(case, "dl_tau2"))
+    assert summary.q_statistic == pytest.approx(_r1(case, "dl_q"), rel=REL, abs=1e-12)
+    _zero_or_rel(summary.i2_fraction, _r1(case, "dl_i2_percent") / 100.0)
+
+
+@pytest.mark.parametrize("case", POOL_CASES)
+def test_the_q_profile_interval_matches_metafor_confint(case: str) -> None:
+    """Oracle: metafor `confint` (Q-profile, tol 1e-12, search widened) on the DL fit."""
+    summary = _summary(case)
+    _zero_or_rel(summary.between_var_lower_s2, _r1(case, "qp_tau2_lb"))
+    _zero_or_rel(summary.between_var_upper_s2, _r1(case, "qp_tau2_ub"))
+
+
+@pytest.mark.parametrize("case", POOL_CASES)
+def test_the_prediction_interval_matches_metafor_predict_riley(case: str) -> None:
+    """Oracle: metafor `predict(predtype = "Riley")`, t with k - 2 degrees of freedom."""
+    summary = _summary(case)
+    assert summary.prediction_lower_s == pytest.approx(_r1(case, "pi_lb"), rel=REL)
+    assert summary.prediction_upper_s == pytest.approx(_r1(case, "pi_ub"), rel=REL)

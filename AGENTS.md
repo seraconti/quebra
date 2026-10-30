@@ -10,9 +10,10 @@ The pipeline is a lazy DAG: nothing runs until a sink (figure or materialize) re
 the restricted mean (RMST), Turnbull's estimate, the placement bracket, MTBF and MTBC, window
 carving on both sides of a threshold with an explicit gap policy, an independence check
 battery, the metric analyzers, the tellability of a record (its spectral window,
-spectrum and G10, count exponent, crossing placement, run-length ratio and sigma rows), and
-the comparison of two records (the two-sample log-rank test and the restricted-mean
-difference).
+spectrum and G10, count exponent, crossing placement, run-length ratio and sigma rows), the
+comparison of two records (the two-sample log-rank test and the restricted-mean
+difference), and a DerSimonian-Laird summary of many records' restricted means (Q-profile
+interval for the between-record variance, I^2, prediction interval).
 **Not implemented:** a k-sample log-rank (more than two records in one test), MCF, a smoothed
 hazard h(t). No module implements any of them. Do not describe them as shipping.
 
@@ -242,7 +243,8 @@ analyzers/   allan.py, fidelity.py, t2star.py, tlf.py, mtbf.py
              event_table.py  the event table every survival estimator reads
              survival.py  Nelson-Aalen, curve summaries, Turnbull, placement bracket
              record_comparison.py  comparisons across records: the comparison tau, the
-             two-sample log-rank test and the restricted-mean difference
+             two-sample log-rank test, the restricted-mean difference, and the
+             DerSimonian-Laird summary of many records
              check_attachment.py  standings and check-outcome fields; a leaf, imports
              nothing from quebra
              signal_band.py, distinguish_band.py, reliability_band.py  the three nested
