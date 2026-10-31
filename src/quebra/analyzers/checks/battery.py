@@ -101,6 +101,22 @@ def row_key(result: CheckResult) -> tuple[str, str, str]:
     return (result.check, result.calibration, variant)
 
 
+def drop_short_segments(
+    segments: list[Segment], min_events: int
+) -> tuple[list[Segment], int]:
+    """The segments holding at least `min_events` complete gaps, in order, and how many
+    were dropped.
+
+    Every check refuses a segment with fewer than two gaps (`result.validate_segment`), and
+    `run_battery` catches nothing, so one short segment costs a record all its rows. A caller
+    drops short segments here, before the battery, and reports the count beside the rows.
+    """
+    if min_events < 1:
+        raise ValueError(f"min_events must be at least 1; got {min_events!r}")
+    kept = [segment for segment in segments if segment.n_events >= min_events]
+    return kept, len(segments) - len(kept)
+
+
 def run_battery(
     segments: list[Segment],
     *,

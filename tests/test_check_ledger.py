@@ -593,3 +593,45 @@ def test_an_uncalibrated_rejection_says_no_level_stands_behind_it():
         "the statistic did land in the tail; do not hide that"
     )
     assert "UNCALIBRATED" in note and "no level stands behind" in note, note
+
+
+def test_score_segments_with_nothing_to_score_writes_not_computed():
+    """Oracle: the ledger's verdict vocabulary; an empty segment list is a row, not a raise.
+
+    The shared scoring half is reached by callers whose segments all fell below the
+    minimum (`checks.battery.drop_short_segments`). It must still write the cell, with its
+    reason, so the band beside it is drawn.
+    """
+    from quebra.analyzers.check_ledger import score_segments
+
+    rows = score_segments(
+        [],
+        n_dropped=3,
+        n_used=4,
+        label="cycles",
+        clock="calendar",
+        dataset_id="unit",
+        acceptance=pd.DataFrame(),
+        grid=[20, 35],
+        alpha=0.05,
+        min_events_pass=35,
+        tie_cutoff_distinct=5,
+        lag_max=5,
+        n_permutations=99,
+        seed=0,
+        min_events_per_segment=2,
+        include_tau_checks=True,
+        include_c2_asymptotic=False,
+        include_c3=False,
+        c3_n_null_sim=10,
+    )
+    assert len(rows) == 1
+    (row,) = rows
+    assert row["verdict"] == VERDICT_NOT_COMPUTED
+    assert row["notes"] == "no segment reached 2 events (3 dropped)"
+    assert (row["threshold_label"], row["clock"], row["dataset_id"]) == (
+        "cycles",
+        "calendar",
+        "unit",
+    )
+    assert row["n_windows_used"] == 4

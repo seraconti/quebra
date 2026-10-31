@@ -60,6 +60,7 @@ from quebra.analyzers.checks.battery import (
     BENCH_ROW_KEYS,
     C5_RAW_KEY,
     ROW_KEYS,
+    drop_short_segments,
     row_key,
     run_battery,
 )
@@ -312,6 +313,22 @@ def test_permutation_p_value_is_tie_corrected():
     assert permutation_p_value(1.0, np.ones(99)) == pytest.approx(1.0)
     # Strictly smaller null draws: the minimum attainable p is 1/(1+B), never 0.
     assert permutation_p_value(5.0, np.zeros(99)) == pytest.approx(1.0 / 100.0)
+
+
+@pytest.mark.unit
+def test_drop_short_segments_hand_case():
+    """Oracle: a hand count. Gaps 1, 2, 3 and 2 at min 2 keep the last three, in order."""
+    segments = [
+        Segment(x=np.array([4.0]), tau=5.0),
+        Segment(x=np.array([1.0, 2.0]), tau=4.0),
+        Segment(x=np.array([1.0, 2.0, 3.0]), tau=7.0),
+        Segment(x=np.array([5.0, 6.0]), tau=12.0),
+    ]
+    kept, n_dropped = drop_short_segments(segments, 2)
+    assert n_dropped == 1
+    assert len(kept) == 3 and all(a is b for a, b in zip(kept, segments[1:]))
+    with pytest.raises(ValueError, match="at least 1"):
+        drop_short_segments(segments, 0)
 
 
 @pytest.mark.unit

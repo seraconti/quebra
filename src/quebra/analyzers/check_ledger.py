@@ -58,6 +58,7 @@ from quebra.analyzers.checks.result import (
     CLOCK_CALENDAR,
     CLOCK_IN_SPEC,
     CheckResult,
+    Segment,
 )
 from quebra.core._artifact_guard import StaleArtifactGuard
 
@@ -411,12 +412,12 @@ def run(inputs: CheckLedgerInputs) -> CheckLedger:
 def _blank_row(
     label: str,
     clock: str,
-    inputs: CheckLedgerInputs,
+    dataset_id: str,
     note: str,
     n_windows: int = 0,
 ) -> dict:
     return {
-        "dataset_id": inputs.dataset_id,
+        "dataset_id": dataset_id,
         "threshold_label": label,
         "clock": clock,
         "check_id": "(all)",
@@ -450,7 +451,9 @@ def _rows_for(
     grid: list[int],
 ) -> list[dict[str, object]]:
     if not len(table):
-        return [_blank_row(label, clock, inputs, "no windows at this threshold")]
+        return [
+            _blank_row(label, clock, inputs.dataset_id, "no windows at this threshold")
+        ]
     try:
         segments, n_dropped = segments_from_windows(
             table,
@@ -461,18 +464,77 @@ def _rows_for(
     except (ValueError, KeyError) as exc:
         return [
             _blank_row(
-                label, clock, inputs, f"segmentation failed: {exc}"[:200], len(table)
+                label,
+                clock,
+                inputs.dataset_id,
+                f"segmentation failed: {exc}"[:200],
+                len(table),
             )
         ]
+    return score_segments(
+        segments,
+        n_dropped=n_dropped,
+        n_used=len(table),
+        label=label,
+        clock=clock,
+        dataset_id=inputs.dataset_id,
+        acceptance=acceptance,
+        grid=grid,
+        alpha=inputs.alpha,
+        min_events_pass=inputs.min_events_pass,
+        tie_cutoff_distinct=inputs.tie_cutoff_distinct,
+        lag_max=inputs.lag_max,
+        n_permutations=inputs.n_permutations,
+        seed=inputs.seed,
+        min_events_per_segment=inputs.min_events_per_segment,
+        include_tau_checks=inputs.include_tau_checks,
+        include_c2_asymptotic=inputs.include_c2_asymptotic,
+        include_c3=inputs.include_c3,
+        c3_n_null_sim=inputs.c3_n_null_sim,
+    )
+
+
+def score_segments(
+    segments: list[Segment],
+    *,
+    n_dropped: int,
+    n_used: int,
+    label: str,
+    clock: str,
+    dataset_id: str,
+    acceptance: pd.DataFrame,
+    grid: list[int],
+    alpha: float,
+    min_events_pass: int,
+    tie_cutoff_distinct: int,
+    lag_max: int,
+    n_permutations: int,
+    seed: int,
+    min_events_per_segment: int,
+    include_tau_checks: bool,
+    include_c2_asymptotic: bool,
+    include_c3: bool,
+    c3_n_null_sim: int,
+) -> list[dict[str, object]]:
+    """Ledger rows for durations already cut into segments, on one label and clock.
+
+    The half of the ledger that does not care where the segments came from: the battery
+    off one permutation set, C3, the bench match and the verdict. `_rows_for` reaches it
+    after carving windows into segments; any other duration (calibration cycles) reaches it
+    with its own segments and the same rule. `n_dropped` counts segments the caller dropped
+    for having fewer than `min_events_per_segment` events, and `n_used` is what the
+    `n_windows_used` column records. With no segment left it returns one `not computed`
+    row with its reason and never raises.
+    """
     if not segments:
         return [
             _blank_row(
                 label,
                 clock,
-                inputs,
-                f"no segment reached {inputs.min_events_per_segment} events "
+                dataset_id,
+                f"no segment reached {min_events_per_segment} events "
                 f"({n_dropped} dropped)",
-                len(table),
+                n_used,
             )
         ]
 
@@ -482,10 +544,8 @@ def _rows_for(
     bench_n = nearest_bracketing_n(grid, n_events)
 
     stream = stream_for(label, clock)
-    rng = np.random.default_rng([inputs.seed, stream])
-    perm = block_permutations(
-        [s.n_events for s in segments], inputs.n_permutations, rng
-    )
+    rng = np.random.default_rng([seed, stream])
+    perm = block_permutations([s.n_events for s in segments], n_permutations, rng)
 
     results: list[CheckResult] = []
     battery_note = ""
@@ -494,9 +554,9 @@ def _rows_for(
             segments,
             clock=clock,
             perm=perm,
-            max_lag=inputs.lag_max,
-            include_tau_checks=inputs.include_tau_checks,
-            include_c2_asymptotic=inputs.include_c2_asymptotic,
+            max_lag=lag_max,
+            include_tau_checks=include_tau_checks,
+            include_c2_asymptotic=include_c2_asymptotic,
         )
     except (ValueError, KeyError) as exc:
         battery_note = f"C1/C2 undefined here: {exc}"[:180]
@@ -505,16 +565,16 @@ def _rows_for(
                 segments,
                 clock=clock,
                 perm=perm,
-                max_lag=inputs.lag_max,
+                max_lag=lag_max,
                 # Hard False, not the input: this branch is a mathematical refusal (tau is
                 # singular here), and it must override a run-set that asked for those rows.
                 include_tau_checks=False,
-                include_c2_asymptotic=inputs.include_c2_asymptotic,
+                include_c2_asymptotic=include_c2_asymptotic,
             )
         except (ValueError, KeyError) as inner:
             return [
                 _blank_row(
-                    label, clock, inputs, f"battery failed: {inner}"[:200], len(table)
+                    label, clock, dataset_id, f"battery failed: {inner}"[:200], n_used
                 )
             ]
         # The retry dropped C1 and C2. Say so with their own rows: without them the reader
@@ -541,15 +601,15 @@ def _rows_for(
 
     # C3 is out-of-process and shares nothing with the permutation set, so it is called
     # separately. With R absent it returns p_value=None and the row reads `not computed`.
-    if inputs.include_c3:
+    if include_c3:
         try:
             results.append(
                 c3.run(
                     segments,
                     clock=clock,
-                    max_lag=inputs.lag_max,
-                    seed=inputs.seed,
-                    n_null_sim=inputs.c3_n_null_sim,
+                    max_lag=lag_max,
+                    seed=seed,
+                    n_null_sim=c3_n_null_sim,
                 )
             )
         # RuntimeError and TimeoutExpired are the R bridge's own failure modes - a
@@ -598,11 +658,11 @@ def _rows_for(
 
         verdict, reason = _verdict(
             result,
-            alpha=inputs.alpha,
+            alpha=alpha,
             n_events=n_events,
-            min_events_pass=inputs.min_events_pass,
+            min_events_pass=min_events_pass,
             n_distinct=n_distinct,
-            tie_cutoff=inputs.tie_cutoff_distinct,
+            tie_cutoff=tie_cutoff_distinct,
             bench_accepted=accepted,
         )
         # The battery note explains why C1/C2 were dropped, so it belongs on THEIR rows.
@@ -612,7 +672,7 @@ def _rows_for(
         notes = "; ".join(part for part in (reason, relevant) if part)
         out.append(
             {
-                "dataset_id": inputs.dataset_id,
+                "dataset_id": dataset_id,
                 "threshold_label": label,
                 "clock": clock,
                 "check_id": result.check,
@@ -622,7 +682,7 @@ def _rows_for(
                 "p_value": result.p_value,
                 "verdict": verdict,
                 "n_events": n_events,
-                "n_windows_used": int(len(table)),
+                "n_windows_used": int(n_used),
                 "n_censored_dropped": int(result.n_censored_dropped),
                 "n_segments": int(result.n_segments),
                 "n_distinct_durations": n_distinct,
