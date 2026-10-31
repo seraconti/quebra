@@ -16,8 +16,9 @@ THREE THINGS TO KNOW BEFORE READING THE OUTPUT
    chi-square stage is a guard and its other stage a backstop for non-finite reads), so
    filtering is not a source of difference from a job's window counts. This measures the
    ladder against the raw record.
-3. Every job file declares a ladder byte-identical to T2STAR_DEFAULT_LADDER, so that
-   ladder is used for all datasets.
+3. The ladder is T2STAR_DEFAULT_LADDER, the one every T2* job carves on, and
+   LADDER_SPACING_S is read off it. The committed results/probe_unresolved_out.csv was
+   written on the 1 to 10 µs ladder (commit 9057803); a rerun writes the current rungs.
 
 Usage:  python jobs/bench/probe_unresolved.py
 Writes: bench/results/probe_unresolved_out.csv
@@ -41,7 +42,10 @@ from quebra.core.paths import default_dataset_root, repo_root, resolve_dataset_p
 from quebra.schemas.track912 import track912Schema
 
 K_VALUES = (0.5, 1.0, 2.0)
-LADDER_SPACING_S = 1e-6  # the ladder steps in 1 µs
+_LADDER_STEPS_S = np.diff([value for _, value, _ in T2STAR_DEFAULT_LADDER])
+if not np.allclose(_LADDER_STEPS_S, _LADDER_STEPS_S[0], rtol=1e-9, atol=0.0):
+    raise ValueError("sigma_over_ladder_spacing needs a uniformly spaced T2* ladder")
+LADDER_SPACING_S = float(_LADDER_STEPS_S[0])  # the ladder's one step
 DATASET_SUBDIR = "data/real_private/6D2S"
 # Beside this file, like every other bench output. Writing through repo_root()
 # must point at `jobs/bench/results/`.

@@ -82,8 +82,9 @@ VERDICTS = (
     VERDICT_NOT_COMPUTED,
 )
 
-# HOW OFTEN THIS RULE BINDS, measured rather than assumed: on the T2* ladder it never does
-# except where the event count already disqualifies the row. T2* durations are wall-clock
+# HOW OFTEN THIS RULE BINDS, measured rather than assumed on the 1 to 10 µs T2* ladder
+# (commit aff894e; not re-measured on the 2 to 5 µs ladder): it never did except where the
+# event count already disqualified the row. T2* durations are wall-clock
 # seconds and effectively continuous - 355 windows gave 355 distinct values - so ties are a
 # property of QUANTISED metrics (a fidelity threshold where most windows are one read long),
 # not of this one. The rule earns its place on those ladders, not here.

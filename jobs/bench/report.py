@@ -58,7 +58,8 @@ from quebra.analyzers.checks.result import CLOCK_IN_SPEC
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
 # Where the real data sits. Censoring and quantisation were measured before the bench was
-# built; the event counts come from the 6D2S ledgers.
+# built; the event counts come from the 6D2S ledgers, measured on the 1 to 10 µs T2* ladder
+# (commit 28f305c) and not re-measured on the 2 to 5 µs ladder.
 REAL_DATA_NOTES = {
     "event_counts": "up to 935 events per record, threshold and clock (28 6D2S ledger records)",
     "censoring": "0.000-0.026 wherever n >= 20",

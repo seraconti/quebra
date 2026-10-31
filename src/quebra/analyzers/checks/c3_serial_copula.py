@@ -276,7 +276,8 @@ def run(
     depends on the machine, on its load, and on `N_NULL_SIM`. Measure it for the n you
     actually have.
 
-    900 s covers every n the T2* ladder has produced so far, and the evidence above n = 355
+    900 s covers every n the 1 to 10 µs T2* ladder produced (commit aff894e; the 2 to 5 µs
+    ladder's largest n is not measured), and the evidence above n = 355
     is contradictory rather than thin. One unverified observation records n = 682 still
     running at 580 s. The shipped ledger in
     `output/check_ledger_q1_070423_4fc898_20260813_170015/` records a COMPLETION at the same

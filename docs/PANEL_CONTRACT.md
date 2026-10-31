@@ -86,7 +86,8 @@ signal axis rather than in a subplot of their own.
 **Shape statistics are reported only where they have support.** Complete windows only
 (`up_crossing` birth, uncensored), then `shape_min_reads`; a threshold with fewer surviving
 windows than `SHAPE_SUPPORT_FLOOR` is named as unsupported rather than drawn. On the
-shipped T2* ladder that is one threshold. Every median ships with its defined-count, and
+1 to 10 µs T2* ladder (commit aff894e) one threshold had support; how many do on the
+2 to 5 µs ladder is not measured. Every median ships with its defined-count, and
 `rho2` is never rendered without Chatterjee's xi and the falling-limb rho beside it -
 a symmetric excursion drives Spearman to zero by construction.
 
@@ -204,7 +205,7 @@ four locations, so colors correspond visually.
 
 Sampling across `len(thresholds)` replaced a fixed 8-entry list indexed
 `i % 8`, which gave two thresholds the same color on any ladder longer than
-8 - the shipped T2* ladder has 10.
+8.
 
 Timeline bars are colored by per-read spec state through `plots/theme.py::state_color`,
 not by the threshold color: `in_spec`, `out_of_spec`, and - when the carve ran with

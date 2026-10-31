@@ -13,7 +13,8 @@ The xi tests come in two groups, and the distinction is the point:
 
 - **Tie-free**: the tie-corrected form reduces algebraically to `1 - 3*sum|dr|/(n^2-1)`, so both the old
   and the new estimator must agree, and both must match hand-computed values. Measured on
-  the real T2* ladder, EVERY window is tie-free on both axes (0 of 279 at 3 us), so these
+  the real 1 to 10 µs T2* ladder (commit 9057803), EVERY window is tie-free on both axes
+  (0 of 279 at 3 us), so these
   are the tests that pin current behaviour.
 - **Tied**: the two forms diverge, and only the tie-corrected form is correct. These are the
   tests that would fail against the tie-free reduction.
@@ -230,7 +231,8 @@ def test_dcor_reason_codes_distinguish_their_causes():
 
 
 def test_a_tie_free_window_uses_the_closed_form():
-    """The path every T2* window takes - measured, 0 of 279 windows tied."""
+    """The path every T2* window takes - measured on the 1 to 10 µs ladder (commit
+    9057803), 0 of 279 windows tied."""
     rng = np.random.default_rng(11)
     x, y = rng.normal(size=25), rng.normal(size=25)
     p, method = xi_p_value(x, y, seed=1)
@@ -331,7 +333,7 @@ def test_the_asymptotic_null_variance_is_two_fifths():
     ADDED AFTER MUTATION TESTING. Replacing `2.0 / 5.0` with `1.0 / 5.0` left all 35 tests
     of this module passing - the constant that scales EVERY p-value the tool actually emits
     was unpinned. It is the asymptotic branch that runs in production: all 279 windows of
-    the real T2* ladder are tie-free, so `xi_p_method` reads `asymptotic` on every one of
+    the real 1 to 10 µs T2* ladder (commit 9057803) are tie-free, so `xi_p_method` reads `asymptotic` on every one of
     them, and `xi_p_value_asymptotic` is where their significance is decided.
 
     Simulated rather than restated. Asserting `p == norm.sf(sqrt(n) xi / sqrt(2/5))` would

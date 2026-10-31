@@ -12,8 +12,10 @@ dependence grid is a sweep, not a calibration to a record:
 - `N_GRID` starts at 20 because below that `lag_layout` runs out of pairs, and ends at 1000
   because the 6D2S check-ledger records (`jobs/active/check_ledger_6d2s_q*.py`) reach 936
   events; above 355 the points are spaced so every one of their event counts is within 150
-  of a grid point. 35 is included because it is roughly the count at the thresholds that
-  matter most. A cell's seed is its index in `all_cells()`, so a new n goes at the END:
+  of a grid point. Both measured on the 1 to 10 µs T2* ladder (commit 07ce922); whether the
+  2.5, 3.5 and 4.5 µs rungs of the 2 to 5 µs ladder stay under 1000 events is not measured.
+  35 is included because it is roughly the count at the thresholds that matter most.
+  A cell's seed is its index in `all_cells()`, so a new n goes at the END:
   the size cells before it keep their seeds, and every power cell, which follows all the
   size cells, is re-seeded.
 - `CENSORING_GRID` is `{0, 0.03, 0.25}`. The real data sits at 0.000-0.026 wherever

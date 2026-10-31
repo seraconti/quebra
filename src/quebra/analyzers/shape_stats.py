@@ -89,8 +89,9 @@ def chatterjee_xi(x: np.ndarray, y: np.ndarray) -> float:
     quantised metric produces tied responses.
 
     Measured on the shipped artifacts, which is where the number has to come from: the
-    T2* ladder carries 234 window-rows on 0704 and 75 on 1004, 309 in total, and NOT ONE
-    has a tie on either axis - so the correction moved no shipped number. (An earlier draft
+    1 to 10 µs T2* ladder (commit aff894e) carried 234 window-rows on 0704 and 75 on 1004,
+    309 in total, and NOT ONE had a tie on either axis - so the correction moved no number
+    shipped on that ladder. The 2 to 5 µs ladder's windows are not re-counted. (An earlier draft
     of this docstring said "0 of 279"; no artifact holds 279, and the count is recorded here
     per dataset because pooling two datasets into one figure is what produced the wrong
     one.) The correction is not decoration: a fidelity ladder, where most windows are a

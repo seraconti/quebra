@@ -40,7 +40,9 @@ row. It leaves out `mean_induced_lag1`, which on several segments moves with the
 with any difference in level (`runner.py` module docstring). The size table keeps the column
 on its censored cells, which are several segments too, and the same caveat applies there.
 
-The event counts cover the 6D2S check-ledger records, which reach 935 events. The
+The event counts cover the 6D2S check-ledger records, which reach 935 events (measured on
+the 1 to 10 µs ladder, commit 28f305c; whether the 2.5, 3.5 and 4.5 µs rungs stay inside
+the grid is not measured). The
 censoring and quantisation levels were set from one record family, measured before the
 bench was written (`grid.py` module docstring, `REAL_DATA_NOTES` in `jobs/bench/report.py`):
 censoring 0.000-0.026 wherever n >= 20, and its T2* quantisation. Nothing in the code
@@ -128,7 +130,8 @@ None of these fixes is implemented. Each is a proposal.
    nearest is taken by distance, so a count in the upper half of a gap is judged at the
    larger point (228-354 events at 355, for example), and a record below 20 events is judged
    at 20. On the 6D2S ledgers, 181 of the 369 (record, threshold, clock) rungs with at least
-   one event are judged at a larger n than they have, 40 of them below 20. *Proposal:* judge
+   one event are judged at a larger n than they have, 40 of them below 20 (measured on the
+   1 to 10 µs ladder, commit 28f305c; not re-measured on the 2 to 5 µs ladder). *Proposal:* judge
    at the largest grid n not above the record's count, and report records below 20 as
    outside the grid.
 5. **Permutation rows are exact by construction.** Within-segment permutation of

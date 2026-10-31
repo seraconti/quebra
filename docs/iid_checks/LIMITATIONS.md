@@ -24,15 +24,16 @@ silence that carries no information.
 `analyzers/check_ledger.py` enforces this: a `pass` requires the p-value AND a sufficient
 event count AND that the bench found the check calibrated at that count. On the 070423 record of qubit 1, 44 of its 56 non-rejections read
 `inconclusive` or `not interpretable (ties)`, and would have printed `pass` under a p-value-only
-rule (`jobs/active/check_ledger_6d2s_q1.py`, its `q1_070423_check_ledger_data`).
+rule (`jobs/active/check_ledger_6d2s_q1.py`, its `q1_070423_check_ledger_data`). Measured on
+the 1 to 10 µs ladder (commit 44c1d78); not re-measured on the 2 to 5 µs ladder.
 
 ## 2. Multiplicity across the ladder is not corrected
 
-A ledger runs 5 checks x 2 calibrations x 2 clocks over up to 10 thresholds. Nothing
-corrects for that. The thresholds are nested (a window in spec at 3 µs is in spec at 4 µs),
+A ledger runs 5 checks x 2 calibrations x 2 clocks over up to 7 thresholds. Nothing
+corrects for that. The thresholds are nested (a read in spec at 4 µs is in spec at 3 µs),
 so the tests are strongly positively dependent and a Bonferroni correction would be far too
 conservative - but "far too conservative" is not "unnecessary". **Read the ladder as a
-pattern, not as ~200 independent decisions.** A single isolated rejection at one threshold
+pattern, not as ~140 independent decisions.** A single isolated rejection at one threshold
 is much weaker evidence than a monotone trend down the ladder.
 
 ## 3. The two clocks can disagree, and neither is wrong
@@ -74,8 +75,9 @@ realised value.
 
 `jobs/bench/grid.py` sweeps quantisation as a BOOLEAN, not as a distinct-duration count, so the
 evidence brackets the cutoff between roughly 5 and 20 distinct values and no more finely.
-The ledger declares 5 and says so. On the T2* ladder it never binds - durations are
-wall-clock seconds and effectively continuous. It will bind on a quantised metric, and
+The ledger declares 5 and says so. On the 1 to 10 µs T2* ladder it never bound (commit
+aff894e; not re-measured on the 2 to 5 µs ladder): durations are wall-clock seconds and
+effectively continuous. It will bind on a quantised metric, and
 there the number is a placeholder rather than a calibrated threshold.
 
 ## 7. What the provenance record cannot hold

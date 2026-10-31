@@ -514,16 +514,13 @@ def configure_ramsey_job(
 
 # ---------------------------------------------------------------------------- the T2* family
 
-# The T2* family's threshold ladder, in SI seconds.
+# The T2* family's threshold ladder, in SI seconds: `analyzers.t2star.T2STAR_DEFAULT_LADDER`,
+# derived rather than retyped, so the survey's columns and the panel's rungs cannot diverge.
 #
-# DERIVED from the analyzer's own default rather than retyped. A first version of this
-# declared its own comprehension under the comment "one ladder, one place", which was false:
-# `analyzers.t2star.T2STAR_DEFAULT_LADDER` already held the same ten rungs, so three copies
-# became two and nothing pinned them equal. They coincide today, and a silent divergence
-# would put the survey's columns out of correspondence with the panel's.
-#
-# A family that needs a different ladder passes `thresholds=` - which is what the analyzer's
-# own docstring asks production jobs to do, and what keeps this a default rather than a rule.
+# The ladder is declared once and is the same for every record. `thresholds=` remains a
+# parameter of the T2* recipes, and no job passes it. `tests/test_t2star_ladder.py` holds
+# every job node whose `thresholds` has a big-good rung to this ladder, and names the jobs
+# that carve a rung of their own.
 T2STAR_THRESHOLDS: list[tuple[str, float, bool]] = list(T2STAR_DEFAULT_LADDER)
 
 # The T2* carve parameters, the defaults of both `wire_t2star_carve` and

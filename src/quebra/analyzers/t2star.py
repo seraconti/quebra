@@ -1,14 +1,14 @@
 """T2* coherence-time analyzer.
 
-T2STAR_DEFAULT_LADDER - analyzer-supplied starting point for 912-day silicon
-quantum dot data (T2* range 1–10 µs).  Production jobs MUST supply their own
-thresholds via the `thresholds=` argument to make_panel_data:
+T2STAR_DEFAULT_LADDER is the T2* ladder, declared once and the same for every record:
+2 to 5 µs in steps of 0.5 µs, big values good. Every T2* carve, panel, ledger and
+tellability step in `jobs/active` reads it through `recipes.T2STAR_THRESHOLDS`. The two
+one-rung Kaplan-Meier figures (`jobs/active/km_*.py`) are not ladder carves and declare
+their own rung; `tests/test_t2star_ladder.py` names them.
 
-    - Devices with T2* ranges outside 1–10 µs (e.g. superconducting qubits
-      with T2* > 100 µs) MUST supply their own thresholds; the default ladder
-      will not be informative.
-    - Values near 1 µs may indicate Ramsey fit failure rather than genuinely
-      short T2*.  Reader caveat, not auto-filtered.
+A device whose T2* lies outside 2 to 5 µs (a superconducting qubit with T2* > 100 µs, say)
+gets an uninformative ladder: every read on one side of every rung. Values near 1 µs may
+mean a failed Ramsey fit rather than a short T2*; a reader caveat, not filtered.
 
 Values in the ladder are in SI seconds; make_panel_data converts to µs for
 display.  Labels are in µs.
@@ -125,22 +125,19 @@ def run(inputs: T2StarInputs) -> T2StarResult:
 
 
 # ---------------------------------------------------------------------------
-# Analyzer-supplied default ladder (912-day silicon quantum dot context)
-# Values in SI seconds; labels in µs.  Jobs should declare their own
-# thresholds - see module docstring.
+# The T2* ladder, declared once (see module docstring)
+# Values in SI seconds; labels in µs. A label keys its ledger cell's permutation
+# stream (`check_ledger.stream_for`), so an integer rung is "4 µs", never "4.0 µs".
 # ---------------------------------------------------------------------------
 
 T2STAR_DEFAULT_LADDER: list[tuple[str, float, bool]] = [
-    ("1 µs", 1e-6, True),
-    ("2 µs", 2e-6, True),
-    ("3 µs", 3e-6, True),
-    ("4 µs", 4e-6, True),
-    ("5 µs", 5e-6, True),
-    ("6 µs", 6e-6, True),
-    ("7 µs", 7e-6, True),
-    ("8 µs", 8e-6, True),
-    ("9 µs", 9e-6, True),
-    ("10 µs", 10e-6, True),
+    ("2 µs", 2.0e-6, True),
+    ("2.5 µs", 2.5e-6, True),
+    ("3 µs", 3.0e-6, True),
+    ("3.5 µs", 3.5e-6, True),
+    ("4 µs", 4.0e-6, True),
+    ("4.5 µs", 4.5e-6, True),
+    ("5 µs", 5.0e-6, True),
 ]
 
 
@@ -165,8 +162,8 @@ def make_panel_data(
     """Convert T2StarResult to WithinCalibrationPanelData for WithinCalibrationPanel.
 
     `thresholds`: job-supplied list of (label, value_s, big_values_good) triples
-    where values are in SI seconds.  If None, falls back to T2STAR_DEFAULT_LADDER
-    (appropriate for the 912-day context; not universal - see module docstring).
+    where values are in SI seconds.  If None, falls back to T2STAR_DEFAULT_LADDER,
+    the declared ladder (see module docstring).
     If [], no derived threshold views render.
     """
     frame = result.frame
