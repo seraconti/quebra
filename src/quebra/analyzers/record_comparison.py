@@ -4,7 +4,13 @@ random-effects summary of many records' restricted means.
 Every step here takes the event tables of several records at one threshold and side, where
 `analyzers/survival.py` takes one. The record is named by its table's `dataset_id`; two
 tables of one comparison must agree on threshold label and side and name different records,
-or the step raises.
+or the step raises. A record never sits beside one of its halves (`HALF_SUFFIXES`): the
+halves are row splits of one scan, so the same reads would be compared with themselves.
+
+The per-ladder steps at the end take the records' carves, refuse carves made on different
+ladders or under different gap rules (a label alone does not say which threshold it names),
+and run the comparison at every threshold and side. `pair_table` and
+`random_effects_table` flatten their results into one long table, one number per row.
 
 The restricted means are compared up to one restriction time, the comparison tau, fixed by
 a rule passed as a step argument (`tau_rule`), so the rule reaches the run identity and the
@@ -49,10 +55,11 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 
 import numpy as np
+import pandas as pd
 from scipy import optimize, stats
 
 from quebra.analyzers.check_attachment import (
@@ -60,12 +67,25 @@ from quebra.analyzers.check_attachment import (
     RESTS_ON_EXCHANGEABILITY,
     CheckAttachment,
 )
-from quebra.analyzers.event_table import EventTable
+from quebra.analyzers.event_table import (
+    SIDES,
+    EventTable,
+    EventTables,
+    event_tables_from_carve,
+)
 from quebra.analyzers.kaplan_meier import CONF_LEVEL, z_two_sided
-from quebra.analyzers.survival import CurveSummaries, curve_summaries
+from quebra.analyzers.survival import ByThresholdSide, CurveSummaries, curve_summaries
+from quebra.analyzers.windows import WindowsResult
 
 TAU_RULE_MIN_LARGEST_AGE = "min_largest_age"
 TAU_RULES = (TAU_RULE_MIN_LARGEST_AGE,)
+# Where a forest's tau is taken: over each group's own records, or over every record of
+# every group, so that groups drawn on one axis share one tau.
+TAU_PER_GROUP = "per_group"
+TAU_ACROSS_GROUPS = "across_groups"
+TAU_SCOPES = (TAU_PER_GROUP, TAU_ACROSS_GROUPS)
+# A record named `<record>_before` or `<record>_after` is a half of `<record>`.
+HALF_SUFFIXES = ("_before", "_after")
 
 NO_WINDOWS = "no windows at this threshold and side"
 ZERO_VARIANCE = "no death before tau: zero variance, not pooled"
@@ -98,8 +118,32 @@ class ComparisonTau:
     excluded: tuple[tuple[str, str], ...]
 
 
+def require_no_record_beside_its_halves(names: Sequence[str]) -> None:
+    """Raise when a record and one of its halves are both in `names`."""
+    present = set(names)
+    for name in names:
+        for suffix in HALF_SUFFIXES:
+            if name.endswith(suffix) and name[: -len(suffix)] in present:
+                raise ValueError(
+                    f"{name} is a half of {name[: -len(suffix)]}: a record and its "
+                    f"halves never sit in one comparison"
+                )
+
+
+def require_disjoint_groups(groups: Mapping[str, Sequence[str]]) -> list[str]:
+    """Every record of `groups` in order; raise when one is named twice or beside its half.
+
+    The halves rule spans all the groups, since every group may share one tau.
+    """
+    everyone = [name for names in groups.values() for name in names]
+    if len(set(everyone)) != len(everyone):
+        raise ValueError(f"a record appears twice across the groups: {everyone}")
+    require_no_record_beside_its_halves(everyone)
+    return everyone
+
+
 def _require_comparable(tables: Sequence[EventTable]) -> None:
-    """One threshold, one side, and every record named once; raise otherwise."""
+    """One threshold, one side, every record named once and none beside its halves."""
     if not tables:
         raise ValueError("a comparison needs at least one event table")
     labels = {t.threshold_label for t in tables}
@@ -112,6 +156,7 @@ def _require_comparable(tables: Sequence[EventTable]) -> None:
     names = [t.dataset_id for t in tables]
     if len(set(names)) != len(names):
         raise ValueError(f"a record appears twice in one comparison: {names}")
+    require_no_record_beside_its_halves(names)
 
 
 def comparison_tau(tables: Sequence[EventTable], *, tau_rule: str) -> ComparisonTau:
@@ -421,13 +466,41 @@ def _row(summary: CurveSummaries, record: str, z: float) -> RecordRow:
     )
 
 
+def _tau_over(
+    own: ComparisonTau,
+    tables: Sequence[EventTable],
+    tau_from: Sequence[EventTable],
+    tau_rule: str,
+) -> ComparisonTau:
+    """`own` with its tau taken over `tau_from`, which must hold every record of `tables`."""
+    wider = comparison_tau(tau_from, tau_rule=tau_rule)
+    if (tau_from[0].threshold_label, tau_from[0].side) != (
+        tables[0].threshold_label,
+        tables[0].side,
+    ):
+        raise ValueError(
+            "tau taken at another threshold or side than the records pooled"
+        )
+    missing = sorted({t.dataset_id for t in tables} - {t.dataset_id for t in tau_from})
+    if missing:
+        raise ValueError(f"tau taken over records that leave out {missing}")
+    if not own.included:
+        return own
+    return replace(own, rmst_tau_s=wider.rmst_tau_s, tau_set_by=wider.tau_set_by)
+
+
 def random_effects_summary(
     tables: Sequence[EventTable],
     *,
     tau_rule: str,
     conf_level: float = CONF_LEVEL,
+    tau_from: Sequence[EventTable] | None = None,
 ) -> RandomEffectsSummary:
     """DerSimonian-Laird summary of the records' restricted means at the comparison tau.
+
+    `tau_from`, when given, holds every record of `tables` and more: tau is then the
+    smallest largest age over all of them, and `tau.tau_set_by` may name a record that is
+    not pooled here. `tau.included` and `tau.excluded` still name this summary's records.
 
     Order: records with no windows are excluded (`comparison_tau`); tau is taken over the
     rest; each record's restricted mean y_i and variance v_i = se_i^2 are `curve_summaries`
@@ -476,6 +549,8 @@ def random_effects_summary(
     """
     z = z_two_sided(conf_level)
     tau = comparison_tau(tables, tau_rule=tau_rule)
+    if tau_from is not None:
+        tau = _tau_over(tau, tables, tau_from, tau_rule)
     common = dict(
         threshold_label=tables[0].threshold_label,
         side=tables[0].side,
@@ -549,3 +624,313 @@ def random_effects_summary(
         prediction_upper_s=mu + spread,
         not_pooled_reason=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Every threshold and side at once: the steps `comparison_recipe` wires
+# ---------------------------------------------------------------------------
+
+
+def _tables_on_one_ladder(
+    carves: Sequence[WindowsResult],
+) -> tuple[tuple[str, ...], list[EventTables]]:
+    """The ladder every carve shares and each carve's event tables, or raise.
+
+    A table carries a threshold's label and not its value, so records carved on two
+    ladders could meet under one label at two thresholds. Every carve must have the same
+    labels in the same order, each label one value and one direction wherever a carve has a
+    window at it, and one gap rule, since the gap rule moves window boundaries.
+    """
+    tables = [event_tables_from_carve(carve) for carve in carves]
+    ladders = {t.ladder for t in tables}
+    if len(ladders) != 1:
+        raise ValueError(f"records carved on different ladders: {sorted(ladders)}")
+    gap_mults = {float(carve.meta["gap_mult"]) for carve in carves}  # type: ignore[arg-type]
+    if len(gap_mults) != 1:
+        raise ValueError(
+            f"records carved under different gap rules: {sorted(gap_mults)}"
+        )
+    meanings: dict[str, set[tuple[float, bool]]] = {}
+    for carve in carves:
+        for frame in (carve.windows_in_spec, carve.windows_out_of_spec):
+            columns = frame[["threshold_label", "threshold_value", "big_values_good"]]
+            for label, value, big in columns.drop_duplicates().itertuples(index=False):
+                meanings.setdefault(str(label), set()).add((float(value), bool(big)))
+    clashes = {label: sorted(m) for label, m in meanings.items() if len(m) > 1}
+    if clashes:
+        raise ValueError(f"one label names two thresholds across records: {clashes}")
+    (ladder,) = ladders
+    return ladder, tables
+
+
+def compare_pair_set(
+    carve_a: WindowsResult,
+    carve_b: WindowsResult,
+    *,
+    tau_rule: str,
+    conf_level: float = CONF_LEVEL,
+) -> ByThresholdSide[PairComparison]:
+    """`compare_pair` of two records at every threshold and side of their one ladder.
+
+    Validity assumptions
+
+    - Assumption: each p is read at its own threshold and side.
+      Diagnostic: none here; the comparison table notes every p as unadjusted.
+      Consequence of violation: the smallest p over the ladder and both sides, read as one
+      test's p, overstates the evidence, since each cell had its own chance to fall low.
+      Reference: no source located.
+    - The assumptions of `compare_pair`, at each threshold and side.
+    """
+    ladder, (a, b) = _tables_on_one_ladder((carve_a, carve_b))
+    return ByThresholdSide(
+        ladder=ladder,
+        items={
+            (label, side): compare_pair(
+                a.table(label, side),
+                b.table(label, side),
+                tau_rule=tau_rule,
+                conf_level=conf_level,
+            )
+            for label in ladder
+            for side in SIDES
+        },
+    )
+
+
+@dataclass
+class RandomEffectsSet:
+    """One random-effects summary per group, threshold and side.
+
+    `groups` maps each group to its records, as the job declared them. `tau_scope` says
+    whether a group's tau is taken over its own records (`TAU_PER_GROUP`) or over every
+    record of every group (`TAU_ACROSS_GROUPS`), at each threshold and side.
+    """
+
+    tau_rule: str
+    tau_scope: str
+    conf_level: float
+    groups: dict[str, tuple[str, ...]]
+    ladder: tuple[str, ...]
+    items: dict[tuple[str, str, str], RandomEffectsSummary]
+
+    def get(self, group: str, threshold_label: str, side: str) -> RandomEffectsSummary:
+        key = (group, threshold_label, side)
+        if key not in self.items:
+            raise KeyError(
+                f"no summary for {key}; groups {list(self.groups)}, ladder "
+                f"{list(self.ladder)}"
+            )
+        return self.items[key]
+
+
+def random_effects_set(
+    *carves: WindowsResult,
+    groups: Mapping[str, Sequence[str]],
+    tau_scope: str,
+    tau_rule: str,
+    conf_level: float = CONF_LEVEL,
+) -> RandomEffectsSet:
+    """`random_effects_summary` of each group at every threshold and side of one ladder.
+
+    A carve is matched to its record by `meta["dataset_id"]`, so two carves naming one record
+    raise. The groups pass `require_disjoint_groups`.
+
+    Validity assumptions
+
+    - Assumption: under `TAU_ACROSS_GROUPS`, the record that sets tau, the shortest-lived of
+      any group, leaves each group's records time to die before it.
+      Diagnostic: every group's `tau.tau_set_by` names that record, and each group's rows
+      name the records left out for zero variance.
+      Consequence of violation: more records have no death before tau and leave the pool,
+      so every group's pooled restricted mean leans further short (the zero-variance
+      assumption of `random_effects_summary`).
+      Reference: no source located.
+    - The assumptions of `random_effects_summary`, at each group, threshold and side.
+    """
+    if tau_scope not in TAU_SCOPES:
+        raise ValueError(f"tau_scope must be one of {TAU_SCOPES}; got {tau_scope!r}")
+    everyone = require_disjoint_groups(groups)
+    ladder, tables = _tables_on_one_ladder(carves)
+    carved = [str(c.meta["dataset_id"]) for c in carves]
+    if len(set(carved)) != len(carved):
+        raise ValueError(f"two carves name one record: {carved}")
+    by_name = dict(zip(carved, tables))
+    members = {group: tuple(names) for group, names in groups.items()}
+    unknown = sorted(set(everyone) - set(by_name))
+    if unknown:
+        raise KeyError(f"groups name records with no carve: {unknown}")
+    items: dict[tuple[str, str, str], RandomEffectsSummary] = {}
+    for label in ladder:
+        for side in SIDES:
+            wider = (
+                [by_name[name].table(label, side) for name in everyone]
+                if tau_scope == TAU_ACROSS_GROUPS
+                else None
+            )
+            for group, names in members.items():
+                items[(group, label, side)] = random_effects_summary(
+                    [by_name[name].table(label, side) for name in names],
+                    tau_rule=tau_rule,
+                    conf_level=conf_level,
+                    tau_from=wider,
+                )
+    return RandomEffectsSet(
+        tau_rule=tau_rule,
+        tau_scope=tau_scope,
+        conf_level=conf_level,
+        groups=members,
+        ladder=ladder,
+        items=items,
+    )
+
+
+# ---------------------------------------------------------------------------
+# The comparison table: one number per row
+# ---------------------------------------------------------------------------
+
+TABLE_COLUMNS = (
+    "comparison",
+    "group",
+    "record",
+    "threshold_label",
+    "side",
+    "quantity",
+    "value",
+    "note",
+)
+POOLED = "pooled"
+UNADJUSTED = "unadjusted for any other comparison"
+_RECORD_QUANTITIES = ("rmst_s", "rmst_se_s", "n_windows", "n_deaths")
+_POOLED_QUANTITIES = (
+    "k_pooled",
+    "pooled_s",
+    "pooled_se_s",
+    "pooled_lower_s",
+    "pooled_upper_s",
+    "between_var_s2",
+    "between_var_lower_s2",
+    "between_var_upper_s2",
+    "q_statistic",
+    "q_df",
+    "i2_fraction",
+    "prediction_lower_s",
+    "prediction_upper_s",
+)
+
+
+def _frame(rows: list[tuple[object, ...]]) -> pd.DataFrame:
+    # Object columns, so a number that was not computed stays None and never reads as NaN.
+    return pd.DataFrame(rows, columns=list(TABLE_COLUMNS), dtype=object)
+
+
+def _tau_note(tau: ComparisonTau, scope: str | None = None) -> str:
+    rule = tau.tau_rule if scope is None else f"{tau.tau_rule}, {scope}"
+    if tau.rmst_tau_s is None:
+        why = "; ".join(f"{record}: {reason}" for record, reason in tau.excluded)
+        return f"{rule}; no record with windows ({why})"
+    return f"{rule}, set by {tau.tau_set_by}"
+
+
+def pair_table(
+    pairs: ByThresholdSide[PairComparison], *, comparison: str
+) -> pd.DataFrame:
+    """Every number of a pair at every threshold and side, one per row (`TABLE_COLUMNS`).
+
+    `record` names the record a number belongs to, or "a vs b" for the pair's own numbers.
+    A number not computed is None, and its row's note gives the reason. A pair not computed
+    forms no record summary, so both records' counts are None too; its tau row keeps the
+    tau the rule gave over the record with windows, and its note says nothing was computed
+    at it.
+    """
+    rows: list[tuple[object, ...]] = []
+    for (label, side), pair in pairs.items.items():
+        both = f"{pair.record_a} vs {pair.record_b}"
+        tau_note = _tau_note(pair.tau)
+        if pair.not_computed_reason is not None and pair.tau.rmst_tau_s is not None:
+            tau_note += f"; nothing computed at it ({pair.not_computed_reason})"
+        cells: list[tuple[str, str, object, str | None]] = [
+            (both, "tau_s", pair.tau.rmst_tau_s, tau_note)
+        ]
+        for record, summary in (
+            (pair.record_a, pair.summary_a),
+            (pair.record_b, pair.summary_b),
+        ):
+            cells += [
+                (
+                    record,
+                    quantity,
+                    None if summary is None else getattr(summary, quantity),
+                    pair.not_computed_reason,
+                )
+                for quantity in _RECORD_QUANTITIES
+            ]
+        cells += [
+            (both, quantity, getattr(pair, quantity), pair.not_computed_reason)
+            for quantity in ("rmst_difference_s", "rmst_difference_se_s")
+        ]
+        cells += [
+            (
+                both,
+                quantity,
+                getattr(pair, quantity),
+                pair.logrank_not_computed_reason
+                or (UNADJUSTED if quantity == "logrank_p" else None),
+            )
+            for quantity in ("logrank_z", "logrank_chi2", "logrank_p")
+        ]
+        cells.append((both, "check_outcome", None, pair.check_summary()))
+        rows += [
+            (comparison, "", record, label, side, quantity, value, note)
+            for record, quantity, value, note in cells
+        ]
+    return _frame(rows)
+
+
+def random_effects_table(
+    summaries: RandomEffectsSet, *, comparison: str
+) -> pd.DataFrame:
+    """Every number of each group's summary at every threshold and side, one per row.
+
+    `record` is "pooled" for the summary's own numbers: tau, with the rule, the scope and
+    the record that set it in the note, and `conf_level`, the level of every interval in
+    the group's rows. A record left out of the pool keeps its restricted mean with the
+    reason in the note; a record with no windows has a None restricted mean and its reason.
+    """
+    rows: list[tuple[object, ...]] = []
+    for (group, label, side), summary in summaries.items.items():
+        cells: list[tuple[str, str, object, str | None]] = [
+            (
+                POOLED,
+                "tau_s",
+                summary.tau.rmst_tau_s,
+                _tau_note(summary.tau, summaries.tau_scope),
+            ),
+            (POOLED, "conf_level", summary.conf_level, None),
+        ]
+        cells += [
+            (POOLED, quantity, getattr(summary, quantity), summary.not_pooled_reason)
+            for quantity in _POOLED_QUANTITIES
+        ]
+        for row in summary.rows:
+            cells += [
+                (
+                    row.record,
+                    quantity,
+                    getattr(row.summary, quantity),
+                    row.not_pooled_reason,
+                )
+                for quantity in _RECORD_QUANTITIES
+            ]
+            cells += [
+                (row.record, "lower_s", row.lower_s, row.not_pooled_reason),
+                (row.record, "upper_s", row.upper_s, row.not_pooled_reason),
+            ]
+        cells += [
+            (record, "rmst_s", None, reason) for record, reason in summary.tau.excluded
+        ]
+        cells.append((POOLED, "check_outcome", None, summary.check_summary()))
+        rows += [
+            (comparison, group, record, label, side, quantity, value, note)
+            for record, quantity, value, note in cells
+        ]
+    return _frame(rows)
