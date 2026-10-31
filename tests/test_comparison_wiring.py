@@ -1,13 +1,20 @@
 """The comparisons across records wired as nodes, resolved on synthetic carves.
 
 No real record is loaded: the carves are steps over noisy sines, and the 2x2-shaped record
-is a synthetic pickle written to a temporary directory.
+is a synthetic pickle written to a temporary directory. The comparison jobs are imported,
+which builds their graphs and reads no record.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import zlib
+from dataclasses import replace
+from datetime import date, datetime
+from typing import Any
+from pathlib import Path
+from types import ModuleType
 
 import numpy as np
 import pandas as pd
@@ -38,6 +45,7 @@ PAIR_QUANTITIES = (
     "check_outcome",
 )
 RECORD_QUANTITIES = ("rmst_s", "rmst_se_s", "n_windows", "n_deaths")
+EVIDENCE = "one synthetic run"
 POOLED_QUANTITIES = (
     "k_pooled",
     "pooled_s",
@@ -133,7 +141,9 @@ def test_a_pair_resolves_at_every_rung_and_side_and_its_table_holds_every_number
     """Oracle: specification. One comparison per (label, side), each number on its own row."""
     job = Job("pair_wiring")
     carves = _carves(job, {"r1": 0.0, "r2": 1.0})
-    refs = comparison_recipe.wire_record_pair(job, carves, name="R1", tau_rule=RULE)
+    refs = comparison_recipe.wire_record_pair(
+        job, carves, name="R1", evidence=EVIDENCE, tau_rule=RULE
+    )
     out = _resolve(job, refs)
     pairs, table = out["pair"], out["table"]
 
@@ -146,9 +156,10 @@ def test_a_pair_resolves_at_every_rung_and_side_and_its_table_holds_every_number
         assert pair.not_computed_reason is None, (label, side)
         rows = _rows(table, label, side)
         assert sorted(zip(rows["record"], rows["quantity"])) == sorted(
-            [(both, quantity) for quantity in PAIR_QUANTITIES]
+            [(both, quantity) for quantity in (*PAIR_QUANTITIES, "evidence")]
             + [(r, quantity) for r in ("r1", "r2") for quantity in RECORD_QUANTITIES]
         )
+        assert _cell(rows, both, "evidence") == (None, EVIDENCE)
         assert _cell(rows, both, "tau_s")[0] == pair.tau.rmst_tau_s
         for quantity in PAIR_QUANTITIES[1:-1]:
             assert _cell(rows, both, quantity)[0] == getattr(pair, quantity), quantity
@@ -157,21 +168,30 @@ def test_a_pair_resolves_at_every_rung_and_side_and_its_table_holds_every_number
             for quantity in RECORD_QUANTITIES:
                 assert _cell(rows, record, quantity)[0] == getattr(summary, quantity)
 
-    # The rise has no out-of-spec window: that side is not computed, and its tau row says
-    # so beside the tau the rule gave over r1 alone.
+    # The rise has no out-of-spec window: that side is not computed, its tau row says so
+    # beside the tau the rule gave over r1 alone, and both records' counts are still given,
+    # counted here off r1's event table.
     lone = record_comparison.pair_table(
         record_comparison.compare_pair_set(
             _carve("r1", 0.0), _rise("rise"), tau_rule=RULE
         ),
         comparison="R1x",
+        evidence=EVIDENCE,
     )
+    r1 = event_table.event_tables_from_carve(_carve("r1", 0.0))
+    why = f"rise: {record_comparison.NO_WINDOWS}"
     for label, _, _ in LADDER:
-        assert _cell(_rows(lone, label, SIDE_OUT_OF_SPEC), "r1 vs rise", "tau_s")[
-            1
-        ] == (
-            f"{RULE}, set by r1; nothing computed at it "
-            f"(rise: {record_comparison.NO_WINDOWS})"
+        rows = _rows(lone, label, SIDE_OUT_OF_SPEC)
+        assert _cell(rows, "r1 vs rise", "tau_s")[1] == (
+            f"{RULE}, set by r1; nothing computed at it ({why})"
         )
+        seen = r1.table(label, SIDE_OUT_OF_SPEC)
+        assert _cell(rows, "r1", "rmst_s") == (None, why)
+        assert _cell(rows, "r1", "n_windows") == (len(seen.age_s), None)
+        assert _cell(rows, "r1", "n_deaths") == (int(np.sum(seen.event)), None)
+        assert _cell(rows, "rise", "n_windows") == (0, None)
+        assert _cell(rows, "rise", "n_deaths") == (0, None)
+        assert int(np.sum(seen.event)) > 0
 
 
 def test_a_forest_carries_its_groups_on_the_parameter_row_and_lists_a_small_group() -> (
@@ -190,6 +210,7 @@ def test_a_forest_carries_its_groups_on_the_parameter_row_and_lists_a_small_grou
         carves,
         name="R4",
         groups=groups,
+        evidence={"big": EVIDENCE, "small": EVIDENCE},
         tau_scope=record_comparison.TAU_PER_GROUP,
         tau_rule=RULE,
     )
@@ -276,11 +297,13 @@ def test_a_forest_table_holds_every_number_and_every_none_names_its_reason() -> 
     carves = _carves(job, {f"r{i}": 0.7 * i for i in range(1, 4)})
     for record in ("rise", "rise2"):
         carves[record] = job.step(_rise, name=f"windows_{record}", record=record)
+    evidence = {"big": "four synthetic runs", "lone": "one synthetic run"}
     refs = comparison_recipe.wire_record_forest(
         job,
         carves,
         name="R4",
         groups={"big": ["r1", "r2", "r3", "rise"], "lone": ["rise2"]},
+        evidence=evidence,
         tau_scope=record_comparison.TAU_PER_GROUP,
         tau_rule=RULE,
     )
@@ -301,6 +324,7 @@ def test_a_forest_table_holds_every_number_and_every_none_names_its_reason() -> 
             (pooled, "tau_s"): (tau.rmst_tau_s, tau_note),
             (pooled, "conf_level"): (0.95, None),
             (pooled, "check_outcome"): (None, summary.check_summary()),
+            (pooled, "evidence"): (None, evidence[group]),
         }
         for quantity in POOLED_QUANTITIES:
             expected[(pooled, quantity)] = (
@@ -317,6 +341,8 @@ def test_a_forest_table_holds_every_number_and_every_none_names_its_reason() -> 
             expected[(row.record, "upper_s")] = (row.upper_s, row.not_pooled_reason)
         for record, reason in tau.excluded:
             expected[(record, "rmst_s")] = (None, reason)
+            expected[(record, "n_windows")] = (0, reason)
+            expected[(record, "n_deaths")] = (0, reason)
         rows = _rows(table[table["group"] == group], label, side)
         assert sorted(zip(rows["record"], rows["quantity"])) == sorted(expected)
         for (record, quantity), cell in expected.items():
@@ -341,7 +367,11 @@ def test_a_comparison_refuses_halves_doubles_and_carves_that_disagree() -> None:
     job = Job("refusals")
     with pytest.raises(ValueError, match="is a half of"):
         comparison_recipe.wire_record_pair(
-            job, _carves(job, {full: 0.0, half: 1.0}), name="J", tau_rule=RULE
+            job,
+            _carves(job, {full: 0.0, half: 1.0}),
+            name="J",
+            evidence=EVIDENCE,
+            tau_rule=RULE,
         )
     with pytest.raises(ValueError, match="is a half of"):
         record_comparison.compare_pair_set(
@@ -370,6 +400,7 @@ def test_a_comparison_refuses_halves_doubles_and_carves_that_disagree() -> None:
             carves,
             name="R4",
             groups={"g": [full, "b"], "h": [f"{full}_after"]},
+            evidence={"g": EVIDENCE, "h": EVIDENCE},
             **scope,
         )
     with pytest.raises(ValueError, match="appears twice across the groups"):
@@ -378,8 +409,65 @@ def test_a_comparison_refuses_halves_doubles_and_carves_that_disagree() -> None:
             carves,
             name="R4",
             groups={"g": [full, "b"], "h": [full]},
+            evidence={"g": EVIDENCE, "h": EVIDENCE},
             **scope,
         )
+    # Every group, and every pair, states its evidence: at graph build and in the step.
+    with pytest.raises(ValueError, match="evidence needs one line per group"):
+        comparison_recipe.wire_record_forest(
+            forest_job,
+            carves,
+            name="R4",
+            groups={"g": [full, "b"]},
+            evidence={"h": EVIDENCE},
+            **scope,
+        )
+    with pytest.raises(ValueError, match="evidence needs one line per group"):
+        comparison_recipe.wire_record_pair(
+            forest_job,
+            {full: carves[full], "b": carves["b"]},
+            name="P",
+            evidence=" ",
+            tau_rule=RULE,
+        )
+    three = [_carve(r, 0.5 * i) for i, r in enumerate("abc")]
+    with pytest.raises(ValueError, match="evidence needs one line per group"):
+        record_comparison.random_effects_table(
+            record_comparison.random_effects_set(
+                *three, groups={"g": ["a", "b", "c"]}, **scope
+            ),
+            comparison="R",
+            evidence={"g": ""},
+        )
+    with pytest.raises(ValueError, match="evidence needs one line per group"):
+        record_comparison.pair_table(
+            record_comparison.compare_pair_set(*three[:2], tau_rule=RULE),
+            comparison="P",
+            evidence="",
+        )
+    # Each half of the evidence rule alone: a group with no line, a line with no group,
+    # and a line that is not a string.
+    forest_three = record_comparison.random_effects_set(
+        *three, groups={"g": ["a", "b", "c"]}, **scope
+    )
+    for bad in ({}, {"g": EVIDENCE, "h": EVIDENCE}, {"g": None}):
+        with pytest.raises(ValueError, match="evidence needs one line per group"):
+            record_comparison.random_effects_table(
+                forest_three, comparison="R", evidence=bad
+            )
+    # An excluded record's counts are 0 only because it has no windows: a record
+    # excluded for any other reason is refused, not reported with 0.
+    key = next(iter(forest_three.items))
+    summary = forest_three.items[key]
+    odd = replace(summary, tau=replace(summary.tau, excluded=(("d", "another"),)))
+    with pytest.raises(ValueError, match="known here only when it has no windows"):
+        record_comparison.random_effects_table(
+            replace(forest_three, items={**forest_three.items, key: odd}),
+            comparison="R",
+            evidence={"g": EVIDENCE},
+        )
+    with pytest.raises(ValueError, match="not a DDMMYY"):
+        comparison_recipe.record_dataset("120423_6D2S_q1")
     with pytest.raises(ValueError, match="two carves name one record"):
         record_comparison.random_effects_set(
             _carve("a", 0.0),
@@ -480,3 +568,137 @@ def test_a_2x2_shaped_record_loads_through_track912_and_carves_on_the_t2star_lad
         assert table.n_windows > 0, key
         np.testing.assert_array_equal(ours.tables[key].age_s, table.age_s)
         np.testing.assert_array_equal(ours.tables[key].event, table.event)
+
+
+JOBS = Path(__file__).resolve().parents[1] / "jobs" / "composite"
+
+
+def _job_module(stem: str) -> ModuleType:
+    """Import one job file by path: its graph is built and no record is read."""
+    spec = importlib.util.spec_from_file_location(f"_job_{stem}", JOBS / f"{stem}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _node(job: Job, name: str) -> Any:
+    (node,) = [node for node in job.dag.values() if node.fn_name == name]
+    return node
+
+
+def _carved(job: Job, name: str) -> list[str]:
+    """The records whose carves feed the step `name`, in input order."""
+    return [
+        job.dag[ref.node_id].fn_name.removeprefix("windows_")
+        for ref in _node(job, name).inputs
+        if job.dag[ref.node_id].fn_name.startswith("windows_")
+    ]
+
+
+# The condition groups as declared at the jobs stop: device, first and last night, records.
+SPANS = {
+    "6D2S 200 mK April": ("6D2S", date(2023, 4, 4), date(2023, 4, 22), 11),
+    "6D2S 300 mK June": ("6D2S", date(2023, 6, 7), date(2023, 6, 9), 6),
+    "6D2S 200 mK June-July": ("6D2S", date(2023, 6, 27), date(2023, 7, 11), 7),
+    "2x2 11 mK I": ("2x2", date(2023, 6, 9), date(2023, 6, 10), 4),
+    "2x2 200 mK I": ("2x2", date(2023, 6, 20), date(2023, 6, 20), 1),
+    "2x2 200 mK II": ("2x2", date(2023, 6, 25), date(2023, 7, 12), 13),
+    "2x2 11 mK II": ("2x2", date(2023, 8, 22), date(2023, 8, 22), 4),
+}
+
+
+def test_the_comparison_jobs_wire_the_records_and_settings_of_the_specification() -> (
+    None
+):
+    """Oracle: specification, the rows of the paper's dataset tables (Supp. Figs. 10, 11)
+    grouped by the nights declared at the jobs stop, and the settings declared there.
+
+    Read off each job's graph, not its constants: the records each step consumes, in
+    order, the kwargs it carries, and the Dataset each record loads. R4's device groups must
+    hold exactly R3's records, and no record left out at the stop, and no half, appears.
+    """
+    r1, r2, r3, r4 = (
+        _job_module(stem).job
+        for stem in (
+            "compare_r1_qubits_one_night",
+            "compare_r2_nights_one_qubit",
+            "compare_r3_records_one_condition",
+            "compare_r4_two_devices",
+        )
+    )
+    settings = {"tau_rule": RULE, "conf_level": 0.95}
+    for job, name, pair in (
+        (r1, "r1", ["210423_6D2S_qubit1", "210423_6D2S_qubit2"]),
+        (r2, "r2", ["070423_6D2S_qubit1", "100423_6D2S_qubit1"]),
+    ):
+        assert _carved(job, f"{name}_pair") == pair
+        assert _node(job, f"{name}_pair").kwargs == settings
+    assert _node(r1, "r1_table").kwargs["evidence"] == "one run, one voltage setting"
+
+    forests = {}
+    for job, name, scope in (
+        (r3, "r3", record_comparison.TAU_PER_GROUP),
+        (r4, "r4", record_comparison.TAU_ACROSS_GROUPS),
+    ):
+        kwargs = dict(_node(job, f"{name}_forest").kwargs)
+        forests[name] = kwargs.pop("groups")
+        assert kwargs == {**settings, "tau_scope": scope}
+        assert sorted(_carved(job, f"{name}_forest")) == sorted(
+            stem for stems in forests[name].values() for stem in stems
+        )
+    groups, devices = forests["r3"], forests["r4"]
+    assert set(groups) == set(SPANS)
+    for group, stems in groups.items():
+        device, first, last, count = SPANS[group]
+        assert len(set(stems)) == count, group
+        for stem in stems:
+            night, on, _ = stem.split("_")
+            assert on == device, (group, stem)
+            assert first <= datetime.strptime(night, "%d%m%y").date() <= last, (
+                group,
+                stem,
+            )
+    assert set(devices) == {"6D2S", "2x2"}
+    for device in devices:
+        assert sorted(devices[device]) == sorted(
+            stem
+            for group, stems in groups.items()
+            if SPANS[group][0] == device
+            for stem in stems
+        )
+    everyone = {stem for stems in groups.values() for stem in stems}
+    left_out = {
+        "070723_6D2S_qubit4",
+        "100723_6D2S_qubit4",
+        "070723_6D2S_qubit5",
+        "070723_6D2S_qubit6",
+    }
+    assert len(everyone) == 46 and not everyone & left_out
+    assert not any(stem.endswith(record_comparison.HALF_SUFFIXES) for stem in everyone)
+
+    evidence = _node(r3, "r3_table").kwargs["evidence"]
+    assert set(evidence) == set(groups)
+    lines = {
+        device: {evidence[g] for g in groups if SPANS[g][0] == device}
+        for device in devices
+    }
+    assert lines["2x2"] == {
+        "temperature and voltage configuration stated (Supp. Fig. S13)"
+    }
+    (six,) = lines["6D2S"]
+    assert six.startswith("temperature period stated;")
+    assert _node(r2, "r2_table").kwargs["evidence"] == six
+    assert set(_node(r4, "r4_table").kwargs["evidence"]) == {"6D2S", "2x2"}
+
+    # Each record loads from its file, named by its stem: no run_name renames it.
+    for job in (r1, r2, r3, r4):
+        for node in job.dag.values():
+            dataset = node.kwargs.get("dataset")
+            if dataset is None:
+                continue
+            stem = dataset.path.stem
+            _, device, qubit = stem.split("_")
+            assert str(dataset.path) == f"data/real_private/{device}/{stem}.pickle"
+            assert (dataset.device, dataset.qubit) == (device, int(qubit[5:]))
+            assert dataset.schema is track912Schema and "run_name" not in dataset.extra

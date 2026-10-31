@@ -10,7 +10,9 @@ halves are row splits of one scan, so the same reads would be compared with them
 The per-ladder steps at the end take the records' carves, refuse carves made on different
 ladders or under different gap rules (a label alone does not say which threshold it names),
 and run the comparison at every threshold and side. `pair_table` and
-`random_effects_table` flatten their results into one long table, one number per row.
+`random_effects_table` flatten their results into one long table, one number per row, with
+the job's evidence line for each pair or group: what the records' metadata shows was held
+fixed between them.
 
 The restricted means are compared up to one restriction time, the comparison tau, fixed by
 a rule passed as a step argument (`tau_rule`), so the rule reaches the run identity and the
@@ -208,6 +210,9 @@ class PairComparison:
     difference is 0 when neither record has a death before tau: the Greenwood-type variance
     has no term then, which is no claim of certainty.
 
+    `n_windows_*` and `n_deaths_*` are each record's counts at this threshold and side, read
+    off its event table, so they are set even when nothing else is computed.
+
     The point difference is descriptive; the p and the SE rest on exchangeability.
     `checks_a` / `checks_b` are each record's check-outcome field; no step here fills them,
     so they read NOT ASSESSED.
@@ -228,6 +233,10 @@ class PairComparison:
     rmst_difference_se_s: float | None
     not_computed_reason: str | None
     logrank_not_computed_reason: str | None
+    n_windows_a: int
+    n_deaths_a: int
+    n_windows_b: int
+    n_deaths_b: int
     point_standing: str = DESCRIPTIVE
     interval_standing: str = RESTS_ON_EXCHANGEABILITY
     checks_a: CheckAttachment = field(default_factory=CheckAttachment)
@@ -298,6 +307,10 @@ def compare_pair(
         side=table_a.side,
         conf_level=conf_level,
         tau=tau,
+        n_windows_a=table_a.n_windows,
+        n_deaths_a=table_a.n_deaths,
+        n_windows_b=table_b.n_windows,
+        n_deaths_b=table_b.n_deaths,
     )
     if tau.excluded:
         reason = "; ".join(f"{r}: {why}" for r, why in tau.excluded)
@@ -800,7 +813,9 @@ TABLE_COLUMNS = (
 )
 POOLED = "pooled"
 UNADJUSTED = "unadjusted for any other comparison"
-_RECORD_QUANTITIES = ("rmst_s", "rmst_se_s", "n_windows", "n_deaths")
+_RMST_QUANTITIES = ("rmst_s", "rmst_se_s")
+_COUNT_QUANTITIES = ("n_windows", "n_deaths")
+_RECORD_QUANTITIES = _RMST_QUANTITIES + _COUNT_QUANTITIES
 _POOLED_QUANTITIES = (
     "k_pooled",
     "pooled_s",
@@ -831,17 +846,39 @@ def _tau_note(tau: ComparisonTau, scope: str | None = None) -> str:
     return f"{rule}, set by {tau.tau_set_by}"
 
 
+def require_evidence(evidence: Mapping[str, str], groups: Sequence[str]) -> None:
+    """Raise unless `evidence` holds one non-blank string per group and no other key."""
+    missing = sorted(set(groups) - set(evidence))
+    unknown = sorted(set(evidence) - set(groups))
+    blank = sorted(
+        g
+        for g, line in evidence.items()
+        if not isinstance(line, str) or not line.strip()
+    )
+    if missing or unknown or blank:
+        raise ValueError(
+            f"evidence needs one line per group: missing {missing}, unknown {unknown}, "
+            f"blank {blank}"
+        )
+
+
 def pair_table(
-    pairs: ByThresholdSide[PairComparison], *, comparison: str
+    pairs: ByThresholdSide[PairComparison], *, comparison: str, evidence: str
 ) -> pd.DataFrame:
     """Every number of a pair at every threshold and side, one per row (`TABLE_COLUMNS`).
 
     `record` names the record a number belongs to, or "a vs b" for the pair's own numbers.
     A number not computed is None, and its row's note gives the reason. A pair not computed
-    forms no record summary, so both records' counts are None too; its tau row keeps the
-    tau the rule gave over the record with windows, and its note says nothing was computed
-    at it.
+    forms no record summary, so its restricted means are None, while each record's window
+    and death counts, read off its own event table, are still given, with no note; its tau
+    row keeps the tau the rule gave over the record with windows, and its note says nothing
+    was computed at it.
+
+    `evidence` says what the records' metadata shows was held fixed between them; it is
+    the note of an `evidence` row at every threshold and side, and enters no number, which
+    is why it is a kwarg of this step and not of the comparison.
     """
+    require_evidence({comparison: evidence}, [comparison])
     rows: list[tuple[object, ...]] = []
     for (label, side), pair in pairs.items.items():
         both = f"{pair.record_a} vs {pair.record_b}"
@@ -851,9 +888,9 @@ def pair_table(
         cells: list[tuple[str, str, object, str | None]] = [
             (both, "tau_s", pair.tau.rmst_tau_s, tau_note)
         ]
-        for record, summary in (
-            (pair.record_a, pair.summary_a),
-            (pair.record_b, pair.summary_b),
+        for record, summary, counts in (
+            (pair.record_a, pair.summary_a, (pair.n_windows_a, pair.n_deaths_a)),
+            (pair.record_b, pair.summary_b, (pair.n_windows_b, pair.n_deaths_b)),
         ):
             cells += [
                 (
@@ -862,7 +899,11 @@ def pair_table(
                     None if summary is None else getattr(summary, quantity),
                     pair.not_computed_reason,
                 )
-                for quantity in _RECORD_QUANTITIES
+                for quantity in _RMST_QUANTITIES
+            ]
+            cells += [
+                (record, quantity, count, None)
+                for quantity, count in zip(_COUNT_QUANTITIES, counts, strict=True)
             ]
         cells += [
             (both, quantity, getattr(pair, quantity), pair.not_computed_reason)
@@ -879,6 +920,7 @@ def pair_table(
             for quantity in ("logrank_z", "logrank_chi2", "logrank_p")
         ]
         cells.append((both, "check_outcome", None, pair.check_summary()))
+        cells.append((both, "evidence", None, evidence))
         rows += [
             (comparison, "", record, label, side, quantity, value, note)
             for record, quantity, value, note in cells
@@ -887,15 +929,18 @@ def pair_table(
 
 
 def random_effects_table(
-    summaries: RandomEffectsSet, *, comparison: str
+    summaries: RandomEffectsSet, *, comparison: str, evidence: Mapping[str, str]
 ) -> pd.DataFrame:
     """Every number of each group's summary at every threshold and side, one per row.
 
     `record` is "pooled" for the summary's own numbers: tau, with the rule, the scope and
     the record that set it in the note, and `conf_level`, the level of every interval in
     the group's rows. A record left out of the pool keeps its restricted mean with the
-    reason in the note; a record with no windows has a None restricted mean and its reason.
+    reason in the note; a record with no windows has a None restricted mean, window and
+    death counts of 0, and its reason. `evidence` holds one line per group, as in
+    `pair_table`.
     """
+    require_evidence(evidence, list(summaries.groups))
     rows: list[tuple[object, ...]] = []
     for (group, label, side), summary in summaries.items.items():
         cells: list[tuple[str, str, object, str | None]] = [
@@ -925,10 +970,19 @@ def random_effects_table(
                 (row.record, "lower_s", row.lower_s, row.not_pooled_reason),
                 (row.record, "upper_s", row.upper_s, row.not_pooled_reason),
             ]
-        cells += [
-            (record, "rmst_s", None, reason) for record, reason in summary.tau.excluded
-        ]
+        for record, reason in summary.tau.excluded:
+            if reason != NO_WINDOWS:
+                raise ValueError(
+                    f"{record} was excluded for {reason!r}: its counts are known here "
+                    f"only when it has no windows"
+                )
+            cells += [
+                (record, "rmst_s", None, reason),
+                (record, "n_windows", 0, reason),
+                (record, "n_deaths", 0, reason),
+            ]
         cells.append((POOLED, "check_outcome", None, summary.check_summary()))
+        cells.append((POOLED, "evidence", None, evidence[group]))
         rows += [
             (comparison, group, record, label, side, quantity, value, note)
             for record, quantity, value, note in cells

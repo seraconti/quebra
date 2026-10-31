@@ -268,8 +268,9 @@ panels/      within_calibration.py, across_calibration.py   generic render compo
 plots/       base.py, targets.py, theme.py, *_plot.py   targets: static, academic, poster
 jobs/active/ ramsey_*.py, ramsey_2x2_*.py, t2star_*.py, mtbf_*.py, check_calibration.py,
              check_ledger_6d2s_q*.py (checks only: per-record ledgers + per-qubit survey)
-jobs/composite/ compare_*.py, independence_survey.py   job.include + .ref across datasets;
-             declare JOB_SWEEP = False
+jobs/composite/ compare_*.py, independence_survey.py   composites across datasets, by
+             job.include + .ref or, for the compare_r*.py comparisons, by carving each
+             record through comparison_recipe; declare JOB_SWEEP = False
 src/quebra/recipes.py          RAMSEY_CONFIG + configure_ramsey_job orchestrator, and
                                wire_t2star_carve, the one T2* carve.
                                Reusable library code: keeping it out of jobs/ is what
