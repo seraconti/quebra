@@ -111,6 +111,7 @@ color: object
 include_cumulative_time: bool
 include_cumulative_damage: bool
 include_ttf: bool
+include_relative_error: bool
 ```
 
 Each band is replaceable without touching the others, which is why they are three modules and
@@ -221,8 +222,11 @@ depends on the include flags and the height is dynamic. Fixed width 16 inches.
 
 Rows, in order: `signal`, `distinguish_timeline`, `distinguish_detail`,
 `reliability_timeline`, `survival`, `cumulative` (flagged). A one-line caption sits above
-them. Band 1's row subdivides into primary plus value / sigma / relative-error histograms;
-band 2's detail row is a shape heatmap with xi and rho sub-panels.
+them, and appends `meta["caption_note"]` when the artifact carries one. Band 1's row
+subdivides into primary plus value / sigma / relative-error histograms; the relative-error
+histogram is computed always and drawn only when `include_relative_error` is True, since on a
+series with no natural zero sigma / value means nothing. Band 2's detail row is a shape
+heatmap with xi and rho sub-panels.
 
 No diagram is reproduced here. The row list and its height ratios are one literal in
 `build_matplotlib`; a copy in this file goes stale silently, and the previous copy did.
@@ -259,15 +263,24 @@ metric that supplies these inputs automatically gets all three views.
 
 `analyzers/fidelity.py::make_panel_data(result: FidelityResult, ...) -> WithinCalibrationPanelData`
 
+The panel draws what the carve classified. Below its peak the infidelity rises strictly
+with |x| = |Δ|/Ω, so "infidelity <= T" is "|x| <= x_T" (`fidelity.x_threshold`), and the
+carve and the panel both work on |x|.
+
 Decisions made by the adapter:
-- `values` = infidelity (clipped to ≥ 1e-16 for log scale)
-- `primary_label` = "Infidelity"
-- `thresholds` = "nines" thresholds in infidelity units (e.g. 0.01 = 99%
-  fidelity, 0.001 = 99.9%) - only thresholds that the data actually
-  crosses (`inf_min < thr < inf_max`) are included
-- `use_log_scale` = True
-- `big_values_good` = False per threshold (above infidelity threshold = out of spec)
-- For longrun profile: `traces` includes f−fₘₑₐₙ and f−f₀ infidelity traces
+- `values` = |x|, the reads' detuning from the first kept read over the declared Rabi
+  frequency, clipped at `fidelity.ABS_X_FLOOR` for the log scale (`fidelity.panel_series`;
+  the reference read is 0)
+- `primary_sigma` = `sigma_x` = sigma_f / Ω
+- `primary_label` = "|Δ|/Ω  (… MHz Rabi)"
+- `thresholds` = `fidelity.DETUNING_LADDER`: the declared nines rungs (99%, 99.9%, 99.99%,
+  i.e. infidelity 1e-2 to 1e-4) carried onto |x|, every rung carved and drawn whether or not
+  the record crosses it
+- `big_values_good` = False per threshold (above x_T = out of spec)
+- `use_log_scale` = True; `include_relative_error` = False (x has no natural zero)
+- `meta["caption_note"]` = `fidelity.DAMAGE_NOTE`: cumulative damage on |x| is detuning
+  excess above each rung, in units of Ω, times hours
+- no `traces`
 
 ---
 

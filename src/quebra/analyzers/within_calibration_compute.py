@@ -449,6 +449,7 @@ def build_within_calibration_panel_data(
     include_cumulative_time: bool = True,
     include_cumulative_damage: bool = True,
     include_ttf: bool = True,
+    include_relative_error: bool = True,
     shape_min_reads: int = 5,
     xi_seed: int = 0,
     k: float = 1.0,
@@ -486,6 +487,9 @@ def build_within_calibration_panel_data(
     error bars. None when the dataset carries no uncertainty.
 
     `damage_fn` is the descoped damage seam - see _cumulative_damage.
+
+    `include_relative_error=False` is for a series with no natural zero, where
+    sigma / value means nothing: the band still computes it, the renderer does not draw it.
     """
     if gap_spans_s is None:
         raise ValueError(
@@ -572,4 +576,5 @@ def build_within_calibration_panel_data(
         include_cumulative_time=include_cumulative_time,
         include_cumulative_damage=include_cumulative_damage,
         include_ttf=include_ttf,
+        include_relative_error=include_relative_error,
     )

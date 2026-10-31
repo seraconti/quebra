@@ -5,13 +5,17 @@ data, matched exactly on (device, run_date, qubit). There is no time column and 
 value before" search, so a record without a row of its own raises rather than borrowing a
 neighbour's, and a key that names two rows raises rather than picking one.
 
-The table carries `rabi_khz` as given by its source; the join writes `rabi_hz`, the unit the
-fidelity analyzer reads, broadcast over the reads, and records where it came from in
-`meta["rabi_source"]` and `meta["rabi_declared_key"]`.
+The table carries `rabi_khz`, a cyclic frequency in kHz, as given by its source; the join
+writes `rabi_hz`, the cyclic hertz the fidelity analyzer reads, broadcast over the reads, and
+records where it came from in `meta["rabi_source"]` and `meta["rabi_declared_key"]`. A Rabi
+column declared in an angular unit is refused, naming it: x = Delta / Omega would move by
+2 pi. A column declares one when its name holds a `rad` or `angular` token beside a token
+starting `rabi` or `omega`, tokens being the runs of letters and digits.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 
 import numpy as np
@@ -20,6 +24,15 @@ import pandas as pd
 KEY_COLUMNS = ("device", "run_date", "qubit")
 VALUE_COLUMN = "rabi_khz"
 SOURCE_LABEL = "declared"
+_TOKEN = re.compile(r"[a-z0-9]+")
+_ANGULAR_TOKENS = frozenset({"rad", "angular"})
+
+
+def _is_angular_rabi(column: str) -> bool:
+    """Whether a column's name declares a Rabi frequency in an angular unit."""
+    tokens = _TOKEN.findall(column.lower())
+    names_rabi = any(t.startswith(("rabi", "omega")) for t in tokens)
+    return names_rabi and not _ANGULAR_TOKENS.isdisjoint(tokens)
 
 
 def declared_key(device: str, run_date: str, qubit: int) -> str:
@@ -36,6 +49,12 @@ def join_declared_rabi(
     qubit: int,
 ) -> dict[str, object]:
     """Return `norm` with `rabi_hz` taken from the one table row matching the key."""
+    angular = [str(c) for c in table.columns if _is_angular_rabi(str(c))]
+    if angular:
+        raise ValueError(
+            f"the declared Rabi table carries {angular}, an angular unit; the join reads "
+            f"the cyclic frequency in kHz from {VALUE_COLUMN!r} only"
+        )
     missing = [c for c in (*KEY_COLUMNS, VALUE_COLUMN) if c not in table.columns]
     if missing:
         raise KeyError(f"the declared Rabi table has no column(s) {missing}")

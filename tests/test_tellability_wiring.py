@@ -5,8 +5,7 @@ Oracles:
   ledger job asks for no tellability, so none of its modules may be in that closure, or
   every ledger would re-run whenever tellability changes;
 - the job graphs: every tellability node reads the windows its own job carved, at the same
-  thresholds and under the same gap rule, is told the floor its metric was clipped at, and
-  is materialised under its job's prefix;
+  thresholds and under the same gap rule, and is materialised under its job's prefix;
 - the step functions: the record's id and the load's counts reach the artifact (absent
   counts as None), and a missing or blank id is refused.
 """
@@ -94,13 +93,6 @@ def test_each_tellability_node_is_materialised_under_its_jobs_prefix(
         if getattr(getattr(sink, "node", None), "node_id", None) == node
     }
     assert names == {f"{module.PREFIX}_tellability"}
-
-
-@pytest.mark.integration
-def test_the_infidelity_step_is_told_the_floor_fidelity_clips_at() -> None:
-    """Oracle: `fidelity.INFIDELITY_FLOOR`, the one constant both clip sites use."""
-    told = _job("ramsey_2x2_q1_030723").dag["tellability_infidelity"]
-    assert told.kwargs["clip_floor"] == fidelity.INFIDELITY_FLOOR
 
 
 @pytest.mark.integration
@@ -214,7 +206,8 @@ def test_the_t2star_and_infidelity_steps_repeat_the_load_counts(metric) -> None:
         "t_rel_s": t,
         "T2star_s": 3e-6 + 5e-7 * rng.normal(size=n),
         "T2star_error_s": np.full(n, 2e-7),
-        "delta_hz": rng.normal(scale=2e4, size=n),
+        "raw_frequency_hz": 2e6 + rng.normal(scale=2e4, size=n),
+        "frequency_error_hz": np.full(n, 1e3),
         "rabi_hz": np.full(n, 704e3),
         "meta": {"dataset_id": "unit", "rabi_source": "declared", **counts},
     }
@@ -256,7 +249,6 @@ def test_the_t2star_and_infidelity_steps_repeat_the_load_counts(metric) -> None:
             carved,
             thresholds=thresholds,
             gap_mult=10.0,
-            clip_floor=fidelity.INFIDELITY_FLOOR,
             n_permutations=19,
             seed=1,
         )

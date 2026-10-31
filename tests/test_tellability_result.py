@@ -336,6 +336,7 @@ def test_run_reports_what_the_row_functions_give() -> None:
     assert set(expected) == _fields(tl.METRIC_GROUPS, metric.status)
     _assert_fields(metric, expected)
     assert result.settings == {
+        "threshold_value_key": "q",
         "gap_mult": 10.0,
         "unsure_k": 1.0,
         "clip_floor": -0.5,
@@ -491,6 +492,33 @@ def test_contradictory_inputs_raise(kwargs, match) -> None:
     t, q, sigma = _record(n=300)
     with pytest.raises(ValueError, match=match):
         tl.run(_inputs(t, q, sigma, **kwargs))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "case, match",
+    [
+        ("other_reads", "finite on exactly the reads"),
+        ("other_length", "finite on exactly the reads"),
+        ("values_without_key", "go together"),
+        ("key_without_values", "go together"),
+    ],
+)
+def test_metric_values_must_be_the_same_reads_and_named(case, match) -> None:
+    """Oracle: specification. The metric rows may read another series only on the very
+    reads the threshold rows classify, and the artifact must name it."""
+    t, q, sigma = _record(n=300)
+    other = 2.0 * q
+    if case == "other_reads":
+        other[17] = np.nan
+    replace = {
+        "other_reads": {"metric_values": other, "metric_value_key": "q2"},
+        "other_length": {"metric_values": other[:-1], "metric_value_key": "q2"},
+        "values_without_key": {"metric_values": other},
+        "key_without_values": {"metric_value_key": "q2"},
+    }[case]
+    with pytest.raises(ValueError, match=match):
+        tl.run(dataclasses.replace(_inputs(t, q, sigma), **replace))
 
 
 @pytest.mark.unit

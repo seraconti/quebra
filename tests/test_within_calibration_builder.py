@@ -424,14 +424,15 @@ def test_a_missing_gap_list_is_refused_not_read_as_no_gaps() -> None:
         {
             "t_rel_s": t_rel_s,
             "t2star_s": np.full(10, 3e-6),
-            "infidelity": np.full(10, 1e-3),
+            "abs_x": np.full(10, 1e-2),
+            "sigma_x": np.full(10, 1e-3),
         }
     )
     stand_in = types.SimpleNamespace(frame=frame, meta={"dataset_id": "unit-test"})
     # The fidelity adapter takes its ladder as an argument; T2* defaults its own.
     for adapter, ladder in (
         (t2star.make_panel_data, {}),
-        (fidelity.make_panel_data, {"thresholds": list(fidelity.FIDELITY_LADDER)}),
+        (fidelity.make_panel_data, {"thresholds": list(fidelity.DETUNING_LADDER)}),
     ):
         with pytest.raises(ValueError, match="gap_spans_s is required"):
             adapter(

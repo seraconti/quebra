@@ -27,8 +27,6 @@ from quebra.core.types import LOAD_COUNT_KEYS
 TELLABILITY_SEED = 20261014
 TELLABILITY_PERMUTATIONS = 999
 
-SIGMA_NOT_DERIVED = "not computed: sigma propagation not derived"
-
 
 def _load_counts(meta: Mapping[str, object]) -> dict[str, int]:
     """The rows the load dropped, as the result or norm it came through recorded them."""
@@ -125,27 +123,34 @@ def _infidelity_tellability(
     *,
     thresholds: Sequence[Sequence[object]],
     gap_mult: float,
-    clip_floor: float,
     n_permutations: int,
     seed: int,
 ) -> tellability.TellabilityResult:
+    """The threshold rows classify |x|, the series the fidelity carve classified, with
+    sigma_x; the metric rows read the signed x, whose spread the sigma rows compare with
+    sigma_x. The clipped row is a metric row, so it reads the signed x, which no step
+    clips; ABS_X_FLOOR lifts only the threshold series |x| onto the log axis, so the
+    clipped row is not computed."""
+    frame = result.frame
     return tellability.run(
         tellability.TellabilityInputs(
             dataset_id=str(result.meta["dataset_id"]),
             metric_key="infidelity",
-            value_key="infidelity",
-            t_rel_s=result.frame["t_rel_s"].to_numpy(dtype=float),
+            value_key="abs_x",
+            t_rel_s=frame["t_rel_s"].to_numpy(dtype=float),
             values=fidelity.panel_series(result),
-            sigma=None,
-            sigma_status=SIGMA_NOT_DERIVED,
+            sigma=frame["sigma_x"].to_numpy(dtype=float),
+            sigma_status=tellability.SIGMA_DECLARED,
             thresholds=_thresholds(thresholds),
             windows=windows_result,
             unsure_k=float(windows_result.meta["k"]),
             gap_mult=gap_mult,
-            clip_floor=clip_floor,
+            clip_floor=None,
             n_permutations=n_permutations,
             seed=seed,
             load_counts=_load_counts(result.meta),
+            metric_values=frame["x"].to_numpy(dtype=float),
+            metric_value_key="x",
         )
     )
 
@@ -209,8 +214,8 @@ def wire_infidelity_tellability(
     seed: int = TELLABILITY_SEED,
 ) -> object:
     """Tellability of the infidelity of a Ramsey record, on the fidelity result and the
-    fidelity windows of `configure_ramsey_job`. The infidelity's sigma is not derived, so
-    every row that reads sigma says so."""
+    fidelity windows of `configure_ramsey_job`: threshold rows on |x| with sigma_x, metric
+    rows on the signed x."""
     node = job.step(
         _infidelity_tellability,
         refs["fidelity_raw"],
@@ -218,7 +223,6 @@ def wire_infidelity_tellability(
         name="tellability_infidelity",
         thresholds=refs["fidelity_thresholds"],
         gap_mult=refs["gap_mult"],
-        clip_floor=fidelity.INFIDELITY_FLOOR,
         n_permutations=n_permutations,
         seed=seed,
     )

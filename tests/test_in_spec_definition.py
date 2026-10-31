@@ -79,6 +79,18 @@ NOT_A_METRIC_THRESHOLD = {
         "_check_inputs",
         "float(rows['threshold_value'].iloc[0]) != float(value)",
     ),
+    # x_threshold turns a rung on the infidelity into a rung on |x|: it refuses a rung
+    # outside its range and solves I(x) = threshold. Two settings, no read
+    (
+        "src/quebra/analyzers/fidelity.py",
+        "x_threshold",
+        "MIN_RUNG_INFIDELITY <= threshold < MAX_RUNG_INFIDELITY",
+    ),
+    (
+        "src/quebra/analyzers/fidelity.py",
+        "x_threshold",
+        "float(infidelity_at(x)) - threshold",
+    ),
 }
 
 

@@ -31,7 +31,7 @@ Each field group of the result carries one status:
 
   | Reason | Groups that raise it |
   |---|---|
-  | `sigma propagation not derived` | every sigma group, as infidelity's sigma status |
+  | `sigma propagation not derived` | every sigma group, for a caller that declares its sigma underived; no shipped metric does |
   | `fewer than <n> reads` | window, spectrum, G10 halves and self-consistency (2), dependence (10), clipped and run length (1) |
   | `no segment with at least <n> reads` | spacing, bounds and rho_k (2); second differences and the sigma bound (3) |
   | `span shorter than <n> median spacings` | spectrum (2, and 20 for the top tenth of the band), G10 and its halves (20) |
@@ -48,8 +48,8 @@ Each field group of the result carries one status:
 - `not declared`: the record carries no sigma, so the rows that read sigma have nothing to read.
 
 A metric's sigma status is `declared` (given, and read), `not declared` (absent), `not
-computed: sigma propagation not derived`, which is infidelity's (its sigma is not derived yet),
-or `not computed: no read with a finite sigma`, which the step sets once when a declared sigma
+computed: sigma propagation not derived`, for a sigma known but not derived, or `not computed:
+no read with a finite sigma`, which the step sets once when a declared sigma
 is finite on no read. The rows that read sigma (the noise floor, the dependence panel, sigma's
 self-consistency and its bound, the crossing counts and the in-spec fraction bounds) carry that
 status whenever it is not `declared`, before any other reason they might have. Tellability reads
@@ -171,13 +171,19 @@ Notation: the reads are at times `t_1 < ... < t_N`; `Delta_bar` is the median po
 - Q3.2 and Q3.3 are conditional on sigma being independent of the value it accompanies (L0,
   sections 5.3 and 5.4). They are always computed; when the dependence panel finds dependence,
   they are computed but not interpretable.
-- **Clipped fraction**: the share of reads at the metric's floor. Infidelity is clipped at
-  `fidelity.INFIDELITY_FLOOR`; T2* and frequency have no floor.
+- **Clipped fraction**: the share of reads at the metric's floor. No shipped metric passes a
+  floor (T2*, frequency and the infidelity record's x have none), so the row ships as `not
+  computed: no floor for this metric`.
 
 ## Per threshold
 
 In spec means `windows.margin >= 0`, the one definition. Every threshold reads the windows the
-carve made for it. The frequency of a Ramsey record has no thresholds, so it ships the
+carve made for it, and classifies the series the carve classified; the step's settings name it
+(`threshold_value_key`). The metric rows read the same series unless the inputs give
+`metric_values`, on the same reads, and the artifact's `value_key` then names that series. The
+infidelity record uses this: its threshold rows classify |x| = |Δ|/Ω with sigma_x = sigma_f / Ω,
+as its carve does, and its metric rows, the sigma rows among them, read the signed x, in which
+a read's error is symmetric. The frequency of a Ramsey record has no thresholds, so it ships the
 per-metric rows only, read from `raw_frequency_hz` with `frequency_error_hz` as its sigma by
 default; the artifact records the value key, and the step's settings record both.
 
@@ -239,7 +245,7 @@ not acted on; whether to act on it is an open question for issue #4.
 | L9 | Q3.1 a precondition | the dependence panel ships whole; nothing decides |
 | L10 | `sigma_bar` | `sigma_bar^2 = mean(sigma_i^2)` |
 | L11 | ADEV on the fractional series, with intervals | per segment and pooled; fractional only with a declared `nu0_hz`; `adev_err_hz` is adev over the square root of the pooled terms, which treats them as independent and so understates the uncertainty |
-| L12 | sigma rows for the metrics it tabulates (frequency, T2*, offset, amplitude) | infidelity's sigma rows: `sigma propagation not derived` |
+| L12 | sigma rows for the metrics it tabulates (frequency, T2*, offset, amplitude) | infidelity's sigma rows read sigma_x = sigma_f / Ω on the signed x |
 | L14 | the article's PSD, by interpolation and a Fourier transform (Supplementary notes, "PSD from frequency calibration data", p. 18) | Lomb-Scargle, no interpolation |
 | L15 | the article's filtering | the chi-square guard (the released records are already filtered); no sigma clip |
 | L16 | Q2.3: `alpha = 3 - log10 G10`, quoted beside G10 | G10 only, read one way; no exponent, since leakage on irregular reads biases it |

@@ -371,7 +371,8 @@ _T2STAR_NORM = {
 }
 _FIDELITY_NORM = {
     "t_rel_s": np.arange(_N_NORM, dtype=float) * 60.0,
-    "delta_hz": np.full(_N_NORM, 1e3),
+    "raw_frequency_hz": np.full(_N_NORM, 1e3),
+    "frequency_error_hz": np.full(_N_NORM, 50.0),
     "rabi_hz": np.full(_N_NORM, 1e6),
 }
 _ADAPTERS = {
@@ -401,11 +402,9 @@ def _panel_through_the_recipe(adapter: str, norm: dict) -> object:
         carved = recipes._windows_run(result, 10.0, 1.0, False, ladder)
         km = recipes._kaplan_meier_set(recipes._event_tables(carved), 0.95)
         return recipes._t2star_panel_data(result, carved, km, 5, False, 0, ladder)
-    profile = "longrun" if adapter == "fidelity_longrun" else ""
-    config = {"dataset_profile": profile}
-    result = fidelity.run(fidelity.make_inputs_from_norm(norm, config))
-    ladder = list(fidelity.FIDELITY_LADDER)
-    carved = recipes._fidelity_windows(result, 10.0, ladder)
+    result = fidelity.run(fidelity.make_inputs_from_norm(norm, {}))
+    ladder = list(fidelity.DETUNING_LADDER)
+    carved = recipes._fidelity_windows(result, 10.0, 1.0, True, ladder)
     km = recipes._kaplan_meier_set(recipes._event_tables(carved), 0.95)
     return recipes._fidelity_panel_data(result, carved, km, 0, ladder)
 
@@ -413,14 +412,13 @@ def _panel_through_the_recipe(adapter: str, norm: dict) -> object:
 _WAVE = np.sin(np.arange(_N_NORM) / 3.0)
 
 
-@pytest.mark.parametrize("adapter", ["t2star", "fidelity", "fidelity_longrun"])
+@pytest.mark.parametrize("adapter", ["t2star", "fidelity"])
 def test_the_dataset_id_reaches_the_caption_through_every_adapter(adapter) -> None:
     """Oracle: the norm. The id the norm names is the one the panel's caption shows, on
-    both fidelity return paths (`longrun` and the default) and on T2*."""
+    the fidelity adapter's one return path and on T2*."""
     if adapter == "t2star":
         norm = {"t_rel_s": _T2STAR_NORM["t_rel_s"], "T2star_s": 3e-6 + 1e-6 * _WAVE}
     else:
-        norm = {**_FIDELITY_NORM, "delta_hz": 2e4 * _WAVE}
-        norm["raw_frequency_hz"] = 5e9 + 2e4 * _WAVE
+        norm = {**_FIDELITY_NORM, "raw_frequency_hz": 5e9 + 2e4 * _WAVE}
     norm["meta"] = {"dataset_id": "Q7", "rabi_source": "declared"}
     assert _panel_through_the_recipe(adapter, norm).meta["dataset"] == "Q7"

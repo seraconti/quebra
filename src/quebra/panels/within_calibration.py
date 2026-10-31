@@ -251,7 +251,7 @@ class WithinCalibrationPanel(BasePlot):
             )
         # Extra traces overlay the same axis: the detail and binned subplots that used
         # to carry them are gone, and a computed series that is rendered nowhere is a
-        # silent capability loss (fidelity supplies two).
+        # silent capability loss.
         for offset, (trace_label, series) in enumerate(pd_.traces or []):
             if trace_label == pd_.primary_label:
                 continue
@@ -431,7 +431,22 @@ class WithinCalibrationPanel(BasePlot):
     def _draw_relerr_hist(
         self, ax: plt.Axes, pd_: WithinCalibrationPanelData, color: object
     ) -> None:
-        """Distribution of sigma / value: how large the error is RELATIVE to the metric."""
+        """Distribution of sigma / value: how large the error is RELATIVE to the metric.
+
+        Not drawn when the artifact says so (`include_relative_error`): on a series with no
+        natural zero, sigma / value means nothing.
+        """
+        if not pd_.include_relative_error:
+            ax.text(
+                0.5,
+                0.5,
+                "relative error not drawn:\nthe series has no natural zero",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+            ax.axis("off")
+            return
         if len(pd_.signal.relerr_hist_counts) == 0:
             ax.text(
                 0.5,
@@ -1058,7 +1073,8 @@ class WithinCalibrationPanel(BasePlot):
 
     @staticmethod
     def _draw_caption(fig: plt.Figure, pd_: WithinCalibrationPanelData) -> None:
-        """One line above the figure: dataset, series, mean and standard deviation.
+        """One line above the figure: dataset, series, mean and standard deviation, and
+        `meta["caption_note"]` when the artifact carries one.
 
         `meta["dataset"]` is required and non-empty. The builder refuses anything else,
         and an artifact constructed around the builder is refused here too: a missing key
@@ -1077,6 +1093,9 @@ class WithinCalibrationPanel(BasePlot):
             else "no finite reads"
         )
         caption = f"{dataset}  ·  {pd_.primary_label}: {stats}"
+        note = pd_.meta.get("caption_note")
+        if note:
+            caption += f"  ·  {note}"
         fig.suptitle(caption, x=0.01, ha="left", **theme.CAPTION)
 
 

@@ -160,23 +160,37 @@ def _final_stage(bundle: object) -> dict[str, object]:
 def _fidelity_windows(
     result: FidelityResult,
     gap_mult: float,
+    k: float,
+    use_uncertainty: bool,
     thresholds: list[tuple[str, float, bool]],
 ) -> WindowsResult:
-    """Carve windows on the infidelity series, against the declared ladder.
+    """Carve windows on |x| = |Delta| / Omega with sigma_x, against the ladder on |x|.
 
-    The panel-data step receives the same `thresholds` kwarg, so the two nodes carve and
-    render one ladder; both read the series through `fidelity.panel_series`.
+    Below its peak the infidelity rises strictly with |x|, so "I <= T" is "|x| <= x_T"
+    (`fidelity.x_threshold`), and a read's error is symmetric in x: the carve classifies
+    |x| with the ordinary rule, k and sigma_x deciding the unsure reads. The panel-data
+    step receives the same `thresholds` kwarg, so the two nodes carve and render one
+    ladder; both read the series through `fidelity.panel_series`.
     """
-    series = fidelity.panel_series(result)
     return windows.run(
         windows.WindowsInputs(
             t_rel_s=result.frame["t_rel_s"].to_numpy(dtype=float),
-            values=series,
+            values=fidelity.panel_series(result),
             thresholds=list(thresholds),
+            sigma=result.frame["sigma_x"].to_numpy(dtype=float),
             dataset_id=str(result.meta["dataset_id"]),
             gap_mult=gap_mult,
+            k=k,
+            use_uncertainty=use_uncertainty,
         )
     )
+
+
+# The fidelity carve's confidence level and uncertainty switch, passed as step kwargs so
+# they reach the provenance label. sigma_x is declared on every read, so the unsure states
+# are drawn.
+FIDELITY_K = 1.0
+FIDELITY_USE_UNCERTAINTY = True
 
 
 # ONE definition, imported by the jobs. The literal was in three files after the seed fix,
@@ -291,10 +305,11 @@ def _fidelity_panel_data(
         gap_spans_s=window_result.diagnostics["gap_spans_s"],
         kaplan_meier=km,
         thresholds=thresholds,
-        # `windows.run` always records this, so a missing key is a broken artifact rather
+        # `windows.run` always records these, so a missing key is a broken artifact rather
         # than an old one; defaulting it to False would silently redraw the panel in the
         # other mode. This repo raises instead of falling back.
         use_uncertainty=bool(window_result.meta["use_uncertainty"]),
+        k=float(window_result.meta["k"]),
         xi_seed=xi_seed,
     )
 
@@ -434,7 +449,9 @@ def configure_ramsey_job(
             qubit=qubit,
         )
         fidelity_raw = job.step(_fidelity_step(config), with_rabi, name="fidelity_raw")
-        ladder = list(fidelity.FIDELITY_LADDER)
+        # The nines rungs on |x|, written out so the identity cannot move with a root
+        # finder's last bit (`fidelity.DETUNING_LADDER`).
+        ladder = list(fidelity.DETUNING_LADDER)
         # Fidelity is carved and drawn from the FILTERED reads. A resampled series puts
         # points on a uniform grid, which erases exactly the read gaps the carve exists to
         # find.
@@ -446,6 +463,8 @@ def configure_ramsey_job(
             fidelity_raw,
             name="fidelity_windows",
             gap_mult=RAMSEY_GAP_MULT,
+            k=FIDELITY_K,
+            use_uncertainty=FIDELITY_USE_UNCERTAINTY,
             thresholds=ladder,
         )
         _fidelity_tables, fidelity_km = wire_kaplan_meier(

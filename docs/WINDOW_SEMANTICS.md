@@ -8,7 +8,8 @@ and the code disagree, the code is right and this page is stale.
 
 - **Margin**: `analyzers/windows.margin(values, threshold_value, big_values_good)` is
   `value - threshold_value` when big values are good (T2\*) and `threshold_value - value`
-  when small values are good (infidelity). It raises on a non-finite threshold or value.
+  when small values are good (the infidelity record, carved on |x| = |Δ|/Ω). It raises on a
+  non-finite threshold or value.
 - **In spec** means `margin >= 0` (`windows.in_spec_mask`). A read exactly at the threshold
   is in spec, in both directions.
 - This is the one definition. The carve classifies each read once, in its own units, and

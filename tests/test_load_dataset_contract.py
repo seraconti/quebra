@@ -198,6 +198,8 @@ def test_the_load_counts_reach_the_t2star_and_fidelity_results():
         "t_rel_s": np.arange(5, dtype=float) * 60.0,
         "T2star_s": np.full(5, 3e-6),
         "delta_hz": np.zeros(5),
+        "raw_frequency_hz": np.full(5, 2.0e6),
+        "frequency_error_hz": np.full(5, 1.0e3),
         "rabi_hz": np.full(5, 704e3),
         "meta": {"dataset_id": "unit", "rabi_source": "declared", **counts},
     }
@@ -216,6 +218,8 @@ def test_a_count_the_load_did_not_record_stays_absent():
         "t_rel_s": np.arange(5, dtype=float) * 60.0,
         "T2star_s": np.full(5, 3e-6),
         "delta_hz": np.zeros(5),
+        "raw_frequency_hz": np.full(5, 2.0e6),
+        "frequency_error_hz": np.full(5, 1.0e3),
         "rabi_hz": np.full(5, 704e3),
         "meta": {"dataset_id": "unit", "rabi_source": "declared"},
     }

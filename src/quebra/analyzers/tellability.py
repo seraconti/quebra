@@ -1075,11 +1075,17 @@ class TellabilityInputs:
     seed: int
     # Rows of the file the load dropped before any step ran, keyed by LOAD_COUNT_KEYS.
     load_counts: Mapping[str, int] = field(default_factory=dict)
+    # The series the metric rows read, when the thresholds classify a transform of it:
+    # the infidelity record classifies |x| and compares spread with sigma on the signed
+    # x. None: the metric rows read `values`. Given with `metric_value_key`, its name.
+    metric_values: np.ndarray | None = None
+    metric_value_key: str | None = None
 
 
 @dataclass
 class MetricTellability(StaleArtifactGuard):
     metric_key: str
+    # The series these rows read: `metric_value_key` when the inputs give one.
     value_key: str
     sigma_status: str
     n_reads: int
@@ -1206,6 +1212,21 @@ def _check_inputs(inputs: TellabilityInputs) -> None:
     labels = [label for label, _, _ in inputs.thresholds]
     if len(set(labels)) != len(labels):
         raise ValueError(f"a threshold label is repeated: {labels}")
+    if (inputs.metric_values is None) != (inputs.metric_value_key is None):
+        raise ValueError(
+            "metric_values and metric_value_key go together: the artifact names the "
+            "series its metric rows read"
+        )
+    if inputs.metric_values is not None:
+        metric_values = np.asarray(inputs.metric_values, dtype=float)
+        values = np.asarray(inputs.values, dtype=float)
+        if metric_values.shape != values.shape or not np.array_equal(
+            np.isfinite(metric_values), np.isfinite(values)
+        ):
+            raise ValueError(
+                "metric_values must be finite on exactly the reads `values` is finite "
+                "on: one record, one set of reads"
+            )
     if (inputs.sigma is not None) != (inputs.sigma_status == SIGMA_DECLARED):
         raise ValueError(
             f"sigma is {'given' if inputs.sigma is not None else 'absent'} but its status "
@@ -1323,7 +1344,9 @@ def _metric_rows(
     )
     return MetricTellability(
         metric_key=inputs.metric_key,
-        value_key=inputs.value_key,
+        value_key=inputs.metric_value_key
+        if inputs.metric_value_key is not None
+        else inputs.value_key,
         sigma_status=sigma_status,
         n_reads=int(obs.t_rel_s.size),
         n_segments=len(obs.segments()),
@@ -1440,17 +1463,30 @@ def run(inputs: TellabilityInputs) -> TellabilityResult:
     at every threshold asked for: one record, one gap rule. Raises ValueError on
     contradictory inputs; a row the record cannot answer is NOT an error and ships as `not
     computed: <reason>`.
+
+    The threshold rows classify `values`, the series the carve classified. The metric rows
+    read `metric_values` when the inputs give it, on the same reads, and `values` otherwise.
     """
     _check_inputs(inputs)
     obs = observed_reads(
         inputs.t_rel_s, inputs.values, sigma=inputs.sigma, gap_mult=inputs.gap_mult
     )
     _check_windows_reads(inputs, obs)
+    metric_obs = (
+        obs
+        if inputs.metric_values is None
+        else observed_reads(
+            inputs.t_rel_s,
+            inputs.metric_values,
+            sigma=inputs.sigma,
+            gap_mult=inputs.gap_mult,
+        )
+    )
     sigma = obs.sigma
     sigma_status = inputs.sigma_status
     if sigma_status == SIGMA_DECLARED and not np.any(np.isfinite(sigma)):
         sigma_status = NO_FINITE_SIGMA
-    metric = _metric_rows(inputs, obs, sigma, sigma_status)
+    metric = _metric_rows(inputs, metric_obs, metric_obs.sigma, sigma_status)
     table = inputs.windows.windows_in_spec if inputs.windows is not None else None
     rows = tuple(
         _threshold_rows(inputs, obs, sigma, table, label, value, big, sigma_status)
@@ -1462,6 +1498,7 @@ def run(inputs: TellabilityInputs) -> TellabilityResult:
         metric=metric,
         thresholds=rows,
         settings={
+            "threshold_value_key": inputs.value_key,
             "gap_mult": float(inputs.gap_mult),
             "unsure_k": float(inputs.unsure_k),
             "clip_floor": inputs.clip_floor,

@@ -53,6 +53,8 @@ def _norm(n: int = 5) -> dict[str, object]:
     return {
         "t_rel_s": np.arange(n, dtype=float) * 60.0,
         "delta_hz": np.zeros(n),
+        "raw_frequency_hz": np.full(n, 2.0e6),
+        "frequency_error_hz": np.full(n, 1.0e3),
         "meta": {"dataset_id": "unit"},
     }
 
@@ -296,36 +298,49 @@ def test_the_2x2_archetype_computes_fidelity() -> None:
 
 
 @pytest.mark.unit
-def test_the_fidelity_ladder_is_the_eight_nines_rungs() -> None:
-    """Oracle: specification. 99% to 99.9999999%, i.e. infidelity 1e-2 to 1e-9, small good."""
+def test_the_fidelity_ladder_is_the_three_thesis_rungs() -> None:
+    """Oracle: specification (issue #18, the thesis rungs). 99%, 99.9%, 99.99%, i.e.
+    infidelity 1e-2 to 1e-4, small good."""
     assert [value for _, value, _ in fidelity.FIDELITY_LADDER] == [
-        10.0**-k for k in range(2, 10)
+        10.0**-k for k in range(2, 5)
     ]
-    assert [label for label, _, _ in fidelity.FIDELITY_LADDER][:2] == ["99%", "99.9%"]
+    assert [label for label, _, _ in fidelity.FIDELITY_LADDER] == [
+        "99%",
+        "99.9%",
+        "99.99%",
+    ]
     assert not any(big for _, _, big in fidelity.FIDELITY_LADDER)
 
 
 @pytest.mark.integration
 def test_both_fidelity_steps_receive_the_whole_declared_ladder() -> None:
-    """Oracle: the declared ladder. The carve and the panel get the same eight rungs."""
+    """Oracle: the declared ladder on |x|. The carve and the panel get the same rungs, all
+    of them: `fidelity.DETUNING_LADDER`, the nines rungs carried onto |Delta| / Omega."""
     job = _load_job(ARCHETYPE_2X2)
-    ladder = list(fidelity.FIDELITY_LADDER)
+    ladder = list(fidelity.DETUNING_LADDER)
     assert job.dag["fidelity_windows"].kwargs["thresholds"] == ladder
     assert job.dag["fidelity_panel_data"].kwargs["thresholds"] == ladder
 
 
 @pytest.mark.unit
 def test_the_carve_keeps_rungs_the_record_never_crosses() -> None:
-    """Oracle: the declared ladder. A record spanning 1e-3 to 9e-3 is still carved on all
-    eight rungs; the ones it never reaches give one-sided windows instead of vanishing."""
+    """Oracle: the declared ladder. A record whose |x| spans 0.06 to 0.15 is in spec at
+    99% and out of spec at 99.9% and 99.99% throughout, so it crosses no rung, yet it is
+    carved on every rung; each gives a one-sided window instead of vanishing."""
     n = 40
     t_rel_s = np.arange(n, dtype=float) * 60.0
     frame = pd.DataFrame(
-        {"t_rel_s": t_rel_s, "infidelity": np.geomspace(1e-3, 9e-3, n)}
+        {
+            "t_rel_s": t_rel_s,
+            "abs_x": np.geomspace(0.06, 0.15, n),
+            "sigma_x": np.full(n, 1e-3),
+        }
     )
     result = fidelity.FidelityResult(frame=frame, meta={"dataset_id": "unit"})
-    carved = recipes._fidelity_windows(result, 10.0, list(fidelity.FIDELITY_LADDER))
-    labels = [label for label, _, _ in fidelity.FIDELITY_LADDER]
+    carved = recipes._fidelity_windows(
+        result, 10.0, 1.0, True, list(fidelity.DETUNING_LADDER)
+    )
+    labels = [label for label, _, _ in fidelity.DETUNING_LADDER]
     assert sorted(set(carved.reads["threshold_label"])) == sorted(labels)
     windowed = set(carved.windows_in_spec["threshold_label"]) | set(
         carved.windows_out_of_spec["threshold_label"]

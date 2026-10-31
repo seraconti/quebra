@@ -46,7 +46,8 @@ class WithinCalibrationPanelData(StaleArtifactGuard):
     primary_label : y-axis label carrying the unit, e.g. "T2* (µs)"
     traces        : optional extra labeled series overlaid on the signal axis
     meta          : dict with a required non-empty "dataset" entry, which the caption
-                    shows (the builder raises without it); other keys are free
+                    shows (the builder raises without it); an optional "caption_note"
+                    the caption appends; other keys are free
     """
 
     signal: SignalBand
@@ -62,6 +63,7 @@ class WithinCalibrationPanelData(StaleArtifactGuard):
     include_cumulative_time: bool = True
     include_cumulative_damage: bool = True
     include_ttf: bool = True
+    include_relative_error: bool = True
 
     def __post_init__(self) -> None:
         # The ladder lives here; the per-threshold maps live in the bands. Neither side
