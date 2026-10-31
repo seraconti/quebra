@@ -4,11 +4,12 @@ Ledger rows in, one typed artifact out, no disk and no matplotlib - the same sha
 `independence_survey.build_independence_survey`, read by one `BasePlot` subclass.
 
 **Two independent selections over the same vocabulary.** The RUN-SET is which check rows are
-computed; the DISPLAY-SET is which reach a figure. Running all six and showing one is a normal
-thing to want, so they are separate tuples rather than one setting with a display flag. Both
-address the full `(check_id, calibration, variant)` key, because C1's asymptotic and
-permutation rows can disagree and the asymptotic ones are measured as oversized at the event
-counts this project has (`docs/iid_checks/C1_lewis_robinson.md`).
+computed; the DISPLAY-SET is which reach a figure. Running all five rows and showing one is a
+normal thing to want, so they are separate tuples rather than one setting with a display flag.
+Both address the full `(check_id, calibration, variant)` key, the bench's row key, so a
+selection names exactly one row. Every selectable row is permutation-calibrated: the
+asymptotic calibrations are measured as oversized at the event counts this project has
+(`docs/iid_checks/C1_lewis_robinson.md`) and run only in the bench.
 
 Both are STEP KWARGS. `core/closure.py`'s `_render` takes scalars and containers of scalars,
 so a tuple of string triples enters the run identity and reaches the Mermaid label; a typed
@@ -41,28 +42,27 @@ from quebra.core._artifact_guard import StaleArtifactGuard
 
 RowKey = tuple[str, str, str]
 
-# Everything selectable: the eight rows of `battery.ROW_KEYS`, plus C3.
+# Everything selectable: the five rows of `battery.ROW_KEYS`, all permutation-calibrated.
 ALL_KEYS: tuple[RowKey, ...] = tuple(SURVEY_KEYS)
 
 # The rows `include_tau_checks=False` drops. MEASURED by running the battery both ways on a
-# single well-posed segment, not transcribed from the flag's docstring: the three asymptotic
-# rows plus C1's and C2's permutation rows, five of eight. CvM's PERMUTATION row survives,
-# which is easy to get wrong from prose alone because its asymptotic sibling does not.
+# single well-posed segment, not transcribed from the flag's docstring: C1's and C2's
+# permutation rows, two of five. CvM's PERMUTATION row survives, which is easy to get wrong
+# from prose alone because C1 and C2 share its Brownian bridge.
 TAU_DEPENDENT_KEYS: frozenset[RowKey] = frozenset(
     {
-        ("c1_lewis_robinson", CALIB_ASYMPTOTIC, ""),
         ("c1_lewis_robinson", CALIB_PERMUTATION, ""),
-        ("c2_anderson_darling", CALIB_ASYMPTOTIC, ""),
         ("c2_anderson_darling", CALIB_PERMUTATION, ""),
-        ("cvm_cramer_von_mises", CALIB_ASYMPTOTIC, ""),
     }
 )
 
+# Not selectable: the asymptotic rows run only in the bench. `battery_flags` therefore
+# never turns C2's asymptotic row on, and keeps the flag only because the ledger takes it.
 C2_ASYMPTOTIC_KEY: RowKey = ("c2_anderson_darling", CALIB_ASYMPTOTIC, "")
 
-# A useful default with a reason behind it: at the event counts this project has, the
-# asymptotic calibrations are measured as oversized, so a reader shown only the permutation
-# rows is shown the rows entitled to the data. Not the default anywhere - a job asks for it.
+# The permutation rows: at the event counts this project has, the asymptotic calibrations
+# are measured as oversized, so these are the rows entitled to the data. Every selectable
+# row is one now; the name stays as what a job asks for.
 PERMUTATION_KEYS: tuple[RowKey, ...] = tuple(
     key for key in ALL_KEYS if key[1] == CALIB_PERMUTATION
 )
@@ -82,7 +82,7 @@ def normalise(keys: Iterable[Sequence[str]], *, field: str) -> tuple[RowKey, ...
             raise ValueError(
                 f"{field} entry {raw!r} is not a (check_id, calibration, variant) triple. "
                 f"Rows are addressed by the full key because a check's asymptotic and "
-                f"permutation rows can disagree."
+                f"permutation rows can disagree, and the bench measures both."
             )
         if key not in ALL_KEYS:
             raise ValueError(
@@ -120,7 +120,7 @@ def battery_flags(run_set: Sequence[RowKey]) -> dict[str, bool]:
     """The battery's own switches, derived from the run-set.
 
     These are a COMPUTE optimisation and not the contract. They are coarse: asking for C1's
-    asymptotic row alone still turns `include_tau_checks` on, which computes C2's rows too.
+    permutation row alone still turns `include_tau_checks` on, which computes C2's too.
     `select_rows` is what makes the result match the run-set exactly.
     """
     keys = set(run_set)
@@ -136,8 +136,8 @@ def missing_rows(
 ) -> tuple[RowKey, ...]:
     """Rows the run-set asked for that produced nothing at all.
 
-    A row can vanish legitimately at runtime: C1 and C2 are dropped when `tau` is singular,
-    and C2's asymptotic row for m > 1 segments. The caller renders these as `not computed`
+    A row can vanish legitimately at runtime: C1's and C2's permutation rows are dropped
+    when `tau` is singular. The caller renders these as `not computed`
     with the reason, because a row that was asked for and answered nothing must not look the
     same as a row that was never asked for.
     """

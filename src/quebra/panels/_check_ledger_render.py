@@ -21,14 +21,10 @@ CHECK_SHORT = {
     "c3_serial_copula": "C3 cop",
     "c5_rank_autocorr": "C5 rank",
     "c6_exchangeability": "C6 exch",
-    # CvM is deliberately absent, and this is not an oversight. `check_ledger` iterates these
-    # keys to decide which lines the p-value ladder draws, and `statistic_series` below takes
-    # the MINIMUM p-value over calibrations per rung. CvM has an asymptotic row and a
-    # permutation row, so a point labelled "CvM" read against the alpha line could be the
-    # asymptotic value - the calibration the battery itself declines when tau is
-    # event-determined. Adding the key draws that line; fixing the series so it cannot
-    # mislead is one decision with how a check's verdict reaches a figure, which is not
-    # settled here. The table already shows CvM through the `check_id[:7]` fallback.
+    # `check_ledger` iterates these keys to decide which lines the p-value ladder draws, and
+    # `statistic_series` below takes the minimum p-value over calibrations per rung. A
+    # ledger carries the permutation rows only, so that minimum is the permutation p-value.
+    "cvm_cramer_von_mises": "CvM",
 }
 
 

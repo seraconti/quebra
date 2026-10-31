@@ -86,8 +86,8 @@ Bonferroni threshold of 3.55), with mean power 0.603 at n = 100 across the trend
 (range 0.195-1.000 - the spread is over trend strength and Weibull shape, and mild trends
 are genuinely hard).
 
-The asymptotic form is REJECTed by the bench and the ledger hatches any cell that uses it
-at an event count where it was miscalibrated. Inside the envelope its size grows with n
+The asymptotic form is REJECTed by the bench, and it runs only there: a ledger and the
+survey carry C1's permutation row only (`battery.ROW_KEYS`). Inside the envelope its size grows with n
 once there is more than one segment: the worst cell (Arm A, shape 1.5, quantised, c = 0.03)
 rejects at 0.103 at n = 355 and 0.2045 at n = 1000 (`size_table.csv`, check=c1_lewis_robinson,
 calibration=asymptotic, clock=in_spec).

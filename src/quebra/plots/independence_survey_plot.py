@@ -96,14 +96,7 @@ class _InstrumentSurveyPlot(BasePlot):
                 f"inconclusive non-rejection (too few events, a size the bench found "
                 f"wrong, or no bench cell) is not evidence of independence. "
                 f"{'; '.join(decided)}. "
-                + (
-                    "C3 has NO bench cell, so it never reads pass: every C3 "
-                    "non-rejection here is inconclusive - unlike every other "
-                    "instrument in this survey."
-                    if first.key[0] == "c3_serial_copula"
-                    else "Every instrument here except C3 is scored against a measured "
-                    "bench size."
-                ),
+                "Every instrument here is scored against a measured bench size.",
                 ha="center",
                 wrap=True,
                 **theme.CAPTION,
@@ -166,15 +159,8 @@ def _make(key: tuple[str, str, str], name: str) -> type[_InstrumentSurveyPlot]:
     return type(name, (_InstrumentSurveyPlot,), {"KEY": key})
 
 
-_CLASS_NAME_OVERRIDES = {
-    ("c3_serial_copula", "r_copula", ""): "C3SerialCopulaSurveyPlot"
-}
-
-
 def _class_name(key: tuple[str, str, str]) -> str:
     """`("c5_rank_autocorr", "permutation", "studentized")` -> `C5RankAutocorrPermutationStudentizedSurveyPlot`."""
-    if key in _CLASS_NAME_OVERRIDES:
-        return _CLASS_NAME_OVERRIDES[key]
     parts = [p for p in (*key[0].split("_"), key[1], key[2]) if p]
     return "".join(p.capitalize() for p in parts) + "SurveyPlot"
 
@@ -200,7 +186,7 @@ class IndependenceSurveyOverviewPlot(BasePlot):
     swap the instrument, or only when you swap the CLOCK? Laid out so that comparison is a
     left-right glance rather than a memory exercise across as many files.
 
-    TRANSPOSED relative to the per-instrument figures: thresholds on y (10 of them) and
+    TRANSPOSED relative to the per-instrument figures: thresholds on y (the ladder's rungs) and
     datasets on x (28 on the device-wide survey). Keeping datasets on y would make every
     panel that many rows tall and the image unusable; the ladder is the shorter axis and belongs on the
     short side. p-values are dropped here for the same reason - at this density they would
@@ -272,9 +258,8 @@ class IndependenceSurveyOverviewPlot(BasePlot):
                 "information. The two clocks ask different questions of the same record: "
                 "in-spec time advances only while the metric is in spec and its events are "
                 "window DEATHS, calendar time is wall clock and its events are window "
-                "BIRTHS - so they can disagree without either being wrong. C3 is drawn but "
-                "has no bench cell, so its cells are UNCALIBRATED: read them as a "
-                "statistic, never as a level. Read a p-value off the per-instrument "
+                "BIRTHS - so they can disagree without either being wrong. Read a p-value "
+                "off the per-instrument "
                 "figures, not this one.",
                 ha="center",
                 wrap=True,

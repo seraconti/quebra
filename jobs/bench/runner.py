@@ -254,8 +254,14 @@ def run_cell(cell: Cell, cell_index: int) -> list[dict[str, object]]:
             continue
 
         # One set of arguments for both calls below, so the retry cannot drift from the
-        # first call: C5-raw is a bench row and both must ask for it.
-        battery_kwargs = {"clock": cell.clock, "perm": perm, "include_c5_raw": True}
+        # first call: C5-raw and the asymptotic rows are bench rows and both must ask for
+        # them.
+        battery_kwargs = {
+            "clock": cell.clock,
+            "perm": perm,
+            "include_c5_raw": True,
+            "include_asymptotic": True,
+        }
         try:
             results = run_battery(
                 replicate.segments,

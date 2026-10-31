@@ -231,9 +231,8 @@ def test_ledger_refuses_a_partial_artifact():
 def _varied_carve() -> pd.DataFrame:
     """A carve with ten distinct durations, above the tie cutoff of five.
 
-    It does NOT produce every battery row. On the in-spec clock `tau == T_N`, so C1 and C2
-    are singular there and read `not computed`, and CvM asymptotic is not re-emitted. Tests
-    asserting completeness must name those exclusions rather than pin a count.
+    On the in-spec clock `tau == T_N`, so C1 and C2 are singular there and read `not
+    computed`. Tests asserting completeness must name that exclusion rather than pin a count.
 
     A metric that alternates on a fixed period gives one repeated duration, and the battery
     declines a constant rank vector, so a fixture built that way would report a blank row
@@ -337,10 +336,10 @@ def test_with_no_rscript_the_r_fields_read_absent_and_every_row_is_still_built(
     in_spec = ledger.rows[ledger.rows["clock"] == "in_spec"]
     built = set(zip(in_spec["check_id"], in_spec["calibration"], in_spec["variant"]))
     expected = set(battery.ROW_KEYS) | {(c3.CHECK_NAME, CALIB_R_COPULA, "")}
-    # The in-spec clock re-emits every battery row except CvM asymptotic, which it drops
-    # because `tau == T_N` makes it singular there. Asserting the SET rather than a count
-    # is what makes a dropped row name itself instead of moving a number.
-    assert built == expected - {("cvm_cramer_von_mises", "asymptotic", "")}, (
+    # The in-spec clock re-emits every battery row, C1's and C2's as `not computed` rows
+    # when `tau == T_N`, and C3's. Asserting the SET rather than a count is what makes a
+    # dropped row name itself instead of moving a number.
+    assert built == expected, (
         f"R absence changed which rows the in-spec cell carries: {built ^ expected}"
     )
     c3_rows = ledger.rows[ledger.rows["check_id"] == c3.CHECK_NAME]
@@ -512,7 +511,7 @@ def test_an_unusable_r_is_recorded_on_the_ledger_and_does_not_stop_it(
     in_spec = ledger.rows[ledger.rows["clock"] == "in_spec"]
     built = set(zip(in_spec["check_id"], in_spec["calibration"], in_spec["variant"]))
     expected = set(battery.ROW_KEYS) | {(c3.CHECK_NAME, CALIB_R_COPULA, "")}
-    assert built == expected - {("cvm_cramer_von_mises", "asymptotic", "")}, (
+    assert built == expected, (
         f"an unusable R changed which rows the in-spec cell carries: {built ^ expected}"
     )
     assert set(ledger.rows[ledger.rows["check_id"] == c3.CHECK_NAME]["verdict"]) == {
@@ -520,13 +519,13 @@ def test_an_unusable_r_is_recorded_on_the_ledger_and_does_not_stop_it(
     }
 
 
-# The set of surveyed checks the bench has never calibrated. DERIVED below from the bench
-# tables rather than trusted: if C3 is ever benched, or a new uncalibrated check is
+# The checks a ledger can run that the bench has never calibrated. DERIVED below from the
+# bench tables rather than trusted: if C3 is ever benched, or a new uncalibrated check is
 # registered, the test fails and this constant has to move with it.
 UNCALIBRATED_CHECKS = {"c3_serial_copula"}
 
 
-def test_every_surveyed_check_is_benched_or_declared_uncalibrated():
+def test_every_ledger_check_is_benched_or_declared_uncalibrated():
     """Oracle: jobs/bench/results/size_table.csv, read rather than assumed.
 
     A check with no bench cell has no measured size, so neither its rejections nor its
@@ -535,7 +534,7 @@ def test_every_surveyed_check_is_benched_or_declared_uncalibrated():
     WHICH checks are in that state, so a later pass could bench C3, or register a seventh
     check with no calibration, and the distinction would quietly stop matching the tables.
     """
-    from quebra.analyzers.independence_survey import SURVEY_KEYS
+    from quebra.analyzers.checks import c3_serial_copula as c3
 
     size = pd.read_csv(
         pathlib.Path(__file__).resolve().parents[1]
@@ -545,16 +544,17 @@ def test_every_surveyed_check_is_benched_or_declared_uncalibrated():
         / "size_table.csv"
     )
     benched = set(size["check"].unique())
-    surveyed = {key[0] for key in SURVEY_KEYS}
+    # What a ledger can run: the battery's rows, and C3 when a caller asks for it.
+    runnable = {key[0] for key in battery.ROW_KEYS} | {c3.CHECK_NAME}
 
-    assert UNCALIBRATED_CHECKS == surveyed - benched, (
-        "the surveyed checks with no bench cell have changed. If a check was benched, "
+    assert UNCALIBRATED_CHECKS == runnable - benched, (
+        "the ledger's checks with no bench cell have changed. If a check was benched, "
         "remove it from UNCALIBRATED_CHECKS here and check that "
         "analyzers/instrument_validation.py's tier rows moved with it. If a new "
         "uncalibrated check was registered, it needs a row in the bench before its "
         "verdicts can be read as levelled."
     )
-    # No second assertion here. `UNCALIBRATED_CHECKS <= surveyed` is true by construction
+    # No second assertion here. `UNCALIBRATED_CHECKS <= runnable` is true by construction
     # once the equality above holds, and "not in ROW_KEYS" is already pinned by
     # tests/test_independence_survey.py, whose subject that is.
 
@@ -635,3 +635,40 @@ def test_score_segments_with_nothing_to_score_writes_not_computed():
         "unit",
     )
     assert row["n_windows_used"] == 4
+
+
+def test_the_p_value_ladder_draws_cvm_from_its_permutation_row():
+    """Oracle: the ledger's own CvM row. A ledger carries one CvM row per cell, its
+    permutation row, so the ladder draws a CvM line through that row's p-value on the
+    in-spec clock."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    import quebra.analyzers.check_ledger as ledger_module
+    from quebra.panels.check_ledger import CheckLedgerPanel
+
+    ledger = ledger_module.run(
+        ledger_module.CheckLedgerInputs(
+            windows=_varied_carve(),
+            bench_size_table=_bench_table(),
+            thresholds=[("3 µs", 3.0, True)],
+            n_permutations=19,
+            seed=7,
+        )
+    )
+    rows = ledger.rows
+    cvm = rows[
+        (rows["check_id"] == "cvm_cramer_von_mises") & (rows["clock"] == "in_spec")
+    ]
+    assert list(cvm["calibration"]) == [CALIB_PERMUTATION]
+    assert cvm["p_value"].notna().all(), "premise: CvM answers on the in-spec clock"
+    fig = CheckLedgerPanel(name="ladder_probe").build_matplotlib(ledger)
+    try:
+        (ladder,) = [ax for ax in fig.axes if ax.get_ylabel() == "p-value"]
+        lines = [line for line in ladder.get_lines() if line.get_label() == "CvM"]
+        assert len(lines) == 1, [line.get_label() for line in ladder.get_lines()]
+        assert list(lines[0].get_ydata()) == list(cvm["p_value"].astype(float))
+    finally:
+        plt.close(fig)

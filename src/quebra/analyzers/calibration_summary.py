@@ -18,10 +18,12 @@ P-P plot needs the statistics themselves and the tables only carry rejection rat
 a deterministic function of `(seed, n_values, n_replicates)`, and the seed travels as a
 step kwarg so it lands on the provenance label.
 
-Every artifact carries the rows of `battery.ROW_KEYS` only. C5's unstudentized variant is in
-the bench tables as the measured comparison for what studentizing buys, and it reaches no
-figure. A dependence axis is a quantity that is 0 with no dependence: the generator's own
-rank correlation for Arm E, and the measured lag-1 with its exchangeable mean added back for
+Every artifact carries the rows of `DRAWN_ROW_KEYS`: the five permutation rows of
+`battery.ROW_KEYS` and the three asymptotic rows. The pipeline reports the permutation rows
+only, and the asymptotic rows' measured size is the reason, so these figures keep drawing
+them. C5's unstudentized variant is in the bench tables as the measured comparison for what
+studentizing buys, and it reaches no figure. A dependence axis is a quantity that is 0 with
+no dependence: the generator's own rank correlation for Arm E, and the measured lag-1 with its exchangeable mean added back for
 Arm C.
 """
 
@@ -33,9 +35,12 @@ import numpy as np
 import pandas as pd
 
 import quebra.analyzers.checks.c2_anderson_darling as c2
-from quebra.analyzers.checks.battery import BENCH_ROW_KEYS, ROW_KEYS
+from quebra.analyzers.checks.battery import BENCH_ROW_KEYS, C5_RAW_KEY
 from quebra.analyzers.checks.result import CALIB_ASYMPTOTIC, CALIB_PERMUTATION, Segment
 from quebra.core._artifact_guard import StaleArtifactGuard
+
+# The rows the calibration figures draw: every bench row except C5's unstudentized variant.
+DRAWN_ROW_KEYS = tuple(key for key in BENCH_ROW_KEYS if key != C5_RAW_KEY)
 
 # Nominal significance every size curve is read against.
 NOMINAL_ALPHA = 0.05
@@ -81,11 +86,11 @@ def _require_full_pooling(counts: pd.Series, n_pooled: int, where: str) -> None:
 
 
 def _drawn_rows(selection: pd.DataFrame, what: str) -> pd.DataFrame:
-    """The rows of `battery.ROW_KEYS` among the cells an artifact draws.
+    """The rows of `DRAWN_ROW_KEYS` among the cells an artifact draws.
 
     A cell that failed every replicate raises (`_refuse_failed_cells`). C5's unstudentized
-    row is dropped: it is in `BENCH_ROW_KEYS` only. Any other row in neither list raises, so
-    a table carrying a check this code does not know is not drawn by omission.
+    row is dropped: it reaches no figure. A row outside `BENCH_ROW_KEYS` raises, so a table
+    carrying a check this code does not know is not drawn by omission.
     """
     _refuse_failed_cells(selection, what)
     frame = selection
@@ -100,7 +105,7 @@ def _drawn_rows(selection: pd.DataFrame, what: str) -> pd.DataFrame:
     unknown = sorted(set(keys) - set(BENCH_ROW_KEYS), key=str)
     if unknown:
         raise ValueError(f"rows outside battery.BENCH_ROW_KEYS: {unknown}")
-    return frame[[key in ROW_KEYS for key in keys]]
+    return frame[[key in DRAWN_ROW_KEYS for key in keys]]
 
 
 def neighbour_rank_correlation(rho: float) -> float:

@@ -59,14 +59,17 @@ so its statistic stays finite there.
 
 ## Its rows
 
-Two of the eight in `battery.ROW_KEYS`: one asymptotic, one permutation-calibrated. The
-asymptotic row runs only when `include_tau_checks` is True and the record has one segment,
-as C2's asymptotic row does; C1's needs only the flag. Its limiting null still assumes a
+Two bench rows, one asymptotic and one permutation-calibrated. The pipeline's battery
+(`battery.ROW_KEYS`, five rows) carries the permutation row only; the asymptotic row runs
+when the bench asks for it (`include_asymptotic`), and then only when `include_tau_checks`
+is True and the record has one segment, as C2's asymptotic row does; C1's asymptotic row
+runs on any number of segments. Its limiting null still assumes a
 truncation time chosen independently of the events, and an event-determined `tau` breaks
 the tied-down bridge for CvM exactly as it does for the other two. Only the permutation row
 is entitled to that case.
 
-Every `ROW_KEYS` row is also a bench row (`BENCH_ROW_KEYS` adds C5's unstudentized variant),
+Every `ROW_KEYS` row is also a bench row (`BENCH_ROW_KEYS` adds the three asymptotic rows
+and C5's unstudentized variant),
 so registering a check without re-running the bench makes `bench_acceptance_at_n` return
 None and every non-rejection read `inconclusive / no bench cell`.
 

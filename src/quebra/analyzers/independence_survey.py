@@ -13,13 +13,10 @@ against the calibration bench, so this reuses that verdict and prints the p insi
 as a secondary detail. That is the whole reason the survey is built on `check_ledger.run`
 rather than on raw check results.
 
-**One grid per entry of `SURVEY_KEYS`**, which is `battery.ROW_KEYS` plus C3. C1, C2 and
-CvM each appear twice, once per calibration, because the asymptotic and permutation routes
-are different instruments that happen to share a statistic - the tier work measured them
-separately and they disagree. C5 appears once, studentized: its unstudentized variant is
-uncentred and runs only in the bench (`battery.BENCH_ROW_KEYS`). C3 is drawn but is
-the one instrument with no bench cell behind it, and the comment on `C3_KEY` below carries
-what that costs a reader.
+**One grid per entry of `SURVEY_KEYS`**, which is `battery.ROW_KEYS`: the five permutation
+rows, each scored against a bench cell. The asymptotic rows of C1, C2 and CvM, and C5's
+unstudentized variant, run only in the bench (`battery.BENCH_ROW_KEYS`). C3 is not
+surveyed; the comment on `C3_KEY` below says why.
 
 **Pure compute.** Ledger row tables in, typed artifact out. The job loads the datasets and
 runs the ledgers; nothing here touches disk or matplotlib.
@@ -27,6 +24,8 @@ runs the ledgers; nothing here touches disk or matplotlib.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -40,17 +39,17 @@ from quebra.analyzers.check_ledger import (
     VERDICT_TIES,
 )
 from quebra.analyzers.checks.battery import ROW_KEYS
+from quebra.analyzers.checks.result import CALIB_PERMUTATION
 
 # C3's key. It is NOT in `ROW_KEYS` and must not be: every row there is scored against a
 # bench cell, and the bench does not run C3 - it is an out-of-process R call with its own
-# simulated null. But the SURVEY draws it, because a survey that runs an instrument and
-# then omits it from every figure answers a different question from the one it appears to.
-# The consequence travels with it: C3 is the one grid here with no bench cell behind it, so
-# `_verdict` never returns `pass` for it and every C3 non-rejection reads `inconclusive`.
+# simulated null, so `_verdict` could never return `pass` for it. The ledgers no longer run
+# it and the survey draws no C3 grid; the key names C3's rows for a caller that asks a
+# ledger for them.
 C3_KEY = ("c3_serial_copula", "r_copula", "")
 
-# What the survey draws: every row the pipeline's battery returns, plus C3.
-SURVEY_KEYS = tuple(ROW_KEYS) + (C3_KEY,)
+# What the survey draws: every row the pipeline's battery returns.
+SURVEY_KEYS = tuple(ROW_KEYS)
 
 # Display names, looked up by key rather than by position. Kept here rather than in the plot because they name
 # the INSTRUMENT, which is a fact about the analysis and not about the axes.
@@ -147,7 +146,7 @@ class InstrumentGrid:
         `_verdict` sends every non-rejection to `inconclusive`, so `pass` is unreachable and
         this ratio is 1.0 by construction whenever anything rejected at all. Reporting that
         as a rejection SHARE would put a forced constant where a reader expects a measured
-        rate: the shipped C3 grid reads 46 fail, 0 pass, and 1.000 is not a finding about
+        rate: such a grid can read many fails and no pass, and 1.000 is not a finding about
         the data. The same degeneracy reaches any instrument the bench scored as
         miscalibrated at every event count.
         """
@@ -195,8 +194,7 @@ def _pivot_verdicts(
     """Verdicts, with every remaining hole named rather than left as NaN.
 
     After the blanket rows are folded in, a hole means the BATTERY produced no row for this
-    instrument here - `run_battery` drops C2-asymptotic when a record has more than one
-    segment, which is 35 cells on the shipped data. Leaving those NaN made `counts` sum to
+    instrument here. Leaving those NaN made `counts` sum to
     less than the grid and let a reader take a blank cell for "nothing to say" when the
     truth is "this instrument does not apply to this record". `not computed` is that
     statement, and it is the tone the figure already uses.
@@ -338,3 +336,119 @@ def _fmt_p(value: object) -> str:
         return ""
     v = float(value)
     return "<.001" if v < 0.001 else f"{v:.3f}".lstrip("0")
+
+
+# --------------------------------------------------- the trend group, counted across ledgers
+
+# The trend group: the three checks that read the same Brownian bridge of event times.
+TREND_CHECKS = ("c1_lewis_robinson", "c2_anderson_darling", "cvm_cramer_von_mises")
+_CELL = ["dataset_id", "threshold_label", "clock"]
+_TREND_COLUMNS = (*_CELL, "check_id", "calibration", "verdict", "notes")
+# A number in a message, not a digit of a name such as `C1` or `T_N`.
+_NUMBER = re.compile(r"(?<![A-Za-z_\d.])[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+
+
+@dataclass
+class TrendGroupCounts:
+    """Where the trend group answers, counted over many ledgers' cells.
+
+    A cell is one (record, threshold, clock). A check answers in a cell when its
+    permutation row's verdict is not `not computed`; other calibrations are not read, so a
+    ledger written while the asymptotic rows still ran counts the same way.
+
+    `no_answer`: per clock and message, the cells where neither C1 nor C2 answered,
+    `n_cells`. The message is C1's note, or the cell's `(all)` row's when the cell has no
+    C1 row (no windows, no segment), read as its first clause (up to the first `. ` or
+    `, `), a note the ledger wrote twice as `X; X` read once, and numbers read `#`. The
+    ledger truncates notes and prints numbers at varying widths, so the clause, not the
+    whole note, is what groups the cells that failed for one reason.
+
+    `cvm_alone`: per clock, `n_cells`, `n_trend_answered` (any of the three answered),
+    `n_cvm_alone` (CvM answered, C1 and C2 did not), and the share of CvM-alone cells among
+    the answered cells and among all cells. A share is NaN when its denominator is 0.
+    """
+
+    no_answer: pd.DataFrame
+    cvm_alone: pd.DataFrame
+
+
+_CLAUSE_END = re.compile(r"(?<=\S)[.,] ")
+
+
+def _message(note: object) -> str:
+    parts = str(note).split("; ")
+    half = len(parts) // 2
+    if len(parts) % 2 == 0 and parts[:half] == parts[half:]:
+        parts = parts[:half]
+    clause = _CLAUSE_END.split("; ".join(parts), maxsplit=1)[0]
+    text = " ".join(_NUMBER.sub("#", clause).split())
+    return text or "(no message)"
+
+
+def trend_group_counts(ledgers: Sequence[object]) -> TrendGroupCounts:
+    """Count, over every cell of `ledgers`, where C1 and C2 gave no answer and where the
+    trend group is CvM alone. Raises KeyError naming a missing row column, and ValueError
+    on no ledger or no cell, on a record that appears in two ledgers, and on a cell where
+    C1 and C2 were never asked: no row of theirs and no `(all)` row. That cell is not a
+    silent C1 and C2, and counting it as one would read "not asked" as "no answer"."""
+    if not ledgers:
+        raise ValueError("no ledger to count")
+    ids = [str(getattr(ledger, "dataset_id", "")) for ledger in ledgers]
+    repeated = sorted({i for i in ids if ids.count(i) > 1})
+    if repeated:
+        raise ValueError(
+            f"records {repeated} repeat across ledgers; each cell would be counted twice"
+        )
+    frame = pd.concat([ledger.rows for ledger in ledgers], ignore_index=True)
+    missing = [c for c in _TREND_COLUMNS if c not in frame.columns]
+    if missing:
+        raise KeyError(f"the ledger rows have no column(s) {missing}")
+    if not len(frame):
+        raise ValueError("the ledgers hold no cell to count")
+
+    cells = []
+    for (_record, _label, clock), cell in frame.groupby(_CELL, sort=True):
+        permutation = cell[cell["calibration"] == CALIB_PERMUTATION]
+
+        def answered(check: str, permutation=permutation) -> bool:
+            rows = permutation[permutation["check_id"] == check]
+            return bool((rows["verdict"] != VERDICT_NOT_COMPUTED).any())
+
+        asked = permutation["check_id"].isin(TREND_CHECKS[:2]).any()
+        if not asked and not (cell["check_id"] == "(all)").any():
+            raise ValueError(
+                f"C1 and C2 were never asked in the cell {(_record, _label, clock)}: "
+                "no row of theirs and no (all) row"
+            )
+        c1, c2, cvm = (answered(check) for check in TREND_CHECKS)
+        source = permutation[permutation["check_id"] == TREND_CHECKS[0]]
+        if not len(source):
+            source = cell[cell["check_id"] == "(all)"]
+        cells.append(
+            {
+                "clock": clock,
+                "no_c1_c2": not c1 and not c2,
+                "message": _message(source["notes"].iloc[0]) if len(source) else "",
+                "trend_answered": c1 or c2 or cvm,
+                "cvm_alone": cvm and not c1 and not c2,
+            }
+        )
+    table = pd.DataFrame(cells)
+    no_answer = (
+        table[table["no_c1_c2"]]
+        .groupby(["clock", "message"], sort=True)
+        .size()
+        .rename("n_cells")
+        .reset_index()
+    )
+    per_clock = table.groupby("clock", sort=True).agg(
+        n_cells=("clock", "size"),
+        n_trend_answered=("trend_answered", "sum"),
+        n_cvm_alone=("cvm_alone", "sum"),
+    )
+    answered_cells = per_clock["n_trend_answered"].where(
+        per_clock["n_trend_answered"] > 0
+    )
+    per_clock["share_of_answered"] = per_clock["n_cvm_alone"] / answered_cells
+    per_clock["share_of_all"] = per_clock["n_cvm_alone"] / per_clock["n_cells"]
+    return TrendGroupCounts(no_answer=no_answer, cvm_alone=per_clock.reset_index())

@@ -10,7 +10,7 @@ typography half of this; the rules below are the half a module cannot enforce.
   excluded, and censored windows each survival curve excluded), `panels/check_ledger.py`
   (thresholds with no usable windows), `plots/check_outcome_plot.py` (checks shown of those
   run, and checks asked for that produced no answer), `plots/independence_survey_plot.py`
-  (cells not computed, and that C3 is drawn with no bench cell),
+  (cells not computed),
   `plots/instrument_validation_plot.py` (the tier that is not drawn, and the censored gap the
   load-haul-dump comparison drops), `plots/tlf_plot.py` (reads with a non-finite time or
   value) and `plots/allan_plot.py` (reads with a non-finite time or value, and ADEV points,

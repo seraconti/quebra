@@ -77,7 +77,11 @@ renewal interval.
 
 ## Permutation, not asymptotics
 
-Every check ships a permutation calibration and it is the one to use. Permutation is
+Every check ships a permutation calibration and it is the one to use. The pipeline uses
+nothing else: a ledger, the survey and a band carry the five permutation rows
+(`battery.ROW_KEYS`); the asymptotic rows of C1, C2 and CvM run only in the bench, which
+still measures them (the table below); and the ledgers do not run C3
+(`ledger_recipe.LEDGER_KNOBS`). Permutation is
 **exactly** valid here rather than asymptotically: `tau`, `N` and `gamma_hat` are all
 invariant to reordering gaps within a segment, so the conditional null is exact at finite
 `B`. The p-value is tie-corrected, `p = (1 + #{null >= observed}) / (1 + B)`, because this

@@ -2,7 +2,7 @@
 
 The device-wide survey: one grid per instrument, every 6D2S record down, the T2* threshold
 ladder across, both clocks stacked. One figure per entry of
-`independence_survey.SURVEY_KEYS`, which is `battery.ROW_KEYS` plus C3.
+`independence_survey.SURVEY_KEYS`, which is `battery.ROW_KEYS`: the five permutation rows.
 
 It includes every job of the `check_ledger` family and refs each job's `CheckLedgers`
 bundle, so it carves nothing and scores nothing: every cell is the verdict that record's own
@@ -10,9 +10,6 @@ ledger printed, under that job's knobs (`ledger_recipe.LEDGER_KNOBS`). A single 
 rejecting iid could be that record; many records rejecting it is a property of the
 instrument or the device. Each ledger job draws
 the same grids for its own qubit; this one stacks the qubits.
-
-**C3 is drawn, and is the one instrument with no bench cell.** A green C3 cell means "did
-not reject" and nothing stronger; the figure says what it lacks.
 
 In `jobs/composite/` and `JOB_SWEEP = False` because a fresh run re-runs every included
 ledger job, once each: one ref per job.

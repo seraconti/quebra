@@ -614,7 +614,10 @@ def test_c5_raw_runs_only_when_the_bench_asks_for_it():
             standalone.p_value,
         )
     assert [
-        row_key(r) for r in run_battery([segment], perm=perm, include_c5_raw=True)
+        row_key(r)
+        for r in run_battery(
+            [segment], perm=perm, include_c5_raw=True, include_asymptotic=True
+        )
     ] == (list(BENCH_ROW_KEYS))
 
 
@@ -625,11 +628,15 @@ def test_the_battery_runs_the_shipped_gamma_estimator():
     The battery has its own `gamma_estimator` default and is the path every ledger and
     bench p-value takes, so a regression of that default alone must fail here. The
     permutation comparison above cannot see it: at m = 1 gamma is permutation invariant.
+    The asymptotic rows run on the bench's path only, so the battery is asked for them.
     """
     rng = np.random.default_rng(13)
     segment = exponential_segment(20, rng)
     perm = block_permutations([segment.n_events], 99, rng)
-    rows = {row_key(r): r for r in run_battery([segment], perm=perm)}
+    rows = {
+        row_key(r): r
+        for r in run_battery([segment], perm=perm, include_asymptotic=True)
+    }
     for module in (c1, c2, cvm):
         shipped, population = (
             module.run(
@@ -641,7 +648,9 @@ def test_the_battery_runs_the_shipped_gamma_estimator():
         row = rows[(module.CHECK_NAME, CALIB_ASYMPTOTIC, "")]
         assert row.p_value == pytest.approx(shipped, rel=1e-12)
     # And an estimator the caller names must reach every check, not only the default.
-    asked = run_battery([segment], perm=perm, gamma_estimator=GAMMA_COMPLETE)
+    asked = run_battery(
+        [segment], perm=perm, gamma_estimator=GAMMA_COMPLETE, include_asymptotic=True
+    )
     rows_asked = {row_key(r): r for r in asked}
     for module in (c1, c2, cvm):
         expected = module.run(
@@ -656,8 +665,13 @@ def test_battery_drops_only_the_tau_checks_when_asked():
     rng = np.random.default_rng(12)
     segment = exponential_segment(30, rng)
     perm = block_permutations([segment.n_events], 99, rng)
+    # Asked for the asymptotic rows, as the bench asks, so a CvM-asymptotic row leaking
+    # past `include_tau_checks=False` shows here; the default battery has none to leak.
     keys = [
-        row_key(r) for r in run_battery([segment], perm=perm, include_tau_checks=False)
+        row_key(r)
+        for r in run_battery(
+            [segment], perm=perm, include_tau_checks=False, include_asymptotic=True
+        )
     ]
     # C5, C6 and CvM-by-permutation survive; C1, C2 and CvM-ASYMPTOTIC do not.
     # CvM is the one entitled to this case: its

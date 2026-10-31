@@ -46,7 +46,8 @@ that ends out of spec.
 
 ## 4. C3 is unassessed
 
-Where R is present C3 executes; where R is absent the bridge still degrades to
+The ledgers do not run C3 (`ledger_recipe.LEDGER_KNOBS`) and the survey draws no C3 grid.
+When a caller asks for it, C3 executes where R is present; where R is absent the bridge still degrades to
 `p_value=None` and the row reads `not computed`. What remains missing is CALIBRATION, not the
 interpreter: C3 has no bench cell, so its size and power are unmeasured. Two operational
 limits: `--vanilla` implies `--no-environ` and so needs `R_LIBS` passed explicitly or

@@ -28,6 +28,13 @@ the survey and a band can carry, leave it out; `BENCH_ROW_KEYS` adds it back, an
 asks for it with `include_c5_raw=True`. It draws no randomness and reads the same shared
 autocorrelations, so turning it on changes no other row.
 
+**The asymptotic rows of C1, C2 and CvM also run only in the bench.** The pipeline reports
+permutation calibration only: at the event counts these records carry the bench measures
+the asymptotic routes as oversized, and an event-determined `tau` breaks their limiting
+null. The bench keeps measuring them, which is the evidence for that choice, and asks for
+them with `include_asymptotic=True`. They take no permutation set and draw no randomness,
+so leaving them out changes no other row.
+
 Nothing is caught. A degenerate record - every duration tied, a zero-length window, a
 segment whose last event lands exactly on its truncation time - raises out of here, and the
 BENCH decides what to do with it, counting the failure into a `n_failed` column. Swallowing
@@ -67,10 +74,18 @@ from quebra.analyzers.checks.result import (
 
 C5_RAW_KEY = ("c5_rank_autocorr", CALIB_PERMUTATION, c5.VARIANT_RAW)
 
-# One row per (check, calibration, variant): every row the pipeline's battery returns, and
-# so the rows a ledger, the survey and a band can carry. Adding a check here adds a row
-# everywhere, the bench tables included, without touching the runner.
-ROW_KEYS = (
+# The asymptotic rows, which run only when the bench asks (`include_asymptotic`).
+ASYMPTOTIC_KEYS = (
+    ("c1_lewis_robinson", CALIB_ASYMPTOTIC, ""),
+    ("c2_anderson_darling", CALIB_ASYMPTOTIC, ""),
+    ("cvm_cramer_von_mises", CALIB_ASYMPTOTIC, ""),
+)
+
+# The bench tables' row schema, one row per (check, calibration, variant), in the order the
+# battery returns them with every bench flag on. Written out rather than assembled, because
+# that order is the bench tables' row order and must not move when the pipeline's rows do.
+# Adding a check here adds a row to the bench tables without touching the runner.
+BENCH_ROW_KEYS = (
     ("c1_lewis_robinson", CALIB_ASYMPTOTIC, ""),
     ("c1_lewis_robinson", CALIB_PERMUTATION, ""),
     ("c2_anderson_darling", CALIB_ASYMPTOTIC, ""),
@@ -86,10 +101,15 @@ ROW_KEYS = (
     # has no such weight and is finite there. It is also the source paper's own choice
     # for m > 1, which is the gapped case (Kvaloy & Lindqvist 2020, Section 6, p. 106).
     ("cvm_cramer_von_mises", CALIB_PERMUTATION, ""),
+    C5_RAW_KEY,
 )
 
-# The bench tables' row schema: the pipeline's rows and C5's unstudentized variant.
-BENCH_ROW_KEYS = (*ROW_KEYS, C5_RAW_KEY)
+# Every row the pipeline's battery returns, and so the rows a ledger, the survey and a band
+# can carry: the bench's rows less the asymptotic ones and C5's unstudentized variant, the
+# five permutation rows, in the bench's order.
+ROW_KEYS = tuple(
+    key for key in BENCH_ROW_KEYS if key not in ASYMPTOTIC_KEYS and key != C5_RAW_KEY
+)
 
 
 def row_key(result: CheckResult) -> tuple[str, str, str]:
@@ -129,18 +149,22 @@ def run_battery(
     include_c2_asymptotic: bool = True,
     include_tau_checks: bool = True,
     include_c5_raw: bool = False,
+    include_asymptotic: bool = False,
 ) -> list[CheckResult]:
-    """Up to eight results in `ROW_KEYS` order, and C5's unstudentized row last when
-    `include_c5_raw` is set (`BENCH_ROW_KEYS` order). Only the bench sets it.
+    """Up to five results in `ROW_KEYS` order. `include_asymptotic` adds the three
+    asymptotic rows and `include_c5_raw` C5's unstudentized row, in `BENCH_ROW_KEYS` order.
+    Only the bench sets either.
 
-    `include_c2_asymptotic` exists because C2's asymptotic calibration is defined only for
+    `include_c2_asymptotic` acts only with `include_asymptotic`. It exists because C2's
+    asymptotic calibration is defined only for
     a single segment (Kvaloy & Lindqvist 2020, Section 4.2, p. 106: the normal
     approximation to the summed statistic works "less well" for Anderson-Darling). The
     battery drops that row for m > 1 rather than raising, since
     a gapped record legitimately has m > 1 and the other rows are still wanted.
 
-    `include_tau_checks=False` drops five rows - the three asymptotic ones and C1's and C2's
-    permutation rows - leaving three, or four with `include_c5_raw`. It is for records where
+    `include_tau_checks=False` drops C1's and C2's permutation rows, and the three
+    asymptotic rows when they were asked for, leaving C5, C6 and CvM by permutation, plus
+    C5's unstudentized row with `include_c5_raw`. It is for records where
     `tau` is not well posed - specifically the IN-SPEC clock of a carved series, where
     in-spec time stops accumulating the moment the record ends out of spec, so `tau == T_N`
     and eq (7) is singular. Measured on an iid read series that is 73% of replicates, and
@@ -179,25 +203,26 @@ def run_battery(
 
     results: list[CheckResult] = []
     if include_tau_checks:
-        results.extend(
-            [
+        if include_asymptotic:
+            results.append(
                 c1.run(
                     segments,
                     calibration=CALIB_ASYMPTOTIC,
                     clock=clock,
                     gamma_estimator=gamma_estimator,
-                ),
-                c1.run(
-                    segments,
-                    calibration=CALIB_PERMUTATION,
-                    clock=clock,
-                    gamma_estimator=gamma_estimator,
-                    perm=perm,
-                    permuted=permuted,
-                ),
-            ]
+                )
+            )
+        results.append(
+            c1.run(
+                segments,
+                calibration=CALIB_PERMUTATION,
+                clock=clock,
+                gamma_estimator=gamma_estimator,
+                perm=perm,
+                permuted=permuted,
+            )
         )
-        if include_c2_asymptotic and len(segments) == 1:
+        if include_asymptotic and include_c2_asymptotic and len(segments) == 1:
             results.append(
                 c2.run(
                     segments,
@@ -212,7 +237,7 @@ def run_battery(
         # still assumes a truncation time chosen INDEPENDENTLY of the events, and an
         # event-determined `tau` breaks the tied-down bridge for CvM exactly as it does for
         # the other two. Only the permutation row below is entitled to that case.
-        if len(segments) == 1:
+        if include_asymptotic and len(segments) == 1:
             results.append(
                 cvm.run(
                     segments,

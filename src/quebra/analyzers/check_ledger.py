@@ -16,9 +16,9 @@ non-rejection must never print as a pass on a p-value alone.
 **Which clock.** Both are run. On the in-spec clock of a carved record, time stops
 accruing the moment the record ends out of spec, so `tau == T_N` - measured at ~73% of
 synthetic replicates. Kvaloy and Lindqvist's eq (7) (Technometrics 2020, p. 104) is
-singular there, and every asymptotic row's limiting null assumes a `tau` chosen
-independently of the events. Those rows read `not computed` with
-the reason, and the rank checks (which never touch `tau`) still run there.
+singular there, so C1's and C2's rows read `not computed` with the reason. The ledger carries
+no asymptotic row, whose limiting null would also assume a `tau` chosen independently of the
+events. CvM by permutation and the rank checks (which never touch `tau`) still run there.
 
 **What the provenance record cannot hold.** Its schema is closed, so what R produced the
 C3 p-values is discovered at runtime and lives on the materialized artifact, not in the
@@ -52,7 +52,6 @@ from quebra.analyzers.checks._permutation import block_permutations
 from quebra.analyzers.checks._rank_serial import MAX_LAG_CAP
 from quebra.analyzers.checks.battery import run_battery
 from quebra.analyzers.checks.result import (
-    CALIB_ASYMPTOTIC,
     CALIB_PERMUTATION,
     CALIB_R_COPULA,
     CLOCK_CALENDAR,
@@ -187,17 +186,17 @@ class CheckLedgerInputs:
     seed: int = 0
     min_events_per_segment: int = 2
     # C3 is the only out-of-process check and by far the most expensive: about a minute at
-    # n = 355 (see c3_serial_copula for the measured range and its machine). Skipping it
-    # loses no calibrated evidence - C3 has no bench cell, so its
-    # rows are `not computed` or an uncalibrated p-value either way. When False the C3 rows
-    # are OMITTED rather than written as `not computed`: a blank row would claim the check
-    # was attempted and failed, when in fact it was never asked.
-    include_c3: bool = True
+    # n = 355 (see c3_serial_copula for the measured range and its machine). A ledger does
+    # not run it unless asked: C3 has no bench cell, so its rows are `not computed` or an
+    # uncalibrated p-value either way. When False the C3 rows are OMITTED rather than
+    # written as `not computed`: a blank row would claim the check was attempted and
+    # failed, when in fact it was never asked.
+    include_c3: bool = False
     # Derived from a run-set by `check_outcome.battery_flags`, never set by hand once one is
-    # in play. COARSE on purpose: `include_tau_checks` is all-or-nothing over five rows, so a
-    # run-set naming one asymptotic row still computes the other four. The declared run-set
-    # therefore names AT MOST what ran, not exactly what ran, and a reader comparing the two
-    # will find the ledger carrying rows the run-set does not list.
+    # in play. COARSE on purpose: `include_tau_checks` is all-or-nothing over C1's and C2's
+    # permutation rows, so a run-set naming one still computes the other. The declared
+    # run-set therefore names AT MOST what ran, not exactly what ran, and a reader comparing
+    # the two will find the ledger carrying rows the run-set does not list.
     include_tau_checks: bool = True
     include_c2_asymptotic: bool = True
     # See c3_serial_copula.N_NULL_SIM: the dominant cost, and part of what a C3
@@ -216,7 +215,7 @@ def make_inputs_from_windows(
     lag_max: int,
     n_permutations: int,
     seed: int,
-    include_c3: bool = True,
+    include_c3: bool = False,
     include_tau_checks: bool = True,
     include_c2_asymptotic: bool = True,
     c3_n_null_sim: int = c3.N_NULL_SIM,
@@ -581,24 +580,21 @@ def score_segments(
         # The retry dropped C1 and C2. Say so with their own rows: without them the reader
         # sees a ladder where the trend checks simply vanish at the loose thresholds and
         # cannot tell whether they were attempted, declined, or forgotten. The reason
-        # (usually tau == T_N on the in-spec clock) belongs on the row it applies to.
-        for dropped, calibrations in (
-            ("c1_lewis_robinson", (CALIB_ASYMPTOTIC, CALIB_PERMUTATION)),
-            ("c2_anderson_darling", (CALIB_ASYMPTOTIC, CALIB_PERMUTATION)),
-        ):
-            for calibration in calibrations:
-                results.append(
-                    CheckResult(
-                        check=dropped,
-                        statistic=float("nan"),
-                        p_value=None,
-                        calibration=calibration,
-                        clock=clock,
-                        n_events=int(sum(s.n_events for s in segments)),
-                        n_segments=len(segments),
-                        notes=battery_note,
-                    )
+        # (usually tau == T_N on the in-spec clock) belongs on the row it applies to. A
+        # ledger runs the permutation rows only, so those are the rows it accounts for.
+        for dropped in ("c1_lewis_robinson", "c2_anderson_darling"):
+            results.append(
+                CheckResult(
+                    check=dropped,
+                    statistic=float("nan"),
+                    p_value=None,
+                    calibration=CALIB_PERMUTATION,
+                    clock=clock,
+                    n_events=int(sum(s.n_events for s in segments)),
+                    n_segments=len(segments),
+                    notes=battery_note,
                 )
+            )
 
     # C3 is out-of-process and shares nothing with the permutation set, so it is called
     # separately. With R absent it returns p_value=None and the row reads `not computed`.

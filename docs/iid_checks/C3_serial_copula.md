@@ -24,7 +24,7 @@ N-invariant and so cannot, alone, detect a swapped argument order. The test skip
 table, so its size has never been measured and its power has never been measured. A C3
 p-value is a statistic, not a level: neither a rejection nor a non-rejection from it is
 evidence at alpha. The ledger says so on every such row, and
-`tests/test_check_ledger.py::test_every_surveyed_check_is_benched_or_declared_uncalibrated`
+`tests/test_check_ledger.py::test_every_ledger_check_is_benched_or_declared_uncalibrated`
 derives that status from the bench table so it cannot drift. What a C3 bench cell would even
 mean is an open question, recorded in `spec/quebraplan.md` section 7B.
 
@@ -98,8 +98,8 @@ either way: the report is TRACKED and generated from two committed CSVs, so prob
 would make a committed artifact differ per machine. C3's absence from it rests on the bench, not
 on whether R is installed.
 
-`ledger_recipe.LEDGER_KNOBS` sets `include_c3` to `True` for every `check_ledger` job, so where
-R is present each ledger, and each survey built from them, carries a real C3 p-value in every
-eligible cell. Read a green C3 cell as "did not
-reject" and nothing stronger: there is no bench cell behind it to say whether that cell had
-the power to reject.
+`ledger_recipe.LEDGER_KNOBS` sets `include_c3` to `False` for every `check_ledger` job: the
+ledgers carry the permutation rows only, and the survey draws no C3 grid. A caller that asks a
+ledger for C3 gets a real C3 p-value in every eligible cell where R is present. Read a green
+C3 cell as "did not reject" and nothing stronger: there is no bench cell behind it to say
+whether that cell had the power to reject.

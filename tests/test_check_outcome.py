@@ -322,11 +322,11 @@ def test_a_two_part_key_is_refused_rather_than_padded():
 def test_the_two_are_independent():
     """Changing the display-set must not change the run-set, and vice versa."""
     run_a, display_a = sel.resolve(sel.ALL_KEYS, [ROW_KEYS[1]])
-    run_b, display_b = sel.resolve(sel.ALL_KEYS, [ROW_KEYS[1], ROW_KEYS[7]])
+    run_b, display_b = sel.resolve(sel.ALL_KEYS, [ROW_KEYS[1], ROW_KEYS[4]])
     assert run_a == run_b
     assert display_a != display_b
 
-    run_c, display_c = sel.resolve(sel.PERMUTATION_KEYS, [ROW_KEYS[1]])
+    run_c, display_c = sel.resolve([ROW_KEYS[1], ROW_KEYS[3]], [ROW_KEYS[1]])
     assert display_c == display_a
     assert run_c != run_a
 
@@ -470,30 +470,28 @@ def test_the_battery_switches_are_derived_from_the_run_set_and_reach_the_ledger(
 def test_the_switches_restrict_but_are_coarser_than_the_run_set():
     """MEASURED, so the caveat in `check_ledger.py` is a number rather than a hedge.
 
-    `PERMUTATION_KEYS` declares 5 rows. The battery computes 8 unrestricted and 7 under the
-    derived switches; C5's unstudentized row runs only in the bench, so neither count has
-    it. Restriction is real, and the 2-row overshoot is `include_tau_checks` being
-    all-or-nothing over five rows, so C1-asymptotic and CvM-asymptotic ride along with C1's
-    and C2's permutation rows. The run-set names AT MOST what ran.
+    `PERMUTATION_KEYS` declares 5 rows and the battery computes exactly those 5, with or
+    without the derived switches: the asymptotic rows and C5's unstudentized row run only
+    in the bench. The switches are still coarse: `include_tau_checks` is all-or-nothing over
+    C1's and C2's permutation rows, so a run-set naming C1's alone still computes C2's, a
+    1-row overshoot. The run-set names AT MOST what ran.
 
     If this fails because the numbers moved, the caveat needs re-measuring, not deleting.
     """
+
+    def computed(run_set):
+        flags = sel.battery_flags(run_set)
+        return {
+            row_key(r)
+            for r in _run_battery_on(
+                **{k: v for k, v in flags.items() if k != "include_c3"}
+            )
+        }
+
     unrestricted = {row_key(r) for r in _run_battery_on()}
-    restricted = {
-        row_key(r)
-        for r in _run_battery_on(
-            **{
-                k: v
-                for k, v in sel.battery_flags(sel.PERMUTATION_KEYS).items()
-                if k != "include_c3"
-            }
-        )
-    }
-    assert len(unrestricted) == 8
-    assert len(restricted) == 7, (
-        "the run-set no longer restricts what the battery computes"
-    )
-    assert unrestricted - restricted == {("c2_anderson_darling", "asymptotic", "")}
-    assert len(restricted) - len(sel.PERMUTATION_KEYS) == 2, (
+    assert unrestricted == computed(sel.PERMUTATION_KEYS) == set(sel.PERMUTATION_KEYS)
+    c1_only = [k for k in sel.ALL_KEYS if k[0] != "c2_anderson_darling"]
+    overshoot = computed(c1_only) - set(c1_only)
+    assert overshoot == {("c2_anderson_darling", "permutation", "")}, (
         "the coarseness gap moved; re-measure the caveat in check_ledger.py"
     )

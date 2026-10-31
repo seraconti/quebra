@@ -147,7 +147,8 @@ def _ledger_run(
     """Score one record's checks. Every battery switch is DERIVED from the run-set.
 
     The switches are coarser than the run-set, so this reduces what is computed without
-    making the two match exactly: `include_tau_checks` is all-or-nothing over five rows.
+    making the two match exactly: `include_tau_checks` is all-or-nothing over C1's and C2's
+    permutation rows.
     The ledger may therefore carry a row the run-set does not name.
     """
     flags = battery_flags(run_set)
