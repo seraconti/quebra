@@ -23,8 +23,9 @@ Validity assumptions
 
 - Assumption: the multiplicative intensity model. Every window at risk at age t shares one
   hazard, and censoring is independent of the window's future.
-  Diagnostic: the attached check outcome (`a1_renewal_durations`); censoring here happens
-  only at read gaps and at the end of the scan.
+  Diagnostic: the attached check outcome (`a1_renewal_durations`). A window is censored
+  only at a read gap or at the end of the scan; a calibration cycle (`event_table.CYCLES`)
+  only at an outage or at the end of the record.
   Consequence of violation: Kaplan-Meier and Nelson-Aalen estimate a mixture whose weights
   shift as windows leave the risk set; with censored windows the point values move too.
   Reference: no source located (the model is usually credited to Aalen, not opened here).

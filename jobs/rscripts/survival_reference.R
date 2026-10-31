@@ -9,6 +9,9 @@
 #
 # Conventions pinned here, each one a choice that changes a number:
 #   - survfit(conf.type = "log-log"). R's default is "log"; the estimators use log-log.
+#   - survfit(timefix = FALSE). R's default (`aeqSurv`) merges ages whose relative
+#     difference is below sqrt(.Machine$double.eps), about 1.5e-8; the risk table
+#     (`event_table.risk_table`) ties only identical floats.
 #   - ctype = 1: the Nelson-Aalen cumulative hazard, with std.chaz = sqrt(sum d / n^2).
 #   - quantile(): R's rule, the midpoint of a stretch where S sits exactly at 1 - p; the
 #     interval is the same rule applied to the band's two curves.
@@ -34,7 +37,7 @@ add_case <- function(case, age, event, tau) {
     case = case, i = seq_along(age), age = age, event = as.integer(event), tau = tau,
     stringsAsFactors = FALSE
   )
-  fit <- survfit(Surv(age, event) ~ 1, conf.type = "log-log", ctype = 1)
+  fit <- survfit(Surv(age, event) ~ 1, conf.type = "log-log", ctype = 1, timefix = FALSE)
   s <- summary(fit)
   n_steps <- length(s$time)
   if (n_steps > 0) {
@@ -86,6 +89,11 @@ set.seed(20261006)
 age <- round(rexp(40, rate = 1 / 12), 1)
 event <- as.integer(runif(40) > 0.2)
 add_case("mixed_forty", age, event, 20)
+# Calibration cycles of the hand-built spell record in tests/test_calibration_cycles.py
+# (two outages, one merge, the last cycle censored at the record end), in seconds. tau is the
+# longest cycle, censored, as the MTBC takes it.
+add_case("qi_cycles_hand", c(70, 50, 90, 40, 85, 30, 80, 190),
+         c(1, 1, 0, 1, 1, 1, 0, 0), 190)
 
 # ---------------------------------------------------------------- Turnbull, interval2
 # Surv(L, R, type = "interval2"): L == R is an exact length, R = NA is right-censored.

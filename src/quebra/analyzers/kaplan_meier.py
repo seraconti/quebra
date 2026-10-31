@@ -34,8 +34,9 @@ Validity assumptions
 
 - Assumption: the windows on the declared side are draws from one lifetime law, and a
   window's censoring is independent of its future.
-  Diagnostic: the attached check outcome (`assumptions.A1_RENEWAL_DURATIONS`); censoring
-  here happens only at read gaps and at the end of the scan.
+  Diagnostic: the attached check outcome (`assumptions.A1_RENEWAL_DURATIONS`). A window
+  is censored only at a read gap or at the end of the scan; a calibration cycle, built into
+  the same event table, only at an outage or at the end of the record.
   Consequence of violation: the curve estimates a mixture whose weights shift as windows
   leave the risk set, and the band need not hold its nominal level.
   Reference: R `survival` 3.8.6 `survfit(..., conf.type = "log-log")`, whose curve and

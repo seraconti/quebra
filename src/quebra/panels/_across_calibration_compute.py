@@ -6,13 +6,23 @@ hours, 14-day binned interval stats, and the log-spaced histogram (counts + edge
 (panels/across_calibration.py) is a pure function of it. Elapsed days, hours and the
 histogram are the pre-split draw-time arithmetic. The binned statistics are not: they keep
 every bin, an empty one as NaN, and close the final bin on the right.
+
+The MTBC is `mtbf.mtbc` on the intervals as completed cycles, so the panel's number is
+`survival.curve_summaries`, the code every other restricted mean uses. With no interval
+censored it equals the arithmetic mean of the intervals. It counts 0 s intervals (two events
+at one instant) as cycles of age 0; the histogram figure's mean
+(`mtbf.IntervalHistogramResult.mean_h`) leaves them out, so the two agree only on a log with
+no 0 s interval.
+
+No check runs on a log's intervals, so the interval's check outcome is the MTBC's empty
+attachment, whose line reads NOT ASSESSED, carried for the panel to print beside it.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from quebra.analyzers.mtbf import log_interval_histogram
+from quebra.analyzers.mtbf import intervals_event_table, log_interval_histogram, mtbc
 from quebra.panels.across_calibration import AcrossCalibrationPanelData
 
 
@@ -85,6 +95,7 @@ def build_across_calibration_panel_data(
     meta: dict[str, object],
     bin_days: float = 14.0,
     hist_bins: int = 50,
+    show_dropped_count: bool = False,
 ) -> AcrossCalibrationPanelData:
     """Compute every data-derived quantity and return a COMPLETE AcrossCalibrationPanelData.
 
@@ -101,6 +112,20 @@ def build_across_calibration_panel_data(
     intervals_h = intervals_arr / 3600.0
 
     counts, edges = _interval_histogram(intervals_arr, n_bins=hist_bins)
+    summary = (
+        mtbc(
+            intervals_event_table(
+                intervals_arr, dataset_id=str(meta.get("dataset_id", ""))
+            )
+        )
+        if len(intervals_arr)
+        else None
+    )
+    mtbc_h = (
+        (summary.rmst_s / 3600.0, summary.lower_s / 3600.0, summary.upper_s / 3600.0)
+        if summary is not None
+        else (float("nan"),) * 3
+    )
 
     return AcrossCalibrationPanelData(
         intervals_s=intervals_arr,
@@ -114,4 +139,11 @@ def build_across_calibration_panel_data(
         ),
         histogram_counts=counts,
         histogram_edges=edges,
+        mtbc=summary,
+        mtbc_h=mtbc_h,
+        mtbc_check_summary=(
+            summary.checks.summary(subject="interval") if summary is not None else ""
+        ),
+        n_nonpositive_dropped=int(np.count_nonzero(intervals_arr <= 0.0)),
+        show_dropped_count=show_dropped_count,
     )

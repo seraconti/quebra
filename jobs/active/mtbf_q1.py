@@ -1,4 +1,4 @@
-"""Archetype: across-calibration job - MTBF over a calibration-event log.
+"""Archetype: across-calibration job - the MTBC of a calibration-event log.
 
 The reliability literature calls this tier repairable-system analysis. This project
 names it after the calibration boundary; see panels/across_calibration.py for why, and
@@ -47,12 +47,21 @@ def _run_mtbf(n: Norm) -> MtbfResult:
     return mtbf.run(mtbf.make_inputs_from_norm(n))
 
 
-def _make_panel_data(result: MtbfResult) -> AcrossCalibrationPanelData:
-    return make_mtbf_panel_data(result)
+def _make_panel_data(
+    result: MtbfResult, show_dropped_count: bool
+) -> AcrossCalibrationPanelData:
+    return make_mtbf_panel_data(result, show_dropped_count=show_dropped_count)
 
 
 mtbf_result = job.step(_run_mtbf, norm, name="mtbf")
-panel_data = job.step(_make_panel_data, mtbf_result, name="mtbf_panel_data")
+panel_data = job.step(
+    _make_panel_data,
+    mtbf_result,
+    name="mtbf_panel_data",
+    # Declared rather than left to the default, so the choice reaches the provenance
+    # label: True draws the count of 0-length intervals on the histogram.
+    show_dropped_count=False,
+)
 
 job.materialize(panel_data, name="mtbf_q1_panel_data")
 job.figure(

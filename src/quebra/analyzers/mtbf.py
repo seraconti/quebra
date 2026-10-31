@@ -1,8 +1,36 @@
-"""MTBF (Mean Time Between Failures / calibration events) analyzer.
+"""Inter-event intervals of a calibration log, and the mean time between calibrations.
 
-Takes a list of CalibrationEvent objects (from a CalibrationLogSchema Norm)
-and computes inter-event intervals. No filtering is applied - all events
-in the log are used regardless of chi_squared or other quality metrics.
+`run` takes a list of CalibrationEvent objects (from a CalibrationLogSchema Norm) and
+computes inter-event intervals. No filtering is applied - all events in the log are used
+regardless of chi_squared or other quality metrics.
+
+`mtbc` is the mean time between calibrations (MTBC): the restricted mean of the
+product-limit curve on an event table of cycles (`event_table.CYCLES`), with its standard
+error and a normal interval. The point and the SE are `survival.curve_summaries`, the code
+the window estimators use; only the interval is added here. `intervals_event_table` turns
+the intervals of `run` into such a table, every interval a completed cycle.
+
+Validity assumptions
+
+- Assumption: the cycles of one record are draws from one law, independent of one another.
+  Diagnostic: the battery's permutation rows on the cycles, where a job runs them and
+  attaches the outcome; none for a log's inter-event intervals.
+  Consequence of violation: the SE and the interval do not hold their level; the point is
+  still the area under this record's curve.
+  Reference: R `survival` 3.8.6 `summary(fit, rmean = tau)` for the restricted mean and its
+  SE (pinned in `tests/test_survival_r_reference.py`); no source located for the interval.
+- Assumption: the interval rmst +/- z SE is close to its level.
+  Diagnostic: none here; a restricted mean is bounded below by 0, so a lower end at or
+  below 0 says the normal approximation is poor for this record.
+  Consequence of violation: coverage away from `conf_level`.
+  Reference: no source located.
+- Assumption: every cycle at risk at age t shares one hazard, and censoring is independent
+  of the cycle's future (the multiplicative intensity model every estimator on an event
+  table rests on).
+  Diagnostic: the attached check outcome; inter-event intervals of a log are never censored.
+  Consequence of violation: the curve estimates a mixture, and with censored cycles the
+  point moves too.
+  Reference: the `survival` module docstring, which states it for every estimator there.
 """
 
 from __future__ import annotations
@@ -11,6 +39,15 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from quebra.analyzers.check_attachment import (
+    A2_RENEWAL_CYCLES_ID,
+    DESCRIPTIVE,
+    RESTS_ON_EXCHANGEABILITY,
+    CheckAttachment,
+)
+from quebra.analyzers.event_table import CYCLES, EventTable
+from quebra.analyzers.kaplan_meier import CONF_LEVEL, z_two_sided
+from quebra.analyzers.survival import curve_summaries
 from quebra.core.types import CalibrationEvent, Norm
 
 
@@ -33,7 +70,9 @@ class MtbfResult:
 
 def run(inputs: MtbfInputs) -> MtbfResult:
     if len(inputs.events) < 2:
-        raise ValueError(f"MTBF requires at least 2 events; got {len(inputs.events)}")
+        raise ValueError(
+            f"inter-event intervals require at least 2 events; got {len(inputs.events)}"
+        )
     times = np.array([e.t_event_unix_s for e in inputs.events], dtype=float)
     times.sort()
     intervals = np.diff(times)
@@ -60,6 +99,91 @@ def make_inputs_from_norm(norm: Norm) -> MtbfInputs:
     return MtbfInputs(
         events=norm.events["calibration"],
         meta=dict(norm["meta"]),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Mean time between calibrations
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Mtbc:
+    """The restricted mean of the product-limit curve on cycles, with its SE and interval.
+
+    `rmst_s` is the area under the curve on [0, `tau_s`], with `tau_s` the longest cycle in
+    the table, censored or not (`survival.curve_summaries`' default, R's for one curve).
+    `lower_s` and `upper_s` are rmst_s -/+ z rmst_se_s at `conf_level`; a lower end at or
+    below 0 is reported as computed. The point is descriptive, with `n_censored` beside it;
+    the SE and the interval rest on exchangeable cycles (`a2_renewal_cycles`), and
+    `checks` carries the check outcome; empty means NOT ASSESSED, which is what a log's
+    inter-event intervals always read, since no check runs on them.
+
+    The SE is 0 when every death sits at tau, which is the case for a single completed
+    cycle: R reports the same 0, and the interval then has no width and says nothing about
+    the spread.
+    """
+
+    dataset_id: str
+    rmst_s: float
+    rmst_se_s: float
+    lower_s: float
+    upper_s: float
+    tau_s: float
+    conf_level: float
+    n_cycles: int
+    n_deaths: int
+    n_censored: int
+    n_unobserved_birth_dropped: int
+    point_standing: str = DESCRIPTIVE
+    interval_standing: str = RESTS_ON_EXCHANGEABILITY
+    checks: CheckAttachment = field(
+        default_factory=lambda: CheckAttachment(assumption_id=A2_RENEWAL_CYCLES_ID)
+    )
+
+
+def mtbc(table: EventTable, *, conf_level: float = CONF_LEVEL) -> Mtbc:
+    """MTBC from an event table of cycles: `curve_summaries`, plus rmst +/- z SE.
+
+    Raises unless the table holds cycles: a restricted mean of windows on a side of a
+    threshold is a mean window length, not a time between calibrations.
+    """
+    if table.side != CYCLES:
+        raise ValueError(
+            f"mtbc needs an event table of cycles (side={CYCLES!r}); got {table.side!r}"
+        )
+    summary = curve_summaries(table, conf_level=conf_level)
+    half_s = z_two_sided(conf_level) * summary.rmst_se_s
+    return Mtbc(
+        dataset_id=table.dataset_id,
+        rmst_s=summary.rmst_s,
+        rmst_se_s=summary.rmst_se_s,
+        lower_s=summary.rmst_s - half_s,
+        upper_s=summary.rmst_s + half_s,
+        tau_s=summary.rmst_tau_s,
+        conf_level=conf_level,
+        n_cycles=summary.n_windows,
+        n_deaths=summary.n_deaths,
+        n_censored=summary.n_censored,
+        n_unobserved_birth_dropped=summary.n_unobserved_birth_dropped,
+    )
+
+
+def intervals_event_table(
+    intervals_s: np.ndarray, *, dataset_id: str = ""
+) -> EventTable:
+    """Inter-event intervals as an event table of cycles, each one completed.
+
+    A log of event times declares no record end, so no interval is censored. A 0 interval
+    (two events at one instant) stays in, as a cycle of age 0.
+    """
+    age_s = np.asarray(intervals_s, dtype=float)
+    return EventTable(
+        dataset_id=dataset_id,
+        threshold_label="",
+        side=CYCLES,
+        age_s=age_s,
+        event=np.ones(len(age_s), dtype=bool),
     )
 
 
@@ -105,6 +229,10 @@ class IntervalHistogramResult:
     calibrations" the figure is named for. It is reported beside `median_h` because on a
     log axis the two land in visibly different places, and a reader given only the mean
     cannot tell that.
+
+    It leaves 0 s intervals out, as the bars do. `mtbc`, the MTBC the across-calibration
+    panel shows, counts them as cycles of age 0, so the two agree only on a log with no 0 s
+    interval.
     """
 
     counts: np.ndarray

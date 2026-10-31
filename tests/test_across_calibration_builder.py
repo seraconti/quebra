@@ -223,3 +223,88 @@ def test_a_populated_bin_with_no_populated_neighbour_is_marked():
         assert markers(ax) == [], "a record with no empty bin gained a marker"
     finally:
         plt.close(fig)
+
+
+def _span_y(patch: matplotlib.patches.Patch) -> np.ndarray:
+    """The y extent of an `axhspan` patch in data coordinates, whatever its patch class."""
+    return patch.get_patch_transform().transform(patch.get_path().vertices)[:, 1]
+
+
+def test_across_panel_labels_mtbc_and_draws_its_interval() -> None:
+    """Oracle: the artifact. The figure names MTBC and never MTBF, and draws the MTBC line
+    and its interval span at the artifact's values in hours."""
+    d = _case()
+    m = d.mtbc
+    assert m is not None
+    assert d.mtbc_h == (m.rmst_s / 3600.0, m.lower_s / 3600.0, m.upper_s / 3600.0)
+    fig = AcrossCalibrationPanel(name="unit").build_matplotlib(d)
+    texts = [t.get_text() for t in fig.findobj(matplotlib.text.Text)]
+    assert not any("MTBF" in t for t in texts), [t for t in texts if "MTBF" in t]
+    assert any(t.startswith("MTBC = ") for t in texts)
+    assert any("interval" in t and "NOT ASSESSED" in t for t in texts), texts
+    assert any(line.startswith("MTBC: ") for t in texts for line in t.splitlines())
+    scatter = fig.axes[0]
+    (span,) = scatter.patches
+    ys = _span_y(span)
+    assert (ys.min(), ys.max()) == pytest.approx((d.mtbc_h[1], d.mtbc_h[2]), rel=1e-12)
+    assert any(
+        np.allclose(line.get_ydata(), d.mtbc_h[0], rtol=1e-12) for line in scatter.lines
+    )
+    matplotlib.pyplot.close(fig)
+
+
+def test_dropped_count_is_drawn_only_when_flagged() -> None:
+    """Oracle: a hand input with two 0 s intervals (three events at one instant). The count
+    is in the artifact either way; the histogram shows it only with the flag."""
+    iv = np.array([3600.0, 0.0, 0.0, 7200.0, 5400.0])
+    ev = 1.6e9 + np.cumsum(iv)
+    for flag in (False, True):
+        d = build_across_calibration_panel_data(
+            intervals_s=iv,
+            event_times_unix_s=ev,
+            stats={
+                "count": 5,
+                "mean_s": float(np.mean(iv)),
+                "std_s": float(np.std(iv)),
+                "min_s": 0.0,
+                "max_s": 7200.0,
+            },
+            meta={"qubit": "2", "device": "6D2S", "dataset_id": "unit"},
+            show_dropped_count=flag,
+        )
+        assert d.n_nonpositive_dropped == 2
+        # 16200 s over 5 intervals: the 0 s intervals count, as cycles of age 0.
+        assert d.mtbc is not None
+        assert d.mtbc.rmst_s == pytest.approx(3240.0, rel=1e-12)
+        fig = AcrossCalibrationPanel(name="unit").build_matplotlib(d)
+        drawn = [t.get_text() for t in fig.axes[2].texts]
+        assert any("excluded: 2 of 5 intervals" in t for t in drawn) is flag, drawn
+        matplotlib.pyplot.close(fig)
+
+
+def test_a_lower_end_at_or_below_zero_starts_at_the_drawn_axis_floor() -> None:
+    """Oracle: the axes. A log axis cannot show a lower end <= 0, so the span starts at the
+    final drawn floor and its label says so."""
+    iv = np.array([1.0, 1.0, 1.0, 1.0e5])
+    d = build_across_calibration_panel_data(
+        intervals_s=iv,
+        event_times_unix_s=1.6e9 + np.cumsum(iv),
+        stats={
+            "count": 4,
+            "mean_s": float(np.mean(iv)),
+            "std_s": float(np.std(iv)),
+            "min_s": 1.0,
+            "max_s": 1.0e5,
+        },
+        meta={"qubit": "2", "device": "6D2S", "dataset_id": "unit"},
+    )
+    assert d.mtbc_h[1] <= 0.0
+    fig = AcrossCalibrationPanel(name="unit").build_matplotlib(d)
+    scatter = fig.axes[0]
+    (span,) = scatter.patches
+    assert _span_y(span).min() == pytest.approx(scatter.get_ylim()[0], rel=1e-12)
+    assert any(
+        "drawn from the axis floor" in t.get_text()
+        for t in scatter.get_legend().get_texts()
+    )
+    matplotlib.pyplot.close(fig)

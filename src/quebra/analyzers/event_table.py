@@ -1,13 +1,15 @@
 """The event table: the one input every survival estimator reads.
 
-One table per record, threshold and side. Per window it holds the age the estimators use,
-whether the death was observed, and the interval the true length is known to lie in. From
-those it derives the risk table: each distinct age, the deaths and censorings there, and
-the number at risk.
+One table per record, threshold and side, or one per record of calibration cycles
+(`CYCLES`). Per window or cycle it holds the age the estimators use, whether the death was
+observed, and the interval the true length is known to lie in. From those it derives the
+risk table: each distinct age, the deaths and censorings there, and the number at risk.
 
 The estimators read this table and nothing else, so none re-reads the reads or re-carves.
 The same table serves both sides of a threshold, and the constructor takes any other
-right-censored durations directly and validates them.
+right-censored durations directly and validates them. The inter-event intervals of a
+calibration log enter that way (`mtbf.intervals_event_table`), with `side = CYCLES` and no
+threshold label: one implementation of each estimator serves windows and cycles.
 
 Ages are seconds (`_s`). The risk table follows the Kaplan-Meier tie convention: at a tied
 age deaths come first, so a window censored at age a is still at risk at a.
@@ -37,6 +39,11 @@ import pandas as pd
 from quebra.analyzers.windows import SIDE_IN_SPEC, SIDE_OUT_OF_SPEC, WindowsResult
 
 SIDES = (SIDE_IN_SPEC, SIDE_OUT_OF_SPEC)
+# Across-calibration durations: the time from the end of one calibration to the start of
+# the next. Not a side of a threshold, so not in `SIDES`, which the carve iterates; it is
+# the kind a table of cycles carries in its `side` field.
+CYCLES = "cycles"
+TABLE_KINDS = (*SIDES, CYCLES)
 
 # The window-table columns `from_windows` reads.
 WINDOW_COLUMNS_NEEDED = (
@@ -62,8 +69,8 @@ def risk_table(
 
     Two ages tie only when they are the same float. That is R `survival`'s
     `survfit(..., timefix = FALSE)`; R's default, `timefix = TRUE` (`aeqSurv`), also
-    merges ages that differ by rounding noise, so near-ties a few ulps apart are two ages
-    here and one there.
+    merges ages whose relative difference is below sqrt(machine eps), about 1.5e-8, so
+    near-ties that close are two ages here and one there.
 
     `event` must be a numpy boolean array, as in `EventTable`: a bool cast would read any
     nonzero flag as a death.
@@ -110,8 +117,12 @@ class EventTable:
     n_at_risk: np.ndarray = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.side not in SIDES:
-            raise ValueError(f"side must be one of {SIDES}; got {self.side!r}")
+        if self.side not in TABLE_KINDS:
+            raise ValueError(f"side must be one of {TABLE_KINDS}; got {self.side!r}")
+        if self.side == CYCLES and self.threshold_label:
+            raise ValueError(
+                f"a table of cycles has no threshold label; got {self.threshold_label!r}"
+            )
         if not isinstance(self.event, np.ndarray) or self.event.dtype != np.bool_:
             # np.asarray(..., dtype=bool) coerces silently, so a float flag of 0.5 would
             # enter as an observed death. Require the caller to have meant a boolean.

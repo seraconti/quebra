@@ -155,9 +155,40 @@ A1_RENEWAL_DURATIONS = Assumption(
 )
 
 
+A2_RENEWAL_CYCLES = Assumption(
+    id="a2_renewal_cycles",
+    statement=(
+        "The calibration cycles of one record are draws from one law, independent of one "
+        "another. The standard error and the interval of the mean time between calibrations "
+        "(MTBC), and the band of the Kaplan-Meier curve on cycles, rest on it."
+    ),
+    diagnostic=(
+        "The battery's permutation rows on the cycles (`analyzers/cycles.cycle_checks`), "
+        "scored by `check_ledger.score_segments`: x is the complete cycles of each stretch "
+        "between outages, in time order. The rows carry the calendar clock's label and are "
+        "matched to the bench's calendar cells, which were measured on gaps between window "
+        "births, not on cycles; whether that transfer is valid is UNRESOLVED."
+    ),
+    consequence="The standard error, the interval and the band do not hold their level.",
+    reference=(
+        "Rigdon, S. E. and Basu, A. P. (2000), Statistical Methods for the Reliability of "
+        "Repairable Systems, Wiley, Sect. 3.1, Definition 31, p. 65: if the times between "
+        "failure X1, X2, ... are iid, the failure process is a renewal process."
+    ),
+    disposition=DISPOSITION_REPORTS,
+    diagnostic_checks=(
+        _c1.CHECK_NAME,
+        _c2.CHECK_NAME,
+        _c5.CHECK_NAME,
+        _c6.CHECK_NAME,
+        _cvm.CHECK_NAME,
+    ),
+)
+
+
 # Add a record here and it is registered, id-checked and covered by the trace guard. Order is
 # the order a reader should meet them.
-_RECORDS: tuple[Assumption, ...] = (A1_RENEWAL_DURATIONS,)
+_RECORDS: tuple[Assumption, ...] = (A1_RENEWAL_DURATIONS, A2_RENEWAL_CYCLES)
 
 ASSUMPTIONS: dict[str, Assumption] = {record.id: record for record in _RECORDS}
 
@@ -170,5 +201,6 @@ __all__ = [
     "DISPOSITION_UNDETECTED",
     "SHIPPED_CHECK_NAMES",
     "A1_RENEWAL_DURATIONS",
+    "A2_RENEWAL_CYCLES",
     "Assumption",
 ]

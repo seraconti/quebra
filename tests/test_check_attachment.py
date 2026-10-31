@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from quebra.analyzers import check_attachment
-from quebra.analyzers.assumptions import A1_RENEWAL_DURATIONS
+from quebra.analyzers.assumptions import A1_RENEWAL_DURATIONS, A2_RENEWAL_CYCLES
 from quebra.analyzers.kaplan_meier import KaplanMeierComparison
 
 pytestmark = pytest.mark.unit
@@ -19,6 +19,7 @@ pytestmark = pytest.mark.unit
 def test_the_assumption_id_literal_names_the_real_record() -> None:
     """Oracle: `analyzers/assumptions.py`. The literal keeps quebra out of the leaf."""
     assert check_attachment.A1_RENEWAL_DURATIONS_ID == A1_RENEWAL_DURATIONS.id
+    assert check_attachment.A2_RENEWAL_CYCLES_ID == A2_RENEWAL_CYCLES.id
 
 
 def test_an_empty_attachment_reads_not_assessed_and_the_comparison_says_the_same() -> (

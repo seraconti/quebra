@@ -26,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 A1_RENEWAL_DURATIONS_ID = "a1_renewal_durations"
+A2_RENEWAL_CYCLES_ID = "a2_renewal_cycles"
 
 SURVIVES = "survives a rejection"
 DESCRIPTIVE = "descriptive"
@@ -36,10 +37,15 @@ def summarise(
     checks_asked: tuple[str, ...],
     checks_unanswered: tuple[str, ...],
     check_verdicts: tuple[tuple[str, str, str], ...],
+    subject: str = "band",
 ) -> str:
-    """One line naming what was asked and what came back, for a caption to state."""
+    """One line naming what was asked and what came back, for a caption to state.
+
+    `subject` names what the outcome is attached to in the NOT ASSESSED line, a band unless
+    the caller says otherwise (an MTBC interval, for instance).
+    """
     if not checks_asked:
-        return "independence checks: NOT ASSESSED for this band"
+        return f"independence checks: NOT ASSESSED for this {subject}"
     tally: dict[str, int] = {}
     for _label, _dataset, verdict in check_verdicts:
         tally[verdict] = tally.get(verdict, 0) + 1
@@ -62,5 +68,7 @@ class CheckAttachment:
     checks_unanswered: tuple[str, ...] = ()
     check_verdicts: tuple[tuple[str, str, str], ...] = ()
 
-    def summary(self) -> str:
-        return summarise(self.checks_asked, self.checks_unanswered, self.check_verdicts)
+    def summary(self, subject: str = "band") -> str:
+        return summarise(
+            self.checks_asked, self.checks_unanswered, self.check_verdicts, subject
+        )

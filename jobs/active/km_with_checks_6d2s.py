@@ -25,6 +25,7 @@ from quebra.analyzers.check_outcome import (
     CheckOutcome,
     battery_flags,
     build_check_outcome,
+    check_attachment_of,
     resolve,
 )
 from quebra.analyzers.kaplan_meier import KaplanMeierComparison, KaplanMeierCurve
@@ -205,19 +206,11 @@ def _compare(
         [c for c in curves if isinstance(c, KaplanMeierCurve)], threshold_label
     )
     assert isinstance(outcome, CheckOutcome)
-    comparison.assumption_id = assumption_id
-    comparison.checks_asked = tuple(
-        " ".join(p for p in k if p) for k in outcome.run_set
-    )
-    comparison.checks_unanswered = tuple(
-        " ".join(p for p in k if p) for k in outcome.asked_but_unanswered
-    )
-    comparison.check_verdicts = tuple(
-        (grid.label, label, verdict)
-        for grid in outcome.grids
-        for label, row in zip(grid.dataset_labels, grid.verdicts, strict=True)
-        for verdict in row
-    )
+    fields = check_attachment_of(outcome, assumption_id)
+    comparison.assumption_id = fields.assumption_id
+    comparison.checks_asked = fields.checks_asked
+    comparison.checks_unanswered = fields.checks_unanswered
+    comparison.check_verdicts = fields.check_verdicts
     return comparison
 
 

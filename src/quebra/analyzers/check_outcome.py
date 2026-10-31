@@ -27,6 +27,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from quebra.analyzers.check_attachment import CheckAttachment
 from quebra.analyzers.check_ledger import VERDICT_ABSENT
 from quebra.analyzers.checks.result import CALIB_ASYMPTOTIC, CALIB_PERMUTATION
 from quebra.analyzers.independence_survey import (
@@ -321,4 +322,26 @@ def build_check_outcome(
         datasets=tuple(datasets),
         clocks=tuple(clocks),
         alpha=alpha,
+    )
+
+
+def check_attachment_of(outcome: CheckOutcome, assumption_id: str) -> CheckAttachment:
+    """The check fields an estimate carries, from the outcome its band or interval rests on.
+
+    What was asked (the run-set), what gave no answer at all, and every (check, record,
+    verdict) cell, as plain strings. The one conversion: the Kaplan-Meier comparison and the
+    cycles' MTBC and band are filled through it.
+    """
+    return CheckAttachment(
+        assumption_id=assumption_id,
+        checks_asked=tuple(" ".join(p for p in k if p) for k in outcome.run_set),
+        checks_unanswered=tuple(
+            " ".join(p for p in k if p) for k in outcome.asked_but_unanswered
+        ),
+        check_verdicts=tuple(
+            (grid.label, label, verdict)
+            for grid in outcome.grids
+            for label, row in zip(grid.dataset_labels, grid.verdicts, strict=True)
+            for verdict in row
+        ),
     )

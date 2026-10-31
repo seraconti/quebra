@@ -104,7 +104,8 @@ own durations could never fail.
 ## The event table
 
 `analyzers/event_table.EventTable` is what every survival estimator reads. There is one per
-record, threshold and side. It holds:
+record, threshold and side, and one per record of calibration cycles (`event_table.CYCLES`,
+with no threshold label). It holds:
 
 - per window: `age_s`, a boolean `event`, `age_lo_s` and `age_hi_s`;
 - the risk table: distinct ages, deaths, censorings, and the number at risk;
@@ -113,8 +114,8 @@ record, threshold and side. It holds:
 At a tied age deaths come first, so a window censored at age `a` is still at risk at `a`.
 `event_table.from_carve` builds one from a carve, validating the label against the carve's
 ladder. An empty side is an empty table, not an error. The constructor also takes any other
-right-censored durations directly and validates them; no caller outside `event_table.py`
-builds one that way today.
+right-censored durations directly and validates them; the inter-event intervals of a
+calibration log enter that way (`analyzers/mtbf.intervals_event_table`).
 
 ## What an estimate rests on
 
@@ -129,8 +130,9 @@ quantities included; the table gives their standing by the same rule.
 | descriptive, `n_censored` shown | exact when nothing is censored; with censoring it leans on one hazard shared by every window at risk | Kaplan-Meier points, quantile points, restricted mean |
 | rests on exchangeability | carries the check outcome | every band, interval and SE; the Nelson-Aalen shape; Turnbull |
 
-**The check outcome** attached to a result names the `a1_renewal_durations` assumption, the
-checks asked, and those that gave no answer. Empty means NOT ASSESSED.
+**The check outcome** attached to a result names the `a1_renewal_durations` assumption (for
+calibration cycles, `a2_renewal_cycles`), the checks asked, and those that gave no answer.
+Empty means NOT ASSESSED.
 
 **Whether a verdict transfers is UNRESOLVED.** A verdict computed on the battery's sample
 (complete in-spec durations on the in-spec clock, or births on the calendar clock) is not

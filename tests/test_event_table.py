@@ -259,6 +259,7 @@ def _table(**overrides):
 
 _REFUSED = {
     "unknown_side": ({"side": "sideways"}, ValueError, "side must be one of"),
+    "cycles_with_a_label": ({"side": "cycles"}, ValueError, "no threshold label"),
     "event_a_list": ({"event": [True, False]}, TypeError, "boolean"),
     "event_float": ({"event": np.array([1.0, 0.0])}, TypeError, "boolean"),
     "event_short": ({"event": np.array([True])}, ValueError, "differ in length"),
