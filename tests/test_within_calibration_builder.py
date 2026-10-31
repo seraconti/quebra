@@ -753,3 +753,141 @@ def test_the_survival_line_and_band_cover_the_curve_out_to_its_longest_window() 
                     assert not filled, f"{label}: band over [{left}, {right}), {filled}"
     finally:
         plt.close(fig)
+
+
+# --- the |x| floor on a log axis --------------------------------------------------------
+
+_LATER_FLOOR_READ = 150
+
+
+def _fidelity_like() -> WithinCalibrationPanelData:
+    """A fidelity panel built as the 2x2 job builds it: read 0 is the reference, |x| = 0,
+    drawn at `fidelity.ABS_X_FLOOR`; read 150 repeats read 0's frequency exactly, so it
+    sits at the floor too."""
+    from quebra import recipes
+    from quebra.analyzers import fidelity
+
+    rng = np.random.default_rng(31)
+    n = 300
+    t_s = np.r_[0.0, np.cumsum(rng.uniform(20.0, 40.0, size=n - 1))]
+    f_hz = 2.0e6 + np.cumsum(rng.normal(scale=2.0e3, size=n))
+    f_hz[_LATER_FLOOR_READ] = f_hz[0]
+    norm = {
+        "t_rel_s": t_s,
+        "raw_frequency_hz": f_hz,
+        "frequency_error_hz": np.full(n, 3.0e3),
+        "rabi_hz": np.full(n, 6.5e5),
+        "meta": {"dataset_id": "unit", "rabi_source": "declared"},
+    }
+    result = fidelity.run(fidelity.make_inputs_from_norm(norm, {}))
+    ladder = list(fidelity.DETUNING_LADDER)
+    carved = recipes._fidelity_windows(result, 10.0, 1.0, True, ladder)
+    return recipes._fidelity_panel_data(result, carved, _km_of(carved), 0, ladder)
+
+
+def _draw_primary(pd_):
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    WithinCalibrationPanel(name="floor_probe")._draw_primary(ax, pd_, "tab:blue")
+    fig.canvas.draw()
+    return fig, ax
+
+
+def _bottom_edge_markers(ax):
+    """The lines drawn on the axis' bottom edge, in display coordinates."""
+    bottom = ax.transAxes.transform([[0.0, 0.0]])[0][1]
+    found = []
+    for line in ax.lines:
+        if line.get_marker() in (None, "None", "none", ""):
+            continue
+        points = line.get_transform().transform(
+            np.column_stack([line.get_xdata(), line.get_ydata()])
+        )
+        if np.allclose(points[:, 1], bottom):
+            found.append(line)
+    return found
+
+
+def test_the_x_axis_bottom_is_the_decade_below_the_smallest_read_above_the_floor() -> (
+    None
+):
+    """Oracle: the stated rule. The floor is a drawing lift of |x| = 0, not a read, so the
+    axis takes its bottom from the reads above it: the decade boundary at or below the
+    smallest of them. No point of any line drawn in data coordinates lies below it."""
+    from quebra.analyzers.fidelity import ABS_X_FLOOR
+
+    pd_ = _fidelity_like()
+    values = np.asarray(pd_.signal.values, dtype=float)
+    above = values[values > ABS_X_FLOOR]
+    assert np.sum(values == ABS_X_FLOOR) == 2, (
+        "premise: read 0 and read 150 at the floor"
+    )
+    fig, ax = _draw_primary(pd_)
+    try:
+        bottom, _ = ax.get_ylim()
+        assert bottom == 10.0 ** np.floor(np.log10(above.min()))
+        assert ABS_X_FLOOR < bottom <= above.min()
+        for line in ax.lines:
+            if not line.get_transform().contains_branch_seperately(ax.transData)[1]:
+                continue
+            y = np.asarray(line.get_ydata(), dtype=float)
+            assert np.all(y[np.isfinite(y)] >= bottom), line.get_label()
+    finally:
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+
+def test_read_0_is_marked_on_the_bottom_edge_as_the_reference() -> None:
+    """Oracle: the specification. Read 0 is drawn as one marker on the axis' bottom edge,
+    labelled "reference (read 0)" in the legend; the later read at the floor gets the
+    same marker with no label."""
+    pd_ = _fidelity_like()
+    t_h = np.asarray(pd_.signal.t_h, dtype=float)
+    fig, ax = _draw_primary(pd_)
+    try:
+        markers = _bottom_edge_markers(ax)
+        labelled = [m for m in markers if m.get_label() == "reference (read 0)"]
+        assert len(labelled) == 1, [m.get_label() for m in markers]
+        assert np.array_equal(labelled[0].get_xdata(), t_h[:1])
+        unlabelled = [m for m in markers if m.get_label().startswith("_")]
+        assert len(unlabelled) == 1
+        assert np.array_equal(unlabelled[0].get_xdata(), t_h[[_LATER_FLOOR_READ]])
+        legend = [text.get_text() for text in ax.get_legend().get_texts()]
+        assert legend.count("reference (read 0)") == 1, legend
+    finally:
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+
+def test_a_log_series_with_no_floor_read_is_drawn_whole_and_unmarked() -> None:
+    """Oracle: the series itself. A log-scale panel none of whose reads sits at the floor
+    gets no marker, draws every read on its line, and keeps its axis at or below its
+    smallest read."""
+    t_h = np.linspace(0.0, 12.0, 500)
+    s = 3.0 + 0.6 * np.sin(t_h) + 0.3 * np.cos(3.0 * t_h)
+    pd_ = build_within_calibration_panel_data(
+        t_h=t_h,
+        primary_series=s,
+        primary_label="T2* (µs)",
+        thresholds=_THRESHOLDS,
+        meta={"dataset": "unit-test"},
+        windows=_carved(t_h, s, _THRESHOLDS)[0],
+        reads=_carved(t_h, s, _THRESHOLDS)[1],
+        gap_spans_s=[],
+        kaplan_meier=_km_for(t_h, s, _THRESHOLDS),
+        use_log_scale=True,
+    )
+    fig, ax = _draw_primary(pd_)
+    try:
+        assert _bottom_edge_markers(ax) == []
+        trace = [line for line in ax.lines if len(line.get_xdata()) == len(t_h)]
+        assert len(trace) == 1
+        assert np.array_equal(trace[0].get_ydata(), s)
+        assert ax.get_ylim()[0] <= s.min()
+    finally:
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)

@@ -18,6 +18,7 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 
+from quebra.analyzers.fidelity import ABS_X_FLOOR
 from quebra.analyzers.within_calibration_data import WithinCalibrationPanelData
 
 
@@ -35,6 +36,29 @@ def draw_decade_guides(ax: plt.Axes, values: np.ndarray) -> None:
             alpha=0.3,
             zorder=0,
         )
+
+
+def floor_reads(pd_: WithinCalibrationPanelData) -> np.ndarray:
+    """Reads a log axis cannot draw as themselves: those at the |x| floor.
+
+    The fidelity panel lifts |x| = 0, read 0 by construction, to `fidelity.ABS_X_FLOOR` so
+    a log axis keeps it. That lift is a drawing floor, not a measurement, so the axis takes
+    its range from the reads above it and marks the floor reads at its bottom edge. Only a
+    log-scale series can hold one; every other panel gets an all-False mask.
+    """
+    values = np.asarray(pd_.signal.values, dtype=float)
+    if not pd_.use_log_scale:
+        return np.zeros(len(values), dtype=bool)
+    return values == ABS_X_FLOOR
+
+
+def lower_limit_above_floor(values: np.ndarray, at_floor: np.ndarray) -> float | None:
+    """The decade boundary at or below the smallest finite read above the floor."""
+    above = np.asarray(values, dtype=float)[~at_floor]
+    above = above[np.isfinite(above) & (above > 0.0)]
+    if not len(above):
+        return None
+    return float(10.0 ** np.floor(np.log10(float(np.min(above)))))
 
 
 def observed_slices(pd_: WithinCalibrationPanelData) -> list[tuple[int, int]]:

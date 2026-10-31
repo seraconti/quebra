@@ -30,6 +30,7 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
+from matplotlib.transforms import blended_transform_factory
 
 from quebra.panels import _within_calibration_render as render
 from quebra.analyzers.reliability_band import estimator_name
@@ -239,12 +240,20 @@ class WithinCalibrationPanel(BasePlot):
         legend_ax: plt.Axes | None = None,
     ) -> None:
         plot_fn = ax.semilogy if pd_.use_log_scale else ax.plot
+        # Reads at the |x| floor are marked at the axis' bottom edge, not drawn at the
+        # floor: a line down to it would set the axis range by a drawing artefact.
+        at_floor = render.floor_reads(pd_)
+        line_values = (
+            np.where(at_floor, np.nan, pd_.signal.values)
+            if at_floor.any()
+            else pd_.signal.values
+        )
         # One call per observed stretch, split at the gaps the carve found, so no
         # segment is drawn across unobserved time.
         for lo, hi in render.observed_slices(pd_):
             plot_fn(
                 pd_.signal.t_h[lo:hi],
-                pd_.signal.values[lo:hi],
+                line_values[lo:hi],
                 color=color,
                 linewidth=1.2,
                 zorder=2,
@@ -285,7 +294,12 @@ class WithinCalibrationPanel(BasePlot):
             )
             ax.set_ylim(y_limits)
         if pd_.use_log_scale:
-            render.draw_decade_guides(ax, pd_.signal.values)
+            render.draw_decade_guides(
+                ax,
+                pd_.signal.values[~at_floor]
+                if (~at_floor).any()
+                else pd_.signal.values,
+            )
         for i, (label, thr_val, _) in enumerate(pd_.thresholds):
             thr_color = theme.threshold_color(i, len(pd_.thresholds))
             ax.axhline(
@@ -297,7 +311,9 @@ class WithinCalibrationPanel(BasePlot):
                 label=label,
                 zorder=1,
             )
-        if pd_.thresholds:
+        if at_floor.any():
+            self._mark_floor_reads(ax, pd_, at_floor, color)
+        if pd_.thresholds or at_floor.any():
             # Anchored just right of the DISTRIBUTION, so it reads as belonging to the
             # signal block it labels rather than to the error histograms further right.
             (legend_ax or ax).legend(
@@ -311,6 +327,41 @@ class WithinCalibrationPanel(BasePlot):
         ax.set_xlabel("Scan clock (h)")
         ax.set_title(pd_.primary_label)
         ax.grid(True, which="both", color="lightgray", alpha=0.4)
+
+    def _mark_floor_reads(
+        self,
+        ax: plt.Axes,
+        pd_: WithinCalibrationPanelData,
+        at_floor: np.ndarray,
+        color: object,
+    ) -> None:
+        """The axis' bottom from the reads above the floor, and the floor reads marked there.
+
+        Read 0 is the reference, |Delta| = 0 by construction, and carries the legend entry.
+        A later read at the floor, one whose frequency equals read 0's, gets the same marker
+        without a label.
+        """
+        lower = render.lower_limit_above_floor(pd_.signal.values, at_floor)
+        if lower is not None:
+            ax.set_ylim(bottom=lower)
+        # x in data, y in axes coordinates: the marker sits on the bottom edge whatever
+        # the limits, and is not clipped by it.
+        style = {
+            "linestyle": "none",
+            "marker": "^",
+            "markersize": 6,
+            "color": color,
+            "clip_on": False,
+            "zorder": 3,
+            "transform": blended_transform_factory(ax.transData, ax.transAxes),
+        }
+        t_h = np.asarray(pd_.signal.t_h, dtype=float)
+        later = np.flatnonzero(at_floor)
+        if at_floor[0]:
+            ax.plot(t_h[:1], [0.0], label="reference (read 0)", **style)
+            later = later[1:]
+        if len(later):
+            ax.plot(t_h[later], np.zeros(len(later)), **style)
 
     def _draw_primary_hist(
         self, ax: plt.Axes, pd_: WithinCalibrationPanelData, color: object

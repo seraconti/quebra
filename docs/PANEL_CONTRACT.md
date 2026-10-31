@@ -283,6 +283,11 @@ Decisions made by the adapter:
   excess above each rung, in units of Ω, times hours
 - no `traces`
 
+The renderer, not the adapter, handles the floor: a read drawn at `fidelity.ABS_X_FLOOR` is
+left off the line and marked on the bottom edge of the axis, read 0 with the legend entry
+"reference (read 0)" and any later floor read unlabelled; the axis' bottom is the decade
+boundary at or below the smallest read above the floor (`_within_calibration_render.floor_reads`).
+
 ---
 
 ## File size note
