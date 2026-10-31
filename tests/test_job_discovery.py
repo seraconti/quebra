@@ -143,7 +143,7 @@ def test_a_bare_sweep_excludes_the_composites_as_the_docs_promise():
     """The regression this guards is measured, not hypothetical.
 
     Replacing the declaration with "every discovered job" silently widens `run --all`
-    from the 9 swept jobs to all 18, pulling in the nine that decline the sweep: the
+    from the 11 swept jobs to all 20, pulling in the nine that decline the sweep: the
     composites, `jobs/active/km_with_checks_6d2s.py` and the six `check_ledger` jobs.
     `AGENTS.md` and `docs/WRITING_A_JOB.md` promise the composites are not swept. One is the
     independence survey, which someone typing `run --all` would start without asking for
@@ -161,7 +161,7 @@ def test_a_bare_sweep_excludes_the_composites_as_the_docs_promise():
             f"{composite} is swept by a bare --all; AGENTS.md and docs/WRITING_A_JOB.md "
             f"both promise composites are not"
         )
-    assert len(swept_ids) == 9, f"expected 9 swept jobs, got {sorted(swept_ids)}"
+    assert len(swept_ids) == 11, f"expected 11 swept jobs, got {sorted(swept_ids)}"
 
 
 def test_an_unparseable_job_file_raises_rather_than_vanishing(tmp_path):

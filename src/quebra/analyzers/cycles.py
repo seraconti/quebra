@@ -49,7 +49,7 @@ rule (`check_ledger.score_segments`), so a row on cycles means what a row on win
 The rows' `threshold_label` column holds `CYCLES_LABEL`, since cycles have no threshold.
 `build_cycles_panel_data` builds `CyclesPanelData`, the typed artifact a cycles figure
 draws: the curve, the MTBC with the check outcome attached, the verdict rows, the status
-shares in hours and every count. No figure draws it yet.
+shares in hours and every count; `panels/calibration_cycles.py` draws it.
 
 Validity assumptions
 

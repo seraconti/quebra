@@ -15,14 +15,23 @@ are the `qi_cycles_hand` case of `jobs/rscripts/survival_reference.R`.
 
 from __future__ import annotations
 
+import dataclasses
+
 from statistics import NormalDist
 
 import math
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
+from matplotlib.colors import to_rgba
+from matplotlib.text import Text
 
 import quebra.analyzers.checks.c6_exchangeability as c6
 from quebra.analyzers import cycles, mtbf
@@ -31,6 +40,8 @@ from quebra.analyzers.check_outcome import PERMUTATION_KEYS
 from quebra.analyzers.event_table import CYCLES, EventTable
 from quebra.analyzers.kaplan_meier import curve_from_event_table
 from quebra.core.types import Norm
+from quebra.panels.calibration_cycles import MTBC_SPAN_GID, CalibrationCyclesPanel
+from quebra.plots.theme import verdict_color
 from tests.fixtures import R_SURVIVAL_INPUTS, R_SURVIVAL_VALUES
 
 
@@ -427,6 +438,33 @@ def test_c5_rejects_an_alternating_cycle_sequence() -> None:
     assert z[0] < 0.0
 
 
+def _sampled_panel_data() -> cycles.CyclesPanelData:
+    """Panel data of a status history whose four sample-step counts all differ: five
+    identical rows at 30 s (4 dropped), four conflicting at 90 s (3 dropped), a lone
+    offline sample just before a polling gap (a zero-length outage), and two gaps."""
+    sampled = cycles.spells_from_samples(
+        _samples(
+            [
+                (0, "calibrating"),
+                *[(30, "idle")] * 5,
+                (60, "calibrating"),
+                *[(90, "executing"), (90, "idle")] * 2,
+                (120, "offline"),
+                (500, "idle"),
+                (530, "calibrating"),
+                (560, "idle"),
+                (900, "calibrating"),
+                (930, "idle"),
+            ]
+        ),
+        spacing_s=30.0,
+    )
+    table = cycles.cycles(sampled)
+    return cycles.build_cycles_panel_data(
+        table, _checks(table), cycles.status_shares(sampled)
+    )
+
+
 @pytest.mark.unit
 def test_cycles_panel_data_carries_the_counts_and_the_check_summary() -> None:
     """Oracle: the hand table of the 1000 s record, the ledger cells, and R's restricted
@@ -475,36 +513,96 @@ def test_cycles_panel_data_carries_the_counts_and_the_check_summary() -> None:
     m = data.mtbc
     assert data.mtbc_min == (m.rmst_s / 60.0, m.lower_s / 60.0, m.upper_s / 60.0)
     assert data.share_h == tuple(s / 3600.0 for s in (85.0, 40.0, 160.0, 715.0))
-    # The counts the samples step and the cut rule leave, each a different number: five
-    # identical rows at 30 s (4 dropped), four conflicting at 90 s (3 dropped), a lone
-    # offline sample just before a polling gap (a zero-length outage), and two gaps.
-    sampled = cycles.spells_from_samples(
-        _samples(
-            [
-                (0, "calibrating"),
-                *[(30, "idle")] * 5,
-                (60, "calibrating"),
-                *[(90, "executing"), (90, "idle")] * 2,
-                (120, "offline"),
-                (500, "idle"),
-                (530, "calibrating"),
-                (560, "idle"),
-                (900, "calibrating"),
-                (930, "idle"),
-            ]
-        ),
-        spacing_s=30.0,
-    )
-    sampled_table = cycles.cycles(sampled)
-    sampled_data = cycles.build_cycles_panel_data(
-        sampled_table, _checks(sampled_table), cycles.status_shares(sampled)
-    )
+    sampled_data = _sampled_panel_data()
     assert (
         sampled_data.n_duplicates_identical_dropped,
         sampled_data.n_duplicates_conflicting_dropped,
         sampled_data.n_zero_outages_dropped,
         sampled_data.n_unobserved_spans,
     ) == (4, 3, 1, 2)
+
+
+@pytest.mark.unit
+def test_cycles_panel_renders_from_hand_built_data() -> None:
+    """Oracle: the artifact's own fields, read back off the drawn figure. Three axes; the
+    MTBC interval is one span whose ends are the artifact's; one verdict cell per asked
+    check in its verdict's colour; one bar per status, as long as its hours; every count
+    in the survival axes and the check summary in the caption."""
+    norm = _spell_norm(_HAND_ROWS)
+    table = cycles.cycles(norm)
+    data = cycles.build_cycles_panel_data(
+        table, _checks(table), cycles.status_shares(norm)
+    )
+    fig = CalibrationCyclesPanel("cycles").build_matplotlib(data)
+    try:
+        ax_km, ax_checks, ax_shares = fig.axes
+        spans = [p for p in ax_km.patches if p.get_gid() == MTBC_SPAN_GID]
+        assert len(spans) == 1
+        _point, lower, upper = data.mtbc_min
+        assert (spans[0].get_x(), spans[0].get_x() + spans[0].get_width()) == (
+            pytest.approx(max(lower, 0.0)),
+            pytest.approx(upper),
+        )
+        assert [p.get_facecolor() for p in ax_checks.patches] == [
+            to_rgba(verdict_color(verdict)) for _l, _p, verdict, _n in data.verdict_rows
+        ]
+        assert [p.get_width() for p in ax_shares.patches] == list(data.share_h)
+        counts = "\n".join(t.get_text() for t in ax_km.texts)
+        for line in (
+            "cycles: 8 (3 censored)",
+            "excluded, start unknown: 3",
+            "calibrations merged: 1",
+            "segments: 3, too few cycles for the checks: 1",
+            "zero-length outages dropped: 0",
+            "gaps: 0",
+            "duplicate timestamps dropped: 0 identical, 0 conflicting",
+        ):
+            assert line in counts
+        drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
+        assert f"Check outcome: {data.check_summary}" in drawn
+        assert data.bench_note in drawn
+    finally:
+        plt.close(fig)
+    # The sample-step counts, each a different number, so no two lines can trade places.
+    fig = CalibrationCyclesPanel("cycles").build_matplotlib(_sampled_panel_data())
+    try:
+        counts = "\n".join(t.get_text() for t in fig.axes[0].texts)
+        for line in (
+            "zero-length outages dropped: 1",
+            "gaps: 2",
+            "duplicate timestamps dropped: 4 identical, 3 conflicting",
+        ):
+            assert line in counts
+    finally:
+        plt.close(fig)
+    # An interval reaching below the axis is drawn from 0, and the label says so.
+    assert lower > 0.0
+    point, _lower, upper = data.mtbc_min
+    below = dataclasses.replace(data, mtbc_min=(point, -5.0, upper))
+    fig = CalibrationCyclesPanel("cycles").build_matplotlib(below)
+    try:
+        (span,) = [p for p in fig.axes[0].patches if p.get_gid() == MTBC_SPAN_GID]
+        assert (span.get_x(), span.get_x() + span.get_width()) == (
+            0.0,
+            pytest.approx(upper),
+        )
+        drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
+        assert "[-5.0, " in drawn and "(lower end <= 0, drawn from 0)" in drawn
+    finally:
+        plt.close(fig)
+    # A check with no answer shows its note's first clause under the table.
+    unanswered = dataclasses.replace(
+        data,
+        verdict_rows=(
+            ("C9 invented", None, VERDICT_NOT_COMPUTED, "the reason: its detail; more"),
+        ),
+    )
+    fig = CalibrationCyclesPanel("cycles").build_matplotlib(unanswered)
+    try:
+        drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
+        assert "C9 invented: the reason" in drawn and "its detail" not in drawn
+    finally:
+        plt.close(fig)
 
 
 @pytest.mark.unit
@@ -523,6 +621,12 @@ def test_a_record_with_nothing_to_score_still_gets_its_rows_and_says_why() -> No
     assert data.battery_note == checks.battery_note
     assert len(data.checks.checks_unanswered) == len(PERMUTATION_KEYS) == 5
     assert all(verdict == VERDICT_ABSENT for _l, _p, verdict, _n in data.verdict_rows)
+    fig = CalibrationCyclesPanel("cycles").build_matplotlib(data)
+    try:
+        drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
+        assert checks.battery_note in drawn
+    finally:
+        plt.close(fig)
     with pytest.raises(ValueError, match="permutation rows only"):
         cycles.cycle_checks(
             table,

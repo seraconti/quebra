@@ -7,7 +7,7 @@ Every job declares a `JOB_ID` (the logical name `job.include` resolves) and a
 `JOB_FAMILY` (its category). Neither is its directory: a job can move without
 breaking any composite, and recategorising costs one string edit.
 
-18 jobs in 7 families.
+20 jobs in 7 families.
 
 ## check_ledger
 
@@ -31,6 +31,8 @@ breaking any composite, and recategorising costs one string edit.
 
 | JOB_ID | file | datasets | includes | parameters |
 |---|---|---|---|---|
+| `cycles_tuna17` | `jobs/active/cycles_tuna17.py` | `data/real_private/qinspire/Tuna-17_status_history1.csv`<br>`jobs/bench/results/size_table.csv` | — | `PREFIX='cycles_tuna17'`<br>`SEED=20261101`<br>`SPACING_S=30.0` |
+| `cycles_tuna9` | `jobs/active/cycles_tuna9.py` | `data/real_private/qinspire/Tuna-9_status_history1.csv`<br>`jobs/bench/results/size_table.csv` | — | `PREFIX='cycles_tuna9'`<br>`SEED=20261102`<br>`SPACING_S=30.0` |
 | `mtbc_q6` | `jobs/active/mtbc_q6.py` | `data/real_private/calibration_logs/6D2S_qubit6_freq_log.pickle` | — | `PREFIX='mtbc_q6'` |
 | `mtbf_q1` | `jobs/active/mtbf_q1.py` | `data/real_private/calibration_logs/6D2S_qubit1_freq_log.pickle` | — | — |
 
