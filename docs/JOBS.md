@@ -7,7 +7,7 @@ Every job declares a `JOB_ID` (the logical name `job.include` resolves) and a
 `JOB_FAMILY` (its category). Neither is its directory: a job can move without
 breaking any composite, and recategorising costs one string edit.
 
-29 jobs in 8 families.
+30 jobs in 8 families.
 
 ## check_ledger
 
@@ -57,6 +57,7 @@ breaking any composite, and recategorising costs one string edit.
 
 | JOB_ID | file | datasets | includes | parameters |
 |---|---|---|---|---|
+| `compare_j_across_jump` | `jobs/composite/compare_j_across_jump.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE='two halves of one run, split at a frequency jump: one voltage setting'`<br>`HALF_FLAG="half of a record shaded in the paper's dataset table (high filtered share; the paper excluded >5% filtered datasets from its Fourier analysis)"`<br>`TAU_RULE='min_largest_age'` |
 | `compare_r1_qubits_one_night` | `jobs/composite/compare_r1_qubits_one_night.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE='one run, one voltage setting'`<br>`TAU_RULE='min_largest_age'` |
 | `compare_r2_nights_one_qubit` | `jobs/composite/compare_r2_nights_one_qubit.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE='temperature period stated; voltage settings can change between nights and are not listed per night'`<br>`TAU_RULE='min_largest_age'` |
 | `compare_r3_records_one_condition` | `jobs/composite/compare_r3_records_one_condition.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE_2X2='temperature and voltage configuration stated (Supp. Fig. S13)'`<br>`EVIDENCE_6D2S='temperature period stated; voltage settings can change between nights and are not listed per night'`<br>`FLAG="shaded in the paper's dataset table (high filtered share; the paper excluded >5% filtered datasets from its Fourier analysis)"`<br>`FOREST_SIDE='in_spec'`<br>`FOREST_THRESHOLD='3 µs'`<br>`TAU_RULE='min_largest_age'`<br>`TAU_SCOPE='per_group'` |

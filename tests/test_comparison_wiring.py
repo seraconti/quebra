@@ -799,3 +799,38 @@ def test_the_comparison_jobs_wire_the_records_and_settings_of_the_specification(
         assert {f"{name}_forest_figure", f"{name}_ladder_figure"} <= {
             sink.name for sink in job.sinks
         }
+
+    # J: each split record's halves, before then after, as a pair of their own; no full
+    # record is carved beside them, and the shaded record's halves carry a half's flag.
+    j = _job_module("compare_j_across_jump").job
+    carved = set()
+    for record in ("120423_6D2S_qubit1", "270623_6D2S_qubit2", "280623_6D2S_qubit2"):
+        name = f"j_{record}"
+        halves = [f"{record}_before", f"{record}_after"]
+        assert record in everyone
+        assert _carved(j, f"{name}_pair") == halves == _carved(j, f"{name}_pair_data")
+        assert _node(j, f"{name}_pair").kwargs == settings
+        table = _node(j, f"{name}_table").kwargs
+        assert table["evidence"] == (
+            "two halves of one run, split at a frequency jump: one voltage setting"
+        )
+        assert table["flags"] == (
+            {half: f"half of a record {flag}" for half in halves}
+            if record in shaded
+            else {}
+        )
+        assert _node(j, f"{name}_pair_data").kwargs["flags"] == table["flags"]
+        carved |= set(halves)
+    carves_in_j = {
+        node.fn_name.removeprefix("windows_")
+        for node in j.dag.values()
+        if node.fn_name.startswith("windows_")
+    }
+    assert carves_in_j == carved
+    for node in j.dag.values():
+        dataset = node.kwargs.get("dataset")
+        if dataset is not None:
+            assert (
+                str(dataset.path)
+                == f"data/real_private/6D2S/{dataset.path.stem}.pickle"
+            )
