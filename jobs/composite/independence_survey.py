@@ -1,7 +1,7 @@
 """Is the independence assumption safe on this device, or only on the record we looked at?
 
-The device-wide survey: one grid per instrument, every 6D2S record down, the T2* threshold
-ladder across, both clocks stacked. One figure per entry of
+The device-wide survey: one grid per instrument, every record of both devices down (6D2S
+first, then 2x2), the T2* threshold ladder across, both clocks stacked. One figure per entry of
 `independence_survey.SURVEY_KEYS`, which is `battery.ROW_KEYS`: the five permutation rows.
 
 It includes every job of the `check_ledger` family and refs each job's `CheckLedgers`
@@ -36,8 +36,8 @@ PREFIX = "independence_survey"
 
 job = Job(JOB_ID)
 
-# Qubit order down the grid, and within a qubit the calendar order of its job's records.
-# Written out, not looped, so `docs/JOBS.md` lists them.
+# Device, then qubit order down the grid, and within a qubit the calendar order of its
+# job's records. Written out, not looped, so `docs/JOBS.md` lists them.
 _INCLUDED = [
     job.include("check_ledger_6d2s_q1"),
     job.include("check_ledger_6d2s_q2"),
@@ -45,6 +45,10 @@ _INCLUDED = [
     job.include("check_ledger_6d2s_q4"),
     job.include("check_ledger_6d2s_q5"),
     job.include("check_ledger_6d2s_q6"),
+    job.include("check_ledger_2x2_q1"),
+    job.include("check_ledger_2x2_q2"),
+    job.include("check_ledger_2x2_q3"),
+    job.include("check_ledger_2x2_q4"),
 ]
 
 _labels: list[str] = []

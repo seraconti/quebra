@@ -40,6 +40,7 @@ from quebra.core.discovery import by_family
 from quebra.core.job import Job
 from quebra.core.reference import ArtifactRef
 from quebra.ledger_recipe import (
+    CARVE_SUFFIX,
     LEDGER_DATA_SUFFIX,
     LEDGER_KNOBS,
     collect_ledgers,
@@ -53,7 +54,7 @@ from quebra.plots.independence_survey_plot import (
     SURVEY_PLOTS,
     IndependenceSurveyOverviewPlot,
 )
-from quebra.recipes import _windows_run
+from quebra.recipes import _CARVE_STAGES, _carve_stage, _windows_run
 
 pytestmark = pytest.mark.unit
 
@@ -73,9 +74,15 @@ def _load_job(path: Path) -> Job:
     return _load_module(path).job
 
 
+# The ledger family: six 6D2S jobs (the paper's 24 records and 4 more) and four 2x2 jobs
+# (the paper's 22 records, Supplementary Fig. 11).
+N_LEDGER_JOBS = 10
+N_LEDGER_RECORDS = 28 + 22
+
+
 def _ledger_jobs() -> dict[str, Job]:
     family = by_family(JOBS, "check_ledger")
-    assert len(family) == 6, [j.job_id for j in family]
+    assert len(family) == N_LEDGER_JOBS, [j.job_id for j in family]
     return {j.job_id: _load_job(j.path) for j in family}
 
 
@@ -83,19 +90,36 @@ def _nodes(job: Job, fn: object) -> list[object]:
     return [node for node in job.dag.values() if node.fn is fn]
 
 
+def _carves(job: Job) -> list[object]:
+    """A job's carve nodes: the T2* jobs' `_windows_run`, and the ledger jobs' recording
+    stage that runs it (`_carve_stage`, stage `windows`)."""
+    return [
+        node
+        for node in job.dag.values()
+        if node.fn is _windows_run
+        or (node.fn is _carve_stage and node.kwargs.get("stage") == "windows")
+    ]
+
+
 def _chain(job: Job, node_id: str) -> tuple[Dataset, list[tuple]]:
     """The dataset and the step-by-step signature of the chain that ends at `node_id`.
 
     Each step is its function's code, the values its closure captured (the filter step
     captures its config there, not as a kwarg) and its kwargs. Node NAMES are left out: a
-    ledger job suffixes them per record, and the name decides nothing about the windows.
+    ledger job suffixes them per record, and the name decides nothing about the windows. A
+    ledger job's recording stage (`_carve_stage`) is read as the stage function it runs,
+    with that function's kwargs: recording a failure changes nothing a carve computes.
     """
     steps: list[tuple] = []
     node = job.dag[node_id]
     while node.inputs:
         (parent,) = node.inputs
-        cells = tuple(c.cell_contents for c in (node.fn.__closure__ or ()))
-        steps.append((node.fn.__code__, cells, sorted(node.kwargs.items())))
+        fn, kwargs = node.fn, dict(node.kwargs)
+        if fn is _carve_stage:
+            fn = _CARVE_STAGES[kwargs.pop("stage")]
+            kwargs.pop("record")
+        cells = tuple(c.cell_contents for c in (fn.__closure__ or ()))
+        steps.append((fn.__code__, cells, sorted(kwargs.items())))
         node = job.dag[parent.node_id]
     return node.kwargs["dataset"], steps[::-1]
 
@@ -116,27 +140,29 @@ def _run_name_of(job: Job, ledger_node: object) -> str:
 
 
 def test_every_ledger_carve_is_the_t2star_jobs_carve_step_for_step():
-    """Oracle: the T2* job's own graph. All 28 record carves must equal its chain.
+    """Oracle: the T2* job's own graph. All 50 record carves must equal its chain.
 
     The T2* job is where the panel's windows come from, so its chain, read off its DAG, is
     the definition. A ledger job reading its record differently, or carving with any other
     function, captured filter config or kwarg, describes different windows from the panel.
     """
     reference = _load_job(JOBS / "active/t2star_q1_070423.py")
-    (ref_windows,) = _nodes(reference, _windows_run)
+    (ref_windows,) = _carves(reference)
     ref_dataset, ref_steps = _chain(reference, ref_windows.node_id)
     assert len(ref_steps) == 4, "filter, final stage, T2* fit, carve"
 
     compared = 0
     for job_id, job in _ledger_jobs().items():
-        for node in _nodes(job, _windows_run):
+        for node in _carves(job):
             dataset, steps = _chain(job, node.node_id)
             assert _how_loaded(dataset) == _how_loaded(ref_dataset), (
                 f"{job_id} {node.node_id} reads its record differently"
             )
             assert steps == ref_steps, f"{job_id} {node.node_id} carves differently"
             compared += 1
-    assert compared == 28, f"compared {compared} carves, the family holds 28 records"
+    assert compared == N_LEDGER_RECORDS, (
+        f"compared {compared} carves, the family holds {N_LEDGER_RECORDS} records"
+    )
 
 
 def test_every_ledger_is_scored_on_the_shared_knobs_and_its_carves_ladder():
@@ -150,12 +176,12 @@ def test_every_ledger_is_scored_on_the_shared_knobs_and_its_carves_ladder():
         for node in _nodes(job, ledger_step):
             windows_node, _bench = node.inputs
             carve = job.dag[windows_node.node_id]
-            assert carve.fn is _windows_run
+            assert carve in _carves(job), job_id
             assert node.kwargs["thresholds"] == carve.kwargs["thresholds"], job_id
             knobs = {k: v for k, v in node.kwargs.items() if k != "thresholds"}
             assert knobs == LEDGER_KNOBS, f"{job_id} {node.node_id}: {knobs}"
             scored += 1
-    assert scored == 28
+    assert scored == N_LEDGER_RECORDS
 
 
 def test_the_km_job_scores_on_the_ledger_knobs_with_a_seed_of_its_own():
@@ -195,7 +221,8 @@ def test_c3_is_off_and_its_simulation_count_is_declared():
 
 
 def test_a_ledger_job_draws_and_writes_only_ledgers_and_their_survey():
-    """No T2* panel and no windows artifact: those belong to the T2* jobs."""
+    """No T2* panel: that belongs to the T2* jobs. What it writes is its ledgers, their
+    survey, and each record's carve (`CARVE_SUFFIX`), which the compliance survey reads."""
     allowed = {CheckLedgerPanel, IndependenceSurveyOverviewPlot, *SURVEY_PLOTS}
     for job_id, job in _ledger_jobs().items():
         for sink in job.sinks:
@@ -203,7 +230,12 @@ def test_a_ledger_job_draws_and_writes_only_ledgers_and_their_survey():
                 assert sink.plot_class in allowed, f"{job_id} draws {sink.plot_class}"
             else:
                 assert sink.name.endswith(
-                    (LEDGER_DATA_SUFFIX, "_check_ledgers", "_independence_survey_grids")
+                    (
+                        LEDGER_DATA_SUFFIX,
+                        CARVE_SUFFIX,
+                        "_check_ledgers",
+                        "_independence_survey_grids",
+                    )
                 ), f"{job_id} materializes {sink.name}"
 
 
@@ -239,7 +271,7 @@ def test_no_record_is_scored_twice():
         for node in job.dag.values()
         if node.fn_name == "load"
     ]
-    assert len(paths) == 28
+    assert len(paths) == N_LEDGER_RECORDS
     assert len(set(paths)) == len(paths)
     assert not [p for p in paths if p.endswith(("_before.pickle", "_after.pickle"))]
 
@@ -275,10 +307,10 @@ def test_the_device_survey_stacks_every_ledger_of_the_family_and_computes_nothin
         expected_refs.append((inc.job.name, sink.name))
         expected_labels.extend(bundle.kwargs["labels"])
     assert [(r.included.job.name, r.node_name) for r in survey.inputs] == expected_refs
-    assert len(survey.inputs) == len(survey_job.includes) == 6
+    assert len(survey.inputs) == len(survey_job.includes) == N_LEDGER_JOBS
     labels = survey.kwargs["dataset_labels"]
     assert labels == tuple(expected_labels)
-    assert len(set(labels)) == len(labels) == 28
+    assert len(set(labels)) == len(labels) == N_LEDGER_RECORDS
     assert survey.kwargs["alpha"] == LEDGER_KNOBS["alpha"]
 
 
@@ -687,3 +719,68 @@ def test_the_count_script_refuses_a_stale_ledger_and_prints_no_count(tmp_path, c
     printed = capsys.readouterr().out
     assert "refused 1 of 3 ledgers as stale" in printed
     assert "trend group" not in printed
+
+
+# ------------------------------------------- every ledger job records failures and persists
+
+
+def test_every_ledger_job_records_failures_and_persists_each_carve_once():
+    """Oracle: the job graphs. Every record of every ledger job loads through the recording
+    loader, so a record that fails reads `not computed` instead of stopping the job, and
+    its carve is persisted exactly once under `{run_name}{CARVE_SUFFIX}`, the name other
+    jobs read it by."""
+    from quebra.core.job import _load_dataset_or_failure
+
+    persisted = 0
+    for job_id, job in _ledger_jobs().items():
+        loads = [n for n in job.dag.values() if n.fn_name == "load"]
+        assert loads and all(n.fn is _load_dataset_or_failure for n in loads), job_id
+        sinks = {
+            s.name: s.node.node_id
+            for s in job.sinks
+            if getattr(s, "node", None) is not None and s.name.endswith(CARVE_SUFFIX)
+        }
+        for carve in _carves(job):
+            dataset, _ = _chain(job, carve.node_id)
+            name = f"{dataset.extra['run_name']}{CARVE_SUFFIX}"
+            assert sinks.get(name) == carve.node_id, f"{job_id}: {name}"
+            persisted += 1
+        assert len(sinks) == len(_carves(job)), job_id
+    assert persisted == N_LEDGER_RECORDS
+
+
+# The 2x2 drift datasets, Capannelli et al., Supplementary notes, Supplementary Fig. 11
+# (p. 11): (qubit, DD/MM) per row, all in 2023.
+_SUPP_FIG_11 = [
+    (1, "09/06"), (2, "09/06"), (3, "09/06"), (1, "10/06"), (1, "20/06"), (1, "25/06"),
+    (3, "26/06"), (1, "30/06"), (3, "30/06"), (1, "03/07"), (2, "03/07"), (2, "04/07"),
+    (3, "04/07"), (1, "05/07"), (1, "07/07"), (1, "10/07"), (3, "11/07"), (2, "12/07"),
+    (1, "22/08"), (2, "22/08"), (3, "22/08"), (4, "22/08"),
+]  # fmt: skip
+
+
+def test_the_2x2_ledger_jobs_hold_the_22_records_of_the_papers_table():
+    """Oracle: the paper's 2x2 table, Supplementary Fig. 11. The four 2x2 ledger jobs
+    score exactly its 22 records, each job one qubit in calendar order, read as the 2x2
+    device through the shared schema, named `2x2_q<N>_<DDMMYY>`."""
+    from quebra.schemas.track912 import track912Schema
+
+    expected = {}
+    for qubit, day_month in _SUPP_FIG_11:
+        day, month = day_month.split("/")
+        expected.setdefault(qubit, []).append((month, day))
+    scored = 0
+    for qubit in (1, 2, 3, 4):
+        job = _ledger_jobs()[f"check_ledger_2x2_q{qubit}"]
+        datasets = [_chain(job, c.node_id)[0] for c in _carves(job)]
+        dates = [f"{d}{m}23" for m, d in sorted(expected[qubit])]
+        assert [ds.extra["run_name"] for ds in datasets] == [
+            f"2x2_q{qubit}_{date}" for date in dates
+        ]
+        for ds, date in zip(datasets, dates, strict=True):
+            assert (
+                str(ds.path) == f"data/real_private/2x2/{date}_2x2_qubit{qubit}.pickle"
+            )
+            assert (ds.device, ds.qubit, ds.schema) == ("2x2", qubit, track912Schema)
+        scored += len(datasets)
+    assert scored == len(_SUPP_FIG_11) == 22

@@ -25,7 +25,11 @@ from typing import Any
 
 import pandas as pd
 
-from quebra.analyzers.check_ledger import CheckLedger, make_inputs_from_windows
+from quebra.analyzers.check_ledger import (
+    CheckLedger,
+    CheckLedgerInputs,
+    make_inputs_from_windows,
+)
 from quebra.analyzers.check_ledger import run as run_ledger
 from quebra.analyzers.independence_survey import (
     IndependenceSurveyData,
@@ -35,6 +39,7 @@ from quebra.analyzers.windows import WindowsResult
 from quebra.core._artifact_guard import StaleArtifactGuard
 from quebra.core.dataset import Dataset
 from quebra.core.job import Job
+from quebra.core.types import RecordFailure
 from quebra.panels.check_ledger import CheckLedgerPanel
 from quebra.plots.independence_survey_plot import (
     SURVEY_PLOTS,
@@ -68,6 +73,9 @@ LEDGER_KNOBS: dict[str, object] = {
 
 # The materialize name of a record's ledger is its prefix plus this.
 LEDGER_DATA_SUFFIX = "_check_ledger_data"
+# The materialize name of a record's carve, a `WindowsResult` or a `RecordFailure`. Other
+# jobs read the carve by this name; keep it stable.
+CARVE_SUFFIX = "_windows"
 
 TARGETS = ["static", "academic"]
 
@@ -86,7 +94,7 @@ class CheckLedgers(StaleArtifactGuard):
 
 
 def ledger_step(
-    window_result: WindowsResult,
+    window_result: WindowsResult | RecordFailure,
     bench_size_table: pd.DataFrame,
     *,
     thresholds: list[tuple[str, float, bool]],
@@ -101,8 +109,28 @@ def ledger_step(
 ) -> CheckLedger:
     """The check ledger of one record's windows.
 
-    Every knob is a required kwarg, so each one reaches the provenance label.
+    Every knob is a required kwarg, so each one reaches the provenance label. A record that
+    failed to load or carve gets a ledger whose every threshold and clock reads `not
+    computed` with the failure's note.
     """
+    if isinstance(window_result, RecordFailure):
+        return run_ledger(
+            CheckLedgerInputs(
+                windows=pd.DataFrame({"threshold_label": []}),
+                bench_size_table=bench_size_table,
+                thresholds=list(thresholds),
+                dataset_id=window_result.dataset_id,
+                alpha=alpha,
+                min_events_pass=min_events_pass,
+                tie_cutoff_distinct=tie_cutoff_distinct,
+                lag_max=lag_max,
+                n_permutations=n_permutations,
+                seed=seed,
+                include_c3=include_c3,
+                c3_n_null_sim=c3_n_null_sim,
+                record_failure=window_result.note(),
+            )
+        )
     return run_ledger(
         make_inputs_from_windows(
             window_result,
@@ -211,8 +239,13 @@ def configure_check_ledger_job(
     A record's prefix is its dataset's `extra["run_name"]`, which also becomes the ledger's
     `dataset_id`, so the label a row carries is derived from the record and not retyped.
     `prefix` names the job-level sinks: `{prefix}_check_ledgers` and the
-    `{prefix}_independence_survey_*` grids and figures. No T2* panel and no materialized
-    windows: those belong to the T2* jobs.
+    `{prefix}_independence_survey_*` grids and figures. No T2* panel: that belongs to the T2*
+    jobs. Each record's carve is persisted as `{record}_windows` (`CARVE_SUFFIX`), the name
+    the compliance survey and the thesis record figure read it by.
+
+    The carve records a failure (`wire_t2star_carve(on_failure="record")`): a record whose
+    content fails to load or carve is persisted as a `RecordFailure` under the same name,
+    and its ledger reads `not computed` with the reason. It is never dropped.
     """
     bench = job.load_df(bench_size_table)
     ledgers: list[object] = []
@@ -220,8 +253,13 @@ def configure_check_ledger_job(
     for dataset in records:
         record = str(dataset.extra["run_name"])
         _, window_node = wire_t2star_carve(
-            job, dataset=dataset, thresholds=T2STAR_THRESHOLDS, node_suffix=f"_{record}"
+            job,
+            dataset=dataset,
+            thresholds=T2STAR_THRESHOLDS,
+            node_suffix=f"_{record}",
+            on_failure="record",
         )
+        job.materialize(window_node, name=f"{record}{CARVE_SUFFIX}")
         ledger = job.step(
             ledger_step,
             window_node,

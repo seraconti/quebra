@@ -271,8 +271,8 @@ def test_the_guard_actually_matches_something() -> None:
     That is the failure the module docstring records `fidelity_windows` causing once already.
 
     So: assert the matcher still finds carves, in more than one job, including the
-    `check_ledger` family, which carves the most: one carve per record, 28 records over six
-    jobs.
+    `check_ledger` family, which carves the most: one carve per record, 50 records over ten
+    jobs (28 of 6D2S, 22 of 2x2).
     """
     jobs = {path.stem: _load_job(path) for path in _job_files()}
     per_job = {name: len(_windows_nodes(job)) for name, job in jobs.items()}
@@ -281,8 +281,8 @@ def test_the_guard_actually_matches_something() -> None:
     ledger = {
         name: n for name, n in per_job.items() if name.startswith("check_ledger_")
     }
-    assert len(ledger) == 6 and sum(ledger.values()) >= 28, (
-        f"the check_ledger family carves 28 records; the matcher sees {ledger}"
+    assert len(ledger) == 10 and sum(ledger.values()) >= 50, (
+        f"the check_ledger family carves 50 records; the matcher sees {ledger}"
     )
     # The Allan selector can go dead the same way. Both Ramsey archetypes compute one.
     allan = {name: n for name, job in jobs.items() if (n := len(_allan_nodes(job)))}

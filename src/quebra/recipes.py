@@ -24,7 +24,8 @@ from quebra.analyzers.t2star import T2STAR_DEFAULT_LADDER, T2StarResult
 from quebra.analyzers.tlf import run as run_tlf
 from quebra.analyzers.windows import DEFAULT_GAP_MULT, WindowsResult
 from quebra.core.dataset import Dataset
-from quebra.core.job import Job
+from quebra.core.job import Job, record_id
+from quebra.core.types import RecordFailure
 from quebra.panels.within_calibration import (
     WithinCalibrationPanel,
     WithinCalibrationPanelData,
@@ -579,6 +580,36 @@ def _t2star_panel_data(
     )
 
 
+# The four stages of the T2* carve, by step name, as `_carve_stage` runs them. The filter
+# is built here once from the same config `wire_t2star_carve` gives its own filter step.
+_CARVE_STAGES: dict[str, Callable[..., object]] = {
+    "t2star_filter": _filter_step(RAMSEY_CONFIG),
+    "t2star_final_filter_stage": _final_stage,
+    "t2star": _t2star_run,
+    "windows": _windows_run,
+}
+
+
+def _carve_stage(
+    upstream: object, *, stage: str, record: str, **kwargs: object
+) -> object:
+    """One stage of the T2* carve, for a job that scores many records.
+
+    A `RecordFailure` from upstream passes through unchanged. A ValueError or KeyError from
+    the stage, which is how the stages refuse a record's content, becomes a
+    `RecordFailure` naming the stage, so this record reads `not computed` and the job's
+    other records are still carved. Any other exception raises.
+    """
+    if isinstance(upstream, RecordFailure):
+        return upstream
+    try:
+        return _CARVE_STAGES[stage](upstream, **kwargs)
+    except (ValueError, KeyError) as exc:
+        return RecordFailure(
+            dataset_id=record, stage=stage, reason=f"{type(exc).__name__}: {exc}"[:300]
+        )
+
+
 def wire_t2star_carve(
     job: "Job",
     *,
@@ -588,6 +619,7 @@ def wire_t2star_carve(
     k: float = T2STAR_K,
     use_uncertainty: bool = T2STAR_USE_UNCERTAINTY,
     node_suffix: str = "",
+    on_failure: str = "raise",
 ) -> tuple[object, object]:
     """Wire load, filter, T2* fit and window carve onto `job`; return (fit, windows) nodes.
 
@@ -604,8 +636,38 @@ def wire_t2star_carve(
 
     Every carve parameter is passed as a step KWARG, so it reaches the provenance label even
     where it equals the default.
+
+    `on_failure="record"` is for a job that scores many records: the load and every stage
+    record a failure of this record's content as a `RecordFailure` (`_carve_stage`) instead
+    of raising, so the record reads `not computed` with its reason and is never dropped.
+    The stages are the same functions and kwargs; the default raises.
     """
     ladder = T2STAR_THRESHOLDS if thresholds is None else thresholds
+    if on_failure == "record":
+        record = record_id(dataset)
+        node = job.load(dataset, on_failure="record")
+        for stage in ("t2star_filter", "t2star_final_filter_stage", "t2star"):
+            node = job.step(
+                _carve_stage,
+                node,
+                name=f"{stage}{node_suffix}",
+                stage=stage,
+                record=record,
+            )
+        window_node = job.step(
+            _carve_stage,
+            node,
+            name=f"windows{node_suffix}",
+            stage="windows",
+            record=record,
+            gap_mult=gap_mult,
+            k=k,
+            use_uncertainty=use_uncertainty,
+            thresholds=ladder,
+        )
+        return node, window_node
+    if on_failure != "raise":
+        raise ValueError(f"on_failure must be 'raise' or 'record'; got {on_failure!r}")
     main_node = job.load(dataset)
     filtered = job.step(
         _filter_step(RAMSEY_CONFIG), main_node, name=f"t2star_filter{node_suffix}"

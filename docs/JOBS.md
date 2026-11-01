@@ -7,12 +7,16 @@ Every job declares a `JOB_ID` (the logical name `job.include` resolves) and a
 `JOB_FAMILY` (its category). Neither is its directory: a job can move without
 breaking any composite, and recategorising costs one string edit.
 
-20 jobs in 7 families.
+24 jobs in 7 families.
 
 ## check_ledger
 
 | JOB_ID | file | datasets | includes | parameters |
 |---|---|---|---|---|
+| `check_ledger_2x2_q1` | `jobs/active/check_ledger_2x2_q1.py` | `jobs/bench/results/size_table.csv` | — | — |
+| `check_ledger_2x2_q2` | `jobs/active/check_ledger_2x2_q2.py` | `jobs/bench/results/size_table.csv` | — | — |
+| `check_ledger_2x2_q3` | `jobs/active/check_ledger_2x2_q3.py` | `jobs/bench/results/size_table.csv` | — | — |
+| `check_ledger_2x2_q4` | `jobs/active/check_ledger_2x2_q4.py` | `jobs/bench/results/size_table.csv` | — | — |
 | `check_ledger_6d2s_q1` | `jobs/active/check_ledger_6d2s_q1.py` | `jobs/bench/results/size_table.csv` | — | — |
 | `check_ledger_6d2s_q2` | `jobs/active/check_ledger_6d2s_q2.py` | `jobs/bench/results/size_table.csv` | — | — |
 | `check_ledger_6d2s_q3` | `jobs/active/check_ledger_6d2s_q3.py` | `jobs/bench/results/size_table.csv` | — | — |
@@ -24,7 +28,7 @@ breaking any composite, and recategorising costs one string edit.
 
 | JOB_ID | file | datasets | includes | parameters |
 |---|---|---|---|---|
-| `independence_survey` | `jobs/composite/independence_survey.py` | — | `check_ledger_6d2s_q1`<br>`check_ledger_6d2s_q2`<br>`check_ledger_6d2s_q3`<br>`check_ledger_6d2s_q4`<br>`check_ledger_6d2s_q5`<br>`check_ledger_6d2s_q6` | `PREFIX='independence_survey'` |
+| `independence_survey` | `jobs/composite/independence_survey.py` | — | `check_ledger_2x2_q1`<br>`check_ledger_2x2_q2`<br>`check_ledger_2x2_q3`<br>`check_ledger_2x2_q4`<br>`check_ledger_6d2s_q1`<br>`check_ledger_6d2s_q2`<br>`check_ledger_6d2s_q3`<br>`check_ledger_6d2s_q4`<br>`check_ledger_6d2s_q5`<br>`check_ledger_6d2s_q6` | `PREFIX='independence_survey'` |
 | `km_with_checks_6d2s` | `jobs/active/km_with_checks_6d2s.py` | `jobs/bench/results/size_table.csv` | — | `ALPHA=0.05`<br>`GAP_MULT=10.0`<br>`LAG_MAX=5`<br>`MIN_EVENTS_PASS=35`<br>`N_PERMUTATIONS=999`<br>`PREFIX='km_with_checks_6d2s'`<br>`SEED=20260903`<br>`THRESHOLD_LABEL='3.0 µs'`<br>`TIE_CUTOFF_DISTINCT=5` |
 
 ## interval

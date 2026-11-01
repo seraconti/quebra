@@ -202,6 +202,10 @@ class CheckLedgerInputs:
     # See c3_serial_copula.N_NULL_SIM: the dominant cost, and part of what a C3
     # p-value means, so it is carried rather than left to a module default.
     c3_n_null_sim: int = c3.N_NULL_SIM
+    # Set when the record failed to load or carve (`core.types.RecordFailure.note`): every
+    # threshold and clock then reads `not computed` with this note, so the record is in
+    # the ledger and the survey rather than missing from them.
+    record_failure: str = ""
 
 
 def make_inputs_from_windows(
@@ -377,6 +381,10 @@ def run(inputs: CheckLedgerInputs) -> CheckLedger:
 
     rows: list[dict[str, object]] = []
     for label, _value, _big_good in inputs.thresholds:
+        if inputs.record_failure:
+            for clock in (CLOCK_IN_SPEC, CLOCK_CALENDAR):
+                rows.append(_blank_row(label, clock, inputs, inputs.record_failure))
+            continue
         table = inputs.windows[inputs.windows["threshold_label"] == label]
         for clock in (CLOCK_IN_SPEC, CLOCK_CALENDAR):
             rows.extend(

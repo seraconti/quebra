@@ -7,7 +7,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from quebra.core.job import Job, _FigureSink, _DAGNode, _LOAD_NODE_FN_NAMES
+from quebra.core.job import (
+    Job,
+    _FigureSink,
+    _DAGNode,
+    _LOAD_NODE_FN_NAMES,
+    _NORM_LOAD_FN_NAMES,
+)
 from quebra.core.identity import content_hash
 from quebra.core.dataset import Dataset
 from quebra.core.paths import repo_root, resolve_data_root, resolve_dataset_path
@@ -485,7 +491,8 @@ def _emit_prov(
         pipeline_steps=[
             _format_step(job.dag[node_id])
             for node_id in ordered_ids
-            if node_id in ancestors and job.dag[node_id].fn.__name__ != "_load_dataset"
+            if node_id in ancestors
+            and job.dag[node_id].fn.__name__ not in _NORM_LOAD_FN_NAMES
         ],
         targets=targets,
         node_name=prov_name,

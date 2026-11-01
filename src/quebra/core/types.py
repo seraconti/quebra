@@ -4,6 +4,8 @@ from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from quebra.core._artifact_guard import StaleArtifactGuard
+
 
 # Type aliases - semantic labels for array roles in the pipeline
 TimeSeries = Any  # 1-D np.ndarray indexed by t_rel_s
@@ -15,6 +17,24 @@ Parameter = (
 # and copied onto the results that describe the record: by a schema's `validate`, and by
 # the default normaliser's finite timestamp and frequency mask.
 LOAD_COUNT_KEYS = ("n_rows_dropped_by_schema", "n_rows_dropped_invalid")
+
+
+@dataclass
+class RecordFailure(StaleArtifactGuard):
+    """A record that could not be loaded or carved, recorded where its result would be.
+
+    A job that scores many records carries this in place of one record's result, so that
+    record reads `not computed: <stage> failed: <reason>` downstream and is never dropped,
+    while every other record is scored. `stage` names the step that failed. Only a failure
+    of the record's own content is recorded; a missing file still raises.
+    """
+
+    dataset_id: str
+    stage: str
+    reason: str
+
+    def note(self) -> str:
+        return f"{self.stage} failed: {self.reason}"
 
 
 @dataclass

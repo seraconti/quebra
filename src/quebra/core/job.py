@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from quebra.plots.base import BasePlot
 
 import pandas as pd
+import pandera.errors
 
 from quebra.loaders.registry import load as load_dataframe
 from quebra.core.closure import code_closure, parameter_row
@@ -24,7 +25,7 @@ from quebra.core.dataset import Dataset
 from quebra.core.identity import Identity, content_hash
 from quebra.core.paths import repo_root, resolve_dataset_path, resolve_repo_path
 from quebra.core.reference import ArtifactRef, LocalRef, Reference
-from quebra.core.types import Norm
+from quebra.core.types import Norm, RecordFailure
 from quebra.provenance import hash_string
 from quebra.schemas.ramsey_series import RamseySeriesSchema
 
@@ -142,7 +143,21 @@ class _IncludedJob:
 
 # The runner and Job.build_identity classify DAG nodes by fn.__name__; these
 # internal loader names are therefore reserved (Job.step rejects them).
-_LOAD_NODE_FN_NAMES = frozenset({"_load_dataset", "_load_dataframe_raw"})
+_LOAD_NODE_FN_NAMES = frozenset(
+    {"_load_dataset", "_load_dataset_or_failure", "_load_dataframe_raw"}
+)
+# The two that read a record into a Norm, as opposed to a raw side table.
+_NORM_LOAD_FN_NAMES = frozenset({"_load_dataset", "_load_dataset_or_failure"})
+
+# What a record's own content raises at load: the normaliser's ValueError and KeyError and
+# a schema's validation errors. A missing or unreadable file is not among them: that is
+# the job's declaration failing, and it raises.
+_RECORD_LOAD_ERRORS: tuple[type[Exception], ...] = (
+    ValueError,
+    KeyError,
+    pandera.errors.SchemaError,
+    pandera.errors.SchemaErrors,
+)
 
 
 def _load_dataset(dataset: Dataset) -> Norm:
@@ -195,6 +210,28 @@ def _load_dataset(dataset: Dataset) -> Norm:
     norm = RamseySeriesSchema.to_norm(frame, dataset)
     norm["meta"]["n_rows_dropped_by_schema"] = int(n_dropped_by_schema)
     return norm
+
+
+def record_id(dataset: Dataset) -> str:
+    """The name a record goes by: its declared `run_name`, else its file's stem."""
+    return str(dataset.extra.get("run_name") or Path(dataset.path).stem)
+
+
+def _load_dataset_or_failure(dataset: Dataset) -> Norm | RecordFailure:
+    """`_load_dataset`, with a failure of the record's own content recorded, not raised.
+
+    For a job that scores many records: one record whose file the schema or the normaliser
+    rejects reads `not computed` with the reason, and the others are still scored. A file
+    that is missing or unreadable raises, as in `_load_dataset`.
+    """
+    try:
+        return _load_dataset(dataset)
+    except _RECORD_LOAD_ERRORS as exc:
+        return RecordFailure(
+            dataset_id=record_id(dataset),
+            stage="load",
+            reason=f"{type(exc).__name__}: {exc}"[:300],
+        )
 
 
 def _load_dataframe_raw(dataset: Dataset) -> pd.DataFrame:
@@ -410,9 +447,19 @@ class Job:
         )
         return LocalRef(node_id=node_id, job_ref=self, fn_name=base_name, kwargs=kwargs)
 
-    def load(self, dataset: Dataset) -> LocalRef:
+    def load(self, dataset: Dataset, *, on_failure: str = "raise") -> LocalRef:
+        """A node that reads `dataset` into a Norm.
+
+        `on_failure="record"` is for a job that scores many records: a record whose own
+        content fails to load yields a `RecordFailure` instead of stopping the job
+        (`_load_dataset_or_failure`). The default raises.
+        """
+        if on_failure not in ("raise", "record"):
+            raise ValueError(
+                f"on_failure must be 'raise' or 'record'; got {on_failure!r}"
+            )
         return self._register_node(
-            fn=_load_dataset,
+            fn=_load_dataset if on_failure == "raise" else _load_dataset_or_failure,
             inputs=[],
             kwargs={"dataset": dataset},
             base_name="load",
