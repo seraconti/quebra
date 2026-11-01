@@ -21,6 +21,11 @@ short drifts and reports nothing on T2* against either. The unit is the record: 
 between-record variance mixes qubits, nights and temperature periods, the 2x2 voltage
 configurations, and on the 6D2S possibly voltage settings.
 
+Two figures: the forest at one rung and side (`FOREST_THRESHOLD`, `FOREST_SIDE`), and the
+pooled ladder over every rung and both sides. Each prints the tau and the record that set it,
+the records left out and why, the evidence lines and the check outcome; with more than one
+group, the caption says the groups are described, not tested.
+
 The suite builds this graph and never runs it: the records are embargoed.
 """
 
@@ -28,6 +33,7 @@ from __future__ import annotations
 
 from quebra.comparison_recipe import (
     record_dataset,
+    wire_forest_figures,
     wire_record_carves,
     wire_record_forest,
 )
@@ -41,6 +47,9 @@ JOB_SWEEP = False
 TAU_RULE = "min_largest_age"
 TAU_SCOPE = "across_groups"
 CONF_LEVEL = 0.95
+# The rung and side the forest figure draws; the pooled ladder draws every one.
+FOREST_THRESHOLD = "3 µs"
+FOREST_SIDE = "in_spec"
 
 # Every record by its file stem, in the order of the paper's tables.
 GROUPS: dict[str, list[str]] = {
@@ -111,7 +120,7 @@ job = Job(JOB_ID)
 carves = wire_record_carves(
     job, [record_dataset(stem) for stems in GROUPS.values() for stem in stems]
 )
-wire_record_forest(
+refs = wire_record_forest(
     job,
     carves,
     name="r4",
@@ -120,4 +129,12 @@ wire_record_forest(
     tau_scope=TAU_SCOPE,
     tau_rule=TAU_RULE,
     conf_level=CONF_LEVEL,
+)
+wire_forest_figures(
+    job,
+    refs["forest"],
+    name="r4",
+    evidence=EVIDENCE,
+    threshold_label=FOREST_THRESHOLD,
+    side=FOREST_SIDE,
 )

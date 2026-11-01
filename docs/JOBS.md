@@ -59,8 +59,8 @@ breaking any composite, and recategorising costs one string edit.
 |---|---|---|---|---|
 | `compare_r1_qubits_one_night` | `jobs/composite/compare_r1_qubits_one_night.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE='one run, one voltage setting'`<br>`TAU_RULE='min_largest_age'` |
 | `compare_r2_nights_one_qubit` | `jobs/composite/compare_r2_nights_one_qubit.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE='temperature period stated; gate voltages can change between nights and are not listed per night'`<br>`TAU_RULE='min_largest_age'` |
-| `compare_r3_records_one_condition` | `jobs/composite/compare_r3_records_one_condition.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE_2X2='temperature and voltage configuration stated (Supp. Fig. S13)'`<br>`EVIDENCE_6D2S='temperature period stated; gate voltages can change between nights and are not listed per night'`<br>`TAU_RULE='min_largest_age'`<br>`TAU_SCOPE='per_group'` |
-| `compare_r4_two_devices` | `jobs/composite/compare_r4_two_devices.py` | — | — | `CONF_LEVEL=0.95`<br>`TAU_RULE='min_largest_age'`<br>`TAU_SCOPE='across_groups'` |
+| `compare_r3_records_one_condition` | `jobs/composite/compare_r3_records_one_condition.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE_2X2='temperature and voltage configuration stated (Supp. Fig. S13)'`<br>`EVIDENCE_6D2S='temperature period stated; gate voltages can change between nights and are not listed per night'`<br>`FOREST_SIDE='in_spec'`<br>`FOREST_THRESHOLD='3 µs'`<br>`TAU_RULE='min_largest_age'`<br>`TAU_SCOPE='per_group'` |
+| `compare_r4_two_devices` | `jobs/composite/compare_r4_two_devices.py` | — | — | `CONF_LEVEL=0.95`<br>`FOREST_SIDE='in_spec'`<br>`FOREST_THRESHOLD='3 µs'`<br>`TAU_RULE='min_largest_age'`<br>`TAU_SCOPE='across_groups'` |
 | `km_poster_6d2s` | `jobs/active/km_poster_6d2s.py` | — | — | `PREFIX='km_poster_6d2s'`<br>`THRESHOLD_LABEL='3.0 µs'` |
 
 ## t2star

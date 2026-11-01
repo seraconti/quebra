@@ -18,11 +18,19 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from quebra.analyzers import record_comparison
+from quebra.analyzers.event_table import SIDES
 from quebra.analyzers.kaplan_meier import CONF_LEVEL
 from quebra.core.dataset import Dataset
 from quebra.core.job import Job
-from quebra.recipes import wire_t2star_carve
+from quebra.plots.record_comparison_plot import (
+    ForestPlot,
+    PairLadderPlot,
+    PooledLadderPlot,
+)
+from quebra.recipes import T2STAR_THRESHOLDS, wire_t2star_carve
 from quebra.schemas.track912 import track912Schema
+
+FIGURE_TARGETS = ("static", "academic")
 
 
 def record_dataset(stem: str) -> Dataset:
@@ -155,3 +163,86 @@ def wire_record_forest(
     job.materialize(forest, name=f"{name}_forest")
     job.materialize(table, name=f"{name}_table")
     return {"forest": forest, "table": table}
+
+
+def wire_pair_figure(
+    job: Job,
+    carves: Mapping[str, object],
+    pair: object,
+    *,
+    name: str,
+    evidence: str,
+    targets: Sequence[str] = FIGURE_TARGETS,
+) -> object:
+    """The pair figure: every threshold and side of `pair`, beside both records' curves.
+
+    `carves` and `pair` are what `wire_record_carves` and `wire_record_pair` gave for this
+    pair, a first. Returns the figure-data node.
+    """
+    if len(carves) != 2:
+        raise ValueError(f"a pair is two records; got {list(carves)}")
+    record_comparison.require_evidence({name: evidence}, [name])
+    carve_a, carve_b = carves.values()
+    data = job.step(
+        record_comparison.build_pair_ladder_data,
+        pair,  # type: ignore[arg-type]
+        carve_a,  # type: ignore[arg-type]
+        carve_b,  # type: ignore[arg-type]
+        name=f"{name}_pair_data",
+        comparison=name,
+        evidence=evidence,
+    )
+    job.figure(PairLadderPlot, data, targets=list(targets), title=f"{name}_pair_figure")
+    return data
+
+
+def wire_forest_figures(
+    job: Job,
+    forest: object,
+    *,
+    name: str,
+    evidence: Mapping[str, str],
+    threshold_label: str,
+    side: str,
+    thresholds: list[tuple[str, float, bool]] | None = None,
+    targets: Sequence[str] = FIGURE_TARGETS,
+) -> dict[str, object]:
+    """The forest at one threshold and side, and the pooled ladder, of a `forest` node.
+
+    `threshold_label` must name a rung of `thresholds`, the carves' ladder
+    (`recipes.T2STAR_THRESHOLDS` when None), and `side` one of `event_table.SIDES`;
+    either raises at graph build otherwise. Both are kwargs of the forest's figure-data
+    step alone, so drawing another rung leaves the comparison step and its artifact unchanged. Returns the
+    `forest_data` and `ladder_data` nodes.
+    """
+    ladder = [label for label, _, _ in (thresholds or T2STAR_THRESHOLDS)]
+    if threshold_label not in ladder:
+        raise ValueError(f"{threshold_label!r} is not a rung of the ladder {ladder}")
+    if side not in SIDES:
+        raise ValueError(f"side must be one of {SIDES}; got {side!r}")
+    forest_data = job.step(
+        record_comparison.build_forest_data,
+        forest,  # type: ignore[arg-type]
+        name=f"{name}_forest_data",
+        comparison=name,
+        evidence=dict(evidence),
+        threshold_label=threshold_label,
+        side=side,
+    )
+    ladder_data = job.step(
+        record_comparison.build_pooled_ladder_data,
+        forest,  # type: ignore[arg-type]
+        name=f"{name}_ladder_data",
+        comparison=name,
+        evidence=dict(evidence),
+    )
+    job.figure(
+        ForestPlot, forest_data, targets=list(targets), title=f"{name}_forest_figure"
+    )
+    job.figure(
+        PooledLadderPlot,
+        ladder_data,
+        targets=list(targets),
+        title=f"{name}_ladder_figure",
+    )
+    return {"forest_data": forest_data, "ladder_data": ladder_data}

@@ -12,7 +12,9 @@ ladders or under different gap rules (a label alone does not say which threshold
 and run the comparison at every threshold and side. `pair_table` and
 `random_effects_table` flatten their results into one long table, one number per row, with
 the job's evidence line for each pair or group: what the records' metadata shows was held
-fixed between them.
+fixed between them. The figure-data builders at the end hand those results to
+`plots/record_comparison_plot.py`; the pair figure's builder adds each record's Kaplan-Meier curve,
+taken on the same event tables.
 
 The restricted means are compared up to one restriction time, the comparison tau, fixed by
 a rule passed as a step argument (`tau_rule`), so the rule reaches the run identity and the
@@ -75,9 +77,15 @@ from quebra.analyzers.event_table import (
     EventTables,
     event_tables_from_carve,
 )
-from quebra.analyzers.kaplan_meier import CONF_LEVEL, z_two_sided
+from quebra.analyzers.kaplan_meier import (
+    CONF_LEVEL,
+    KaplanMeierCurve,
+    curve_from_event_table,
+    z_two_sided,
+)
 from quebra.analyzers.survival import ByThresholdSide, CurveSummaries, curve_summaries
 from quebra.analyzers.windows import WindowsResult
+from quebra.core._artifact_guard import StaleArtifactGuard
 
 TAU_RULE_MIN_LARGEST_AGE = "min_largest_age"
 TAU_RULES = (TAU_RULE_MIN_LARGEST_AGE,)
@@ -313,7 +321,7 @@ def compare_pair(
         n_deaths_b=table_b.n_deaths,
     )
     if tau.excluded:
-        reason = "; ".join(f"{r}: {why}" for r, why in tau.excluded)
+        reason: str | None = "; ".join(f"{r}: {why}" for r, why in tau.excluded)
         return PairComparison(
             **common,  # type: ignore[arg-type]
             summary_a=None,
@@ -988,3 +996,169 @@ def random_effects_table(
             for record, quantity, value, note in cells
         ]
     return _frame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Figure data: what `plots/record_comparison_plot.py` draws, one artifact per figure
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PairPanel:
+    """One threshold and side of a pair figure: both records' curves and the pair itself.
+
+    The curves are `kaplan_meier.curve_from_event_table` on the event tables the comparison
+    read, so a drawn curve and the numbers printed beside it rest on the same windows.
+    """
+
+    curve_a: KaplanMeierCurve
+    curve_b: KaplanMeierCurve
+    pair: PairComparison
+
+
+@dataclass
+class PairLadderData(StaleArtifactGuard):
+    """Everything a pair figure draws: one `PairPanel` per threshold and side of the ladder."""
+
+    comparison: str
+    record_a: str
+    record_b: str
+    evidence: str
+    ladder: tuple[str, ...]
+    panels: dict[tuple[str, str], PairPanel]
+
+
+def build_pair_ladder_data(
+    pairs: ByThresholdSide[PairComparison],
+    carve_a: WindowsResult,
+    carve_b: WindowsResult,
+    *,
+    comparison: str,
+    evidence: str,
+) -> PairLadderData:
+    """The pair figure's data: each comparison of `pairs` beside both records' curves.
+
+    The carves must be the two records `pairs` compared, a first, on the ladder `pairs`
+    holds; anything else raises.
+    """
+    require_evidence({comparison: evidence}, [comparison])
+    ladder, (a, b) = _tables_on_one_ladder((carve_a, carve_b))
+    if ladder != pairs.ladder:
+        raise ValueError(f"carves on the ladder {ladder}, pairs on {pairs.ladder}")
+    panels: dict[tuple[str, str], PairPanel] = {}
+    for (label, side), pair in pairs.items.items():
+        table_a, table_b = a.table(label, side), b.table(label, side)
+        carved = (table_a.dataset_id, table_b.dataset_id)
+        if carved != (pair.record_a, pair.record_b):
+            raise ValueError(
+                f"carves of {carved} given for the pair {pair.record_a} vs "
+                f"{pair.record_b}"
+            )
+        panels[(label, side)] = PairPanel(
+            curve_a=curve_from_event_table(
+                table_a, label=pair.record_a, conf_level=pair.conf_level
+            ),
+            curve_b=curve_from_event_table(
+                table_b, label=pair.record_b, conf_level=pair.conf_level
+            ),
+            pair=pair,
+        )
+    if not panels:
+        raise ValueError("the pairs hold no threshold and side to draw")
+    first = next(iter(panels.values())).pair
+    return PairLadderData(
+        comparison=comparison,
+        record_a=first.record_a,
+        record_b=first.record_b,
+        evidence=evidence,
+        ladder=ladder,
+        panels=panels,
+    )
+
+
+def _birth_unseen(summary: RandomEffectsSummary) -> tuple[int, int]:
+    """(windows dropped for an unseen birth, windows carved) over the records with windows."""
+    dropped = sum(row.summary.n_unobserved_birth_dropped for row in summary.rows)
+    return dropped, dropped + sum(row.summary.n_windows for row in summary.rows)
+
+
+@dataclass
+class ForestData(StaleArtifactGuard):
+    """Each group's summary at one threshold and side, in declared order, as a forest."""
+
+    comparison: str
+    threshold_label: str
+    side: str
+    tau_scope: str
+    conf_level: float
+    evidence: dict[str, str]
+    summaries: dict[str, RandomEffectsSummary]
+    # Per group: (windows dropped for an unseen birth, windows carved), records with
+    # windows only; a record with none is named in its summary's `tau.excluded`.
+    birth_unseen: dict[str, tuple[int, int]]
+
+
+def build_forest_data(
+    summaries: RandomEffectsSet,
+    *,
+    comparison: str,
+    evidence: Mapping[str, str],
+    threshold_label: str,
+    side: str,
+) -> ForestData:
+    """The forest at one threshold and side of `summaries`; an unknown one raises.
+
+    Which threshold and side are kwargs of this step alone, so drawing another leaves
+    the comparison step and its artifact unchanged.
+    """
+    require_evidence(evidence, list(summaries.groups))
+    return ForestData(
+        comparison=comparison,
+        threshold_label=threshold_label,
+        side=side,
+        tau_scope=summaries.tau_scope,
+        conf_level=summaries.conf_level,
+        evidence={group: evidence[group] for group in summaries.groups},
+        summaries={
+            group: summaries.get(group, threshold_label, side)
+            for group in summaries.groups
+        },
+        birth_unseen={
+            group: _birth_unseen(summaries.get(group, threshold_label, side))
+            for group in summaries.groups
+        },
+    )
+
+
+@dataclass
+class PooledLadderData(StaleArtifactGuard):
+    """Each group's summary at every threshold and side, as the pooled ladder draws it."""
+
+    comparison: str
+    tau_scope: str
+    conf_level: float
+    ladder: tuple[str, ...]
+    groups: tuple[str, ...]
+    evidence: dict[str, str]
+    summaries: dict[tuple[str, str, str], RandomEffectsSummary]
+    # As `ForestData.birth_unseen`, per group, threshold and side.
+    birth_unseen: dict[tuple[str, str, str], tuple[int, int]]
+
+
+def build_pooled_ladder_data(
+    summaries: RandomEffectsSet, *, comparison: str, evidence: Mapping[str, str]
+) -> PooledLadderData:
+    """`summaries` with each group's evidence line, for the pooled ladder figure."""
+    require_evidence(evidence, list(summaries.groups))
+    return PooledLadderData(
+        comparison=comparison,
+        tau_scope=summaries.tau_scope,
+        conf_level=summaries.conf_level,
+        ladder=summaries.ladder,
+        groups=tuple(summaries.groups),
+        evidence={group: evidence[group] for group in summaries.groups},
+        summaries=dict(summaries.items),
+        birth_unseen={
+            key: _birth_unseen(summary) for key, summary in summaries.items.items()
+        },
+    )

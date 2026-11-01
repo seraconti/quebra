@@ -245,7 +245,8 @@ analyzers/   allan.py, fidelity.py, t2star.py, tlf.py, mtbf.py
              record_comparison.py  comparisons across records: the comparison tau, the
              two-sample log-rank test, the restricted-mean difference, and the
              DerSimonian-Laird summary of many records, each also at every threshold
-             and side of one ladder, and the comparison table
+             and side of one ladder, the comparison table, and the data of the
+             figures plots/record_comparison_plot.py draws
              check_attachment.py  standings and check-outcome fields; a leaf, imports
              nothing from quebra
              signal_band.py, distinguish_band.py, reliability_band.py  the three nested
@@ -284,7 +285,8 @@ src/quebra/tellability_recipe.py  wire_*_tellability: one tellability step per m
                                imports it, so jobs without tellability do not carry it.
 src/quebra/comparison_recipe.py   wire_record_carves (every record on one T2* ladder),
                                then wire_record_pair or wire_record_forest, each with
-                               its comparison table. recipes.py never imports it.
+                               its comparison table, and wire_pair_figure or
+                               wire_forest_figures. recipes.py never imports it.
 src/quebra/cli.py              the CLI, installed as the `quebra` console script.
                                Anchors output/ and the --all glob on the WORKING
                                DIRECTORY, never on __file__, so an installed copy

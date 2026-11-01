@@ -702,3 +702,31 @@ def test_the_comparison_jobs_wire_the_records_and_settings_of_the_specification(
             assert str(dataset.path) == f"data/real_private/{device}/{stem}.pickle"
             assert (dataset.device, dataset.qubit) == (device, int(qubit[5:]))
             assert dataset.schema is track912Schema and "run_name" not in dataset.extra
+
+    # The figures: each pair beside its records' carves, each forest at the one rung and
+    # side declared for it, and the pooled ladder; each figure-data step with the evidence
+    # its table carries.
+    for job, name, pair in (
+        (r1, "r1", ["210423_6D2S_qubit1", "210423_6D2S_qubit2"]),
+        (r2, "r2", ["070423_6D2S_qubit1", "100423_6D2S_qubit1"]),
+    ):
+        assert _carved(job, f"{name}_pair_data") == pair
+        source, *_ = _node(job, f"{name}_pair_data").inputs
+        assert job.dag[source.node_id].fn_name == f"{name}_pair"
+        assert (
+            _node(job, f"{name}_pair_data").kwargs["evidence"]
+            == _node(job, f"{name}_table").kwargs["evidence"]
+        )
+        assert f"{name}_pair_figure" in {sink.name for sink in job.sinks}
+    for job, name in ((r3, "r3"), (r4, "r4")):
+        evidence = _node(job, f"{name}_table").kwargs["evidence"]
+        assert _node(job, f"{name}_forest_data").kwargs == {
+            "comparison": name,
+            "evidence": evidence,
+            "threshold_label": "3 µs",
+            "side": SIDE_IN_SPEC,
+        }
+        assert _node(job, f"{name}_ladder_data").kwargs["evidence"] == evidence
+        assert {f"{name}_forest_figure", f"{name}_ladder_figure"} <= {
+            sink.name for sink in job.sinks
+        }
