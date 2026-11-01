@@ -142,7 +142,12 @@ def test_a_pair_resolves_at_every_rung_and_side_and_its_table_holds_every_number
     job = Job("pair_wiring")
     carves = _carves(job, {"r1": 0.0, "r2": 1.0})
     refs = comparison_recipe.wire_record_pair(
-        job, carves, name="R1", evidence=EVIDENCE, tau_rule=RULE
+        job,
+        carves,
+        name="R1",
+        evidence=EVIDENCE,
+        tau_rule=RULE,
+        flags={"r2": "flagged synthetic run"},
     )
     out = _resolve(job, refs)
     pairs, table = out["pair"], out["table"]
@@ -158,8 +163,10 @@ def test_a_pair_resolves_at_every_rung_and_side_and_its_table_holds_every_number
         assert sorted(zip(rows["record"], rows["quantity"])) == sorted(
             [(both, quantity) for quantity in (*PAIR_QUANTITIES, "evidence")]
             + [(r, quantity) for r in ("r1", "r2") for quantity in RECORD_QUANTITIES]
+            + [("r2", "flag")]
         )
         assert _cell(rows, both, "evidence") == (None, EVIDENCE)
+        assert _cell(rows, "r2", "flag") == (None, "flagged synthetic run")
         assert _cell(rows, both, "tau_s")[0] == pair.tau.rmst_tau_s
         for quantity in PAIR_QUANTITIES[1:-1]:
             assert _cell(rows, both, quantity)[0] == getattr(pair, quantity), quantity
@@ -298,6 +305,7 @@ def test_a_forest_table_holds_every_number_and_every_none_names_its_reason() -> 
     for record in ("rise", "rise2"):
         carves[record] = job.step(_rise, name=f"windows_{record}", record=record)
     evidence = {"big": "four synthetic runs", "lone": "one synthetic run"}
+    flags = {"r1": "flag one", "rise": "flag rise", "rise2": "flag rise"}
     refs = comparison_recipe.wire_record_forest(
         job,
         carves,
@@ -306,6 +314,7 @@ def test_a_forest_table_holds_every_number_and_every_none_names_its_reason() -> 
         evidence=evidence,
         tau_scope=record_comparison.TAU_PER_GROUP,
         tau_rule=RULE,
+        flags=flags,
     )
     out = _resolve(job, refs)
     forest, table = out["forest"], out["table"]
@@ -343,6 +352,10 @@ def test_a_forest_table_holds_every_number_and_every_none_names_its_reason() -> 
             expected[(record, "rmst_s")] = (None, reason)
             expected[(record, "n_windows")] = (0, reason)
             expected[(record, "n_deaths")] = (0, reason)
+        drawn = [row.record for row in summary.rows] + [r for r, _ in tau.excluded]
+        for record in drawn:
+            if record in flags:
+                expected[(record, "flag")] = (None, flags[record])
         rows = _rows(table[table["group"] == group], label, side)
         assert sorted(zip(rows["record"], rows["quantity"])) == sorted(expected)
         for (record, quantity), cell in expected.items():
@@ -465,6 +478,28 @@ def test_a_comparison_refuses_halves_doubles_and_carves_that_disagree() -> None:
             replace(forest_three, items={**forest_three.items, key: odd}),
             comparison="R",
             evidence={"g": EVIDENCE},
+        )
+    for bad in ({"z": "x"}, {"a": ""}, {"a": None}):
+        with pytest.raises(ValueError, match="a flag names a record of the comparison"):
+            comparison_recipe.wire_record_forest(
+                forest_job,
+                carves,
+                name="R4",
+                groups={"g": [full, "b"]},
+                evidence={"g": EVIDENCE},
+                flags={(full if k == "a" else k): v for k, v in bad.items()},
+                **scope,
+            )
+    with pytest.raises(ValueError, match="a flag names a record of the comparison"):
+        record_comparison.random_effects_table(
+            forest_three, comparison="R", evidence={"g": EVIDENCE}, flags={"z": "x"}
+        )
+    with pytest.raises(ValueError, match="a flag names a record of the comparison"):
+        record_comparison.pair_table(
+            record_comparison.compare_pair_set(*three[:2], tau_rule=RULE),
+            comparison="P",
+            evidence=EVIDENCE,
+            flags={"c": "x"},
         )
     with pytest.raises(ValueError, match="not a DDMMYY"):
         comparison_recipe.record_dataset("120423_6D2S_q1")
@@ -687,9 +722,41 @@ def test_the_comparison_jobs_wire_the_records_and_settings_of_the_specification(
         "temperature and voltage configuration stated (Supp. Fig. S13)"
     }
     (six,) = lines["6D2S"]
-    assert six.startswith("temperature period stated;")
+    assert six == (
+        "temperature period stated; voltage settings can change between nights and are "
+        "not listed per night"
+    )
     assert _node(r2, "r2_table").kwargs["evidence"] == six
     assert set(_node(r4, "r4_table").kwargs["evidence"]) == {"6D2S", "2x2"}
+
+    # The rows the paper's dataset tables shade, 3 on the 6D2S and 11 on the 2x2, carry
+    # one flag on the condition and device tables; no other record does.
+    flag = (
+        "shaded in the paper's dataset table (high filtered share; the paper excluded "
+        ">5% filtered datasets from its Fourier analysis)"
+    )
+    shaded = {
+        "280623_6D2S_qubit1",
+        "280623_6D2S_qubit2",
+        "110723_6D2S_qubit3",
+        "090623_2x2_qubit2",
+        "090623_2x2_qubit3",
+        "250623_2x2_qubit1",
+        "300623_2x2_qubit1",
+        "030723_2x2_qubit1",
+        "030723_2x2_qubit2",
+        "040723_2x2_qubit2",
+        "050723_2x2_qubit1",
+        "070723_2x2_qubit1",
+        "100723_2x2_qubit1",
+        "120723_2x2_qubit2",
+    }
+    flags = {stem: flag for stem in shaded}
+    assert shaded <= everyone
+    for job, name in ((r3, "r3"), (r4, "r4")):
+        assert _node(job, f"{name}_table").kwargs["flags"] == flags
+    for job, name in ((r1, "r1"), (r2, "r2")):
+        assert _node(job, f"{name}_table").kwargs["flags"] == {}
 
     # Each record loads from its file, named by its stem: no run_name renames it.
     for job in (r1, r2, r3, r4):
@@ -713,10 +780,11 @@ def test_the_comparison_jobs_wire_the_records_and_settings_of_the_specification(
         assert _carved(job, f"{name}_pair_data") == pair
         source, *_ = _node(job, f"{name}_pair_data").inputs
         assert job.dag[source.node_id].fn_name == f"{name}_pair"
-        assert (
-            _node(job, f"{name}_pair_data").kwargs["evidence"]
-            == _node(job, f"{name}_table").kwargs["evidence"]
-        )
+        for kwarg in ("evidence", "flags"):
+            assert (
+                _node(job, f"{name}_pair_data").kwargs[kwarg]
+                == _node(job, f"{name}_table").kwargs[kwarg]
+            )
         assert f"{name}_pair_figure" in {sink.name for sink in job.sinks}
     for job, name in ((r3, "r3"), (r4, "r4")):
         evidence = _node(job, f"{name}_table").kwargs["evidence"]
@@ -725,6 +793,7 @@ def test_the_comparison_jobs_wire_the_records_and_settings_of_the_specification(
             "evidence": evidence,
             "threshold_label": "3 µs",
             "side": SIDE_IN_SPEC,
+            "flags": flags,
         }
         assert _node(job, f"{name}_ladder_data").kwargs["evidence"] == evidence
         assert {f"{name}_forest_figure", f"{name}_ladder_figure"} <= {

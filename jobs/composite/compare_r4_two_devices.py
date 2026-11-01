@@ -21,6 +21,10 @@ short drifts and reports nothing on T2* against either. The unit is the record: 
 between-record variance mixes qubits, nights and temperature periods, the 2x2 voltage
 configurations, and on the 6D2S possibly voltage settings.
 
+Fourteen records are flagged as the paper's dataset tables shade them, 3 on the 6D2S and
+11 on the 2x2 (`SHADED`, `FLAG`). They stay in their groups; the flag is printed beside
+them in the forest and in the table.
+
 Two figures: the forest at one rung and side (`FOREST_THRESHOLD`, `FOREST_SIDE`), and the
 pooled ladder over every rung and both sides. Each prints the tau and the record that set it,
 the records left out and why, the evidence lines and the check outcome; with more than one
@@ -50,6 +54,28 @@ CONF_LEVEL = 0.95
 # The rung and side the forest figure draws; the pooled ladder draws every one.
 FOREST_THRESHOLD = "3 µs"
 FOREST_SIDE = "in_spec"
+# Sera's flag for the rows the paper's dataset tables shade (Supp. Figs. 10 and 11). Each
+# shaded row has more than 5% of its points filtered, and no unshaded row does.
+FLAG = (
+    "shaded in the paper's dataset table (high filtered share; the paper excluded >5% "
+    "filtered datasets from its Fourier analysis)"
+)
+SHADED = (
+    "280623_6D2S_qubit1",
+    "280623_6D2S_qubit2",
+    "110723_6D2S_qubit3",
+    "090623_2x2_qubit2",
+    "090623_2x2_qubit3",
+    "250623_2x2_qubit1",
+    "300623_2x2_qubit1",
+    "030723_2x2_qubit1",
+    "030723_2x2_qubit2",
+    "040723_2x2_qubit2",
+    "050723_2x2_qubit1",
+    "070723_2x2_qubit1",
+    "100723_2x2_qubit1",
+    "120723_2x2_qubit2",
+)
 
 # Every record by its file stem, in the order of the paper's tables.
 GROUPS: dict[str, list[str]] = {
@@ -127,6 +153,7 @@ refs = wire_record_forest(
     groups=GROUPS,
     evidence=EVIDENCE,
     tau_scope=TAU_SCOPE,
+    flags={stem: FLAG for stem in SHADED},
     tau_rule=TAU_RULE,
     conf_level=CONF_LEVEL,
 )
@@ -137,4 +164,5 @@ wire_forest_figures(
     evidence=EVIDENCE,
     threshold_label=FOREST_THRESHOLD,
     side=FOREST_SIDE,
+    flags={stem: FLAG for stem in SHADED},
 )

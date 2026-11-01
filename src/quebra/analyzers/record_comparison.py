@@ -870,8 +870,25 @@ def require_evidence(evidence: Mapping[str, str], groups: Sequence[str]) -> None
         )
 
 
+def require_flags(flags: Mapping[str, str], records: Sequence[str]) -> None:
+    """Raise unless every flag names a record of `records` with a non-blank string."""
+    unknown = sorted(set(flags) - set(records))
+    blank = sorted(
+        r for r, line in flags.items() if not isinstance(line, str) or not line.strip()
+    )
+    if unknown or blank:
+        raise ValueError(
+            f"a flag names a record of the comparison with a line of text: unknown "
+            f"{unknown}, blank {blank}"
+        )
+
+
 def pair_table(
-    pairs: ByThresholdSide[PairComparison], *, comparison: str, evidence: str
+    pairs: ByThresholdSide[PairComparison],
+    *,
+    comparison: str,
+    evidence: str,
+    flags: Mapping[str, str] | None = None,
 ) -> pd.DataFrame:
     """Every number of a pair at every threshold and side, one per row (`TABLE_COLUMNS`).
 
@@ -884,9 +901,14 @@ def pair_table(
 
     `evidence` says what the records' metadata shows was held fixed between them; it is
     the note of an `evidence` row at every threshold and side, and enters no number, which
-    is why it is a kwarg of this step and not of the comparison.
+    is why it is a kwarg of this step and not of the comparison. `flags` maps a record to
+    a line said about it alone, such as how the paper's table marks it; a flagged record
+    gets a `flag` row with that line as its note, at every threshold and side.
     """
     require_evidence({comparison: evidence}, [comparison])
+    flags = dict(flags or {})
+    first = next(iter(pairs.items.values()))
+    require_flags(flags, [first.record_a, first.record_b])
     rows: list[tuple[object, ...]] = []
     for (label, side), pair in pairs.items.items():
         both = f"{pair.record_a} vs {pair.record_b}"
@@ -913,6 +935,8 @@ def pair_table(
                 (record, quantity, count, None)
                 for quantity, count in zip(_COUNT_QUANTITIES, counts, strict=True)
             ]
+            if record in flags:
+                cells.append((record, "flag", None, flags[record]))
         cells += [
             (both, quantity, getattr(pair, quantity), pair.not_computed_reason)
             for quantity in ("rmst_difference_s", "rmst_difference_se_s")
@@ -937,7 +961,11 @@ def pair_table(
 
 
 def random_effects_table(
-    summaries: RandomEffectsSet, *, comparison: str, evidence: Mapping[str, str]
+    summaries: RandomEffectsSet,
+    *,
+    comparison: str,
+    evidence: Mapping[str, str],
+    flags: Mapping[str, str] | None = None,
 ) -> pd.DataFrame:
     """Every number of each group's summary at every threshold and side, one per row.
 
@@ -945,10 +973,12 @@ def random_effects_table(
     the record that set it in the note, and `conf_level`, the level of every interval in
     the group's rows. A record left out of the pool keeps its restricted mean with the
     reason in the note; a record with no windows has a None restricted mean, window and
-    death counts of 0, and its reason. `evidence` holds one line per group, as in
-    `pair_table`.
+    death counts of 0, and its reason. `evidence` holds one line per group and `flags` one
+    line per flagged record, as in `pair_table`.
     """
     require_evidence(evidence, list(summaries.groups))
+    flags = dict(flags or {})
+    require_flags(flags, [r for records in summaries.groups.values() for r in records])
     rows: list[tuple[object, ...]] = []
     for (group, label, side), summary in summaries.items.items():
         cells: list[tuple[str, str, object, str | None]] = [
@@ -978,6 +1008,8 @@ def random_effects_table(
                 (row.record, "lower_s", row.lower_s, row.not_pooled_reason),
                 (row.record, "upper_s", row.upper_s, row.not_pooled_reason),
             ]
+            if row.record in flags:
+                cells.append((row.record, "flag", None, flags[row.record]))
         for record, reason in summary.tau.excluded:
             if reason != NO_WINDOWS:
                 raise ValueError(
@@ -989,6 +1021,8 @@ def random_effects_table(
                 (record, "n_windows", 0, reason),
                 (record, "n_deaths", 0, reason),
             ]
+            if record in flags:
+                cells.append((record, "flag", None, flags[record]))
         cells.append((POOLED, "check_outcome", None, summary.check_summary()))
         cells.append((POOLED, "evidence", None, evidence[group]))
         rows += [
@@ -1026,6 +1060,7 @@ class PairLadderData(StaleArtifactGuard):
     evidence: str
     ladder: tuple[str, ...]
     panels: dict[tuple[str, str], PairPanel]
+    flags: dict[str, str]
 
 
 def build_pair_ladder_data(
@@ -1035,11 +1070,12 @@ def build_pair_ladder_data(
     *,
     comparison: str,
     evidence: str,
+    flags: Mapping[str, str] | None = None,
 ) -> PairLadderData:
     """The pair figure's data: each comparison of `pairs` beside both records' curves.
 
     The carves must be the two records `pairs` compared, a first, on the ladder `pairs`
-    holds; anything else raises.
+    holds; anything else raises. `flags` is as in `pair_table`.
     """
     require_evidence({comparison: evidence}, [comparison])
     ladder, (a, b) = _tables_on_one_ladder((carve_a, carve_b))
@@ -1066,6 +1102,8 @@ def build_pair_ladder_data(
     if not panels:
         raise ValueError("the pairs hold no threshold and side to draw")
     first = next(iter(panels.values())).pair
+    flags = dict(flags or {})
+    require_flags(flags, [first.record_a, first.record_b])
     return PairLadderData(
         comparison=comparison,
         record_a=first.record_a,
@@ -1073,6 +1111,7 @@ def build_pair_ladder_data(
         evidence=evidence,
         ladder=ladder,
         panels=panels,
+        flags=flags,
     )
 
 
@@ -1096,6 +1135,7 @@ class ForestData(StaleArtifactGuard):
     # Per group: (windows dropped for an unseen birth, windows carved), records with
     # windows only; a record with none is named in its summary's `tau.excluded`.
     birth_unseen: dict[str, tuple[int, int]]
+    flags: dict[str, str]
 
 
 def build_forest_data(
@@ -1105,13 +1145,16 @@ def build_forest_data(
     evidence: Mapping[str, str],
     threshold_label: str,
     side: str,
+    flags: Mapping[str, str] | None = None,
 ) -> ForestData:
     """The forest at one threshold and side of `summaries`; an unknown one raises.
 
     Which threshold and side are kwargs of this step alone, so drawing another leaves
-    the comparison step and its artifact unchanged.
+    the comparison step and its artifact unchanged. `flags` is as in `random_effects_table`.
     """
     require_evidence(evidence, list(summaries.groups))
+    flags = dict(flags or {})
+    require_flags(flags, [r for records in summaries.groups.values() for r in records])
     return ForestData(
         comparison=comparison,
         threshold_label=threshold_label,
@@ -1127,6 +1170,7 @@ def build_forest_data(
             group: _birth_unseen(summaries.get(group, threshold_label, side))
             for group in summaries.groups
         },
+        flags=flags,
     )
 
 

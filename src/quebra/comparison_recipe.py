@@ -9,7 +9,8 @@ A record is named by its file stem, which is also its carve's `dataset_id` and t
 halves rule reads (`record_comparison.HALF_SUFFIXES`). Every setting that changes a number
 is a step kwarg, so it reaches the identity and the provenance label: the ladder, the tau
 rule, the tau scope, the confidence level and a forest's groups. The evidence line of a
-pair or of each group changes no number, so it is a kwarg of the table step alone.
+pair or of each group, and the flag a record may carry, change no number, so they are
+kwargs of the table and figure-data steps alone.
 """
 
 from __future__ import annotations
@@ -88,17 +89,20 @@ def wire_record_pair(
     evidence: str,
     tau_rule: str,
     conf_level: float = CONF_LEVEL,
+    flags: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """Two records compared at every threshold and side, and their table; both materialised.
 
-    `carves` holds the two records, a first. `evidence` is the table's evidence line
-    (`record_comparison.pair_table`); a blank one raises at graph build. Returns the `pair`
-    and `table` nodes.
+    `carves` holds the two records, a first. `evidence` is the table's evidence line and
+    `flags` its per-record flags (`record_comparison.pair_table`); a blank line, or a flag
+    on a record not in the pair, raises at graph build. Returns the `pair` and `table`
+    nodes.
     """
     if len(carves) != 2:
         raise ValueError(f"a pair is two records; got {list(carves)}")
     record_comparison.require_no_record_beside_its_halves(list(carves))
     record_comparison.require_evidence({name: evidence}, [name])
+    record_comparison.require_flags(dict(flags or {}), list(carves))
     carve_a, carve_b = carves.values()
     pair = job.step(
         record_comparison.compare_pair_set,
@@ -114,6 +118,7 @@ def wire_record_pair(
         name=f"{name}_table",
         comparison=name,
         evidence=evidence,
+        flags=dict(flags or {}),
     )
     job.materialize(pair, name=f"{name}_pair")
     job.materialize(table, name=f"{name}_table")
@@ -130,16 +135,18 @@ def wire_record_forest(
     tau_scope: str,
     tau_rule: str,
     conf_level: float = CONF_LEVEL,
+    flags: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """A random-effects summary per group at every threshold and side, and their table.
 
     Both are materialised. Only the carves `groups` names are wired. Groups that
     `record_comparison.require_disjoint_groups` refuses, or that name a record with no
-    carve, raise at graph build, as does `evidence` without one line per group. Returns
-    the `forest` and `table` nodes.
+    carve, raise at graph build, as do `evidence` without one line per group and a flag
+    on a record no group names. Returns the `forest` and `table` nodes.
     """
     everyone = record_comparison.require_disjoint_groups(groups)
     record_comparison.require_evidence(evidence, list(groups))
+    record_comparison.require_flags(dict(flags or {}), everyone)
     unknown = sorted(set(everyone) - set(carves))
     if unknown:
         raise KeyError(f"groups name records with no carve: {unknown}")
@@ -159,6 +166,7 @@ def wire_record_forest(
         name=f"{name}_table",
         comparison=name,
         evidence=dict(evidence),
+        flags=dict(flags or {}),
     )
     job.materialize(forest, name=f"{name}_forest")
     job.materialize(table, name=f"{name}_table")
@@ -172,16 +180,19 @@ def wire_pair_figure(
     *,
     name: str,
     evidence: str,
+    flags: Mapping[str, str] | None = None,
     targets: Sequence[str] = FIGURE_TARGETS,
 ) -> object:
     """The pair figure: every threshold and side of `pair`, beside both records' curves.
 
     `carves` and `pair` are what `wire_record_carves` and `wire_record_pair` gave for this
-    pair, a first. Returns the figure-data node.
+    pair, a first, and `evidence` and `flags` what the pair's table was given. Returns the
+    figure-data node.
     """
     if len(carves) != 2:
         raise ValueError(f"a pair is two records; got {list(carves)}")
     record_comparison.require_evidence({name: evidence}, [name])
+    record_comparison.require_flags(dict(flags or {}), list(carves))
     carve_a, carve_b = carves.values()
     data = job.step(
         record_comparison.build_pair_ladder_data,
@@ -191,6 +202,7 @@ def wire_pair_figure(
         name=f"{name}_pair_data",
         comparison=name,
         evidence=evidence,
+        flags=dict(flags or {}),
     )
     job.figure(PairLadderPlot, data, targets=list(targets), title=f"{name}_pair_figure")
     return data
@@ -205,6 +217,7 @@ def wire_forest_figures(
     threshold_label: str,
     side: str,
     thresholds: list[tuple[str, float, bool]] | None = None,
+    flags: Mapping[str, str] | None = None,
     targets: Sequence[str] = FIGURE_TARGETS,
 ) -> dict[str, object]:
     """The forest at one threshold and side, and the pooled ladder, of a `forest` node.
@@ -212,8 +225,9 @@ def wire_forest_figures(
     `threshold_label` must name a rung of `thresholds`, the carves' ladder
     (`recipes.T2STAR_THRESHOLDS` when None), and `side` one of `event_table.SIDES`;
     either raises at graph build otherwise. Both are kwargs of the forest's figure-data
-    step alone, so drawing another rung leaves the comparison step and its artifact unchanged. Returns the
-    `forest_data` and `ladder_data` nodes.
+    step alone, so drawing another rung leaves the comparison step and its artifact unchanged. `evidence` and
+    `flags` are what the forest's table was given; the figure-data step checks them
+    against the groups. Returns the `forest_data` and `ladder_data` nodes.
     """
     ladder = [label for label, _, _ in (thresholds or T2STAR_THRESHOLDS)]
     if threshold_label not in ladder:
@@ -228,6 +242,7 @@ def wire_forest_figures(
         evidence=dict(evidence),
         threshold_label=threshold_label,
         side=side,
+        flags=dict(flags or {}),
     )
     ladder_data = job.step(
         record_comparison.build_pooled_ladder_data,

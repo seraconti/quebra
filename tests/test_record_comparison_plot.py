@@ -528,3 +528,49 @@ def test_the_drawn_rung_is_a_kwarg_of_the_figure_step_alone() -> None:
     assert kwargs["4"]["forest"] == kwargs["6"]["forest"]
     assert kwargs["4"]["figure"]["threshold_label"] == "4"
     assert kwargs["6"]["figure"]["threshold_label"] == "6"
+
+
+def test_a_flagged_record_carries_a_dagger_and_its_flag_is_printed_beside_it(
+    forest_set: record_comparison.RandomEffectsSet,
+) -> None:
+    """Oracle: specification. A flagged record's name carries the dagger wherever it is
+    drawn (forest rows, a small group's table, the pair legend), an unflagged one does
+    not, and each flag's line is printed with the records it marks."""
+    flags = {"r1": "line one", "r4": "line one", "rise": "line rise"}
+    data = record_comparison.build_forest_data(
+        forest_set,
+        comparison="f",
+        evidence=EVIDENCE,
+        threshold_label="4",
+        side=SIDE_IN_SPEC,
+        flags=flags,
+    )
+    fig = _draw(plot.ForestPlot, data)
+    try:
+        ticks = [t.get_text() for ax in fig.axes for t in ax.get_yticklabels()]
+        text = _flat(" ".join(_texts(fig)))
+    finally:
+        plt.close(fig)
+    assert "r1 †" in ticks and "r2" in ticks and "r2 †" not in ticks
+    assert "rise † (no death before τ)" in ticks
+    assert "r4 †: " in text and "r5 †" not in text
+    for line in ("† line one: r1", "† line rise: rise", "† line one: r4"):
+        assert line in text, line
+
+    a, rise = _carve("a", 0.0), _rise("rise")
+    pair = record_comparison.build_pair_ladder_data(
+        record_comparison.compare_pair_set(a, rise, tau_rule=RULE),
+        a,
+        rise,
+        comparison="p",
+        evidence="one synthetic run",
+        flags={"rise": "line rise"},
+    )
+    fig = _draw(plot.PairLadderPlot, pair)
+    try:
+        legend = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
+        caption = _flat(" ".join(t.get_text() for t in fig.texts))
+    finally:
+        plt.close(fig)
+    assert legend == ["a: a", "b: rise †", "comparison tau"]
+    assert "† line rise: rise." in caption

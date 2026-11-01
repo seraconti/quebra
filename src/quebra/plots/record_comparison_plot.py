@@ -16,7 +16,10 @@ What each figure states in the image, per docs/FIGURE_STANDARD.md:
   sides, and that groups drawn together are described, not tested.
 
 A group with fewer than `record_comparison.MIN_POOLED` records with a variance has no
-pooled numbers, so it is drawn as a table of its records, never as a forest.
+pooled numbers, so it is drawn as a table of its records, never as a forest. A flagged
+record (`flags` on the artifact) carries a dagger beside its name, and the line of text
+the flag holds is printed with the names it marks: in the group's notes for a forest, in
+the caption for a pair.
 """
 
 from __future__ import annotations
@@ -52,6 +55,7 @@ _PAIR_INKS = (theme.ordered_color(0, 3), theme.ordered_color(1, 3))
 # One ink for forests and ladders: each group already has a panel of its own.
 _GROUP_INK = theme.ordered_color(0, 3)
 _WRAP = 58
+DAGGER = "†"
 
 UNADJUSTED = "Each panel's log-rank p is unadjusted for the other thresholds and sides."
 DESCRIBED_NOT_TESTED = "The groups are described, not tested: no test compares them."
@@ -86,6 +90,19 @@ def _tau_line(tau: ComparisonTau, scope: str | None = None) -> str:
     if tau.rmst_tau_s is None:
         return f"τ: no record with windows{where}"
     return f"τ = {_minutes(tau.rmst_tau_s)} min, set by {tau.tau_set_by}{where}"
+
+
+def _marked(record: str, flags: dict[str, str]) -> str:
+    return f"{record} {DAGGER}" if record in flags else record
+
+
+def _flag_lines(records: list[str], flags: dict[str, str]) -> list[str]:
+    """One line per flag text among `records`: the text, then the records it marks."""
+    by_text: dict[str, list[str]] = {}
+    for record in records:
+        if record in flags:
+            by_text.setdefault(flags[record], []).append(record)
+    return [f"{DAGGER} {text}: {', '.join(names)}" for text, names in by_text.items()]
 
 
 def _scope_words(scope: str) -> str:
@@ -195,7 +212,7 @@ class PairLadderPlot(BasePlot):
                         [],
                         color=_PAIR_INKS[index],
                         linestyle=_LINESTYLES[index],
-                        label=f"{name}: {record}",
+                        label=f"{name}: {_marked(record, data.flags)}",
                     )
                     for index, (name, record) in enumerate(
                         (("a", data.record_a), ("b", data.record_b))
@@ -217,7 +234,13 @@ class PairLadderPlot(BasePlot):
                     f"{UNADJUSTED} Dashed line: the comparison tau ({rule}); a - b is "
                     f"the difference of the restricted means up to it. Bands: "
                     f"{panels[0].pair.conf_level:.0%} pointwise. Evidence: "
-                    f"{data.evidence}. Check outcome: {checks}.",
+                    f"{data.evidence}. Check outcome: {checks}. "
+                    + " ".join(
+                        f"{line}."
+                        for line in _flag_lines(
+                            [data.record_a, data.record_b], data.flags
+                        )
+                    ),
                     40 * n,
                 ),
                 **theme.scaled_text(theme.CAPTION, style),
@@ -272,10 +295,13 @@ def _group_lines(
         ),
         f"check outcome: {summary.check_summary()}",
     ]
-    return lines
+    drawn = [row.record for row in summary.rows] + no_windows
+    return lines + _flag_lines(drawn, data.flags)
 
 
-def _forest(ax: plt.Axes, summary: RandomEffectsSummary, ink: str) -> None:
+def _forest(
+    ax: plt.Axes, summary: RandomEffectsSummary, ink: str, flags: dict[str, str]
+) -> None:
     rows = summary.rows
     y = np.arange(len(rows), 0, -1, dtype=float)
     for yi, row in zip(y, rows, strict=True):
@@ -313,7 +339,9 @@ def _forest(ax: plt.Axes, summary: RandomEffectsSummary, ink: str) -> None:
         [*y, 0.0],
         [
             *(
-                row.record if row.pooled else f"{row.record} (no death before τ)"
+                _marked(row.record, flags)
+                if row.pooled
+                else f"{_marked(row.record, flags)} (no death before τ)"
                 for row in rows
             ),
             f"pooled, k = {summary.k_pooled}",
@@ -323,18 +351,23 @@ def _forest(ax: plt.Axes, summary: RandomEffectsSummary, ink: str) -> None:
     ax.set_xlabel("Restricted mean window age (min)")
 
 
-def _record_table(ax: plt.Axes, summary: RandomEffectsSummary, style: str) -> None:
+def _record_table(
+    ax: plt.Axes, summary: RandomEffectsSummary, flags: dict[str, str], style: str
+) -> None:
     """The records of a group too small to pool, as text, since no forest is drawn."""
     ax.axis("off")
     lines = []
     for row in summary.rows:
         mean = _minutes(row.summary.rmst_s)
+        name = _marked(row.record, flags)
         lines.append(
-            f"{row.record}: {mean} min, SE {_minutes(row.summary.rmst_se_s)}"
+            f"{name}: {mean} min, SE {_minutes(row.summary.rmst_se_s)}"
             if row.pooled
-            else f"{row.record}: {mean} min = τ, no death before τ"
+            else f"{name}: {mean} min = τ, no death before τ"
         )
-    lines += [f"{record}: no windows" for record, _ in summary.tau.excluded]
+    lines += [
+        f"{_marked(record, flags)}: no windows" for record, _ in summary.tau.excluded
+    ]
     ax.text(
         0.0,
         1.0,
@@ -373,10 +406,10 @@ class ForestPlot(BasePlot):
                     sharex=shared if data.tau_scope == TAU_ACROSS_GROUPS else None,
                 )
                 if pooled:
-                    _forest(ax, summary, _GROUP_INK)
+                    _forest(ax, summary, _GROUP_INK, data.flags)
                     shared = shared or ax
                 else:
-                    _record_table(ax, summary, style)
+                    _record_table(ax, summary, data.flags, style)
                 ax.set_title(group, loc="left")
                 note = fig.add_subplot(grid[index, 1])
                 note.axis("off")

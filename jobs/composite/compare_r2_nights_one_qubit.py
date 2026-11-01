@@ -38,7 +38,7 @@ JOB_SWEEP = False
 TAU_RULE = "min_largest_age"
 CONF_LEVEL = 0.95
 EVIDENCE = (
-    "temperature period stated; gate voltages can change between nights and are not "
+    "temperature period stated; voltage settings can change between nights and are not "
     "listed per night"
 )
 
