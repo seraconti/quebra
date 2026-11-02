@@ -45,6 +45,7 @@ from quebra.ledger_recipe import (
     included_carves,
     record_label,
 )
+from quebra.paper_tables import FLAG_TEXT
 from quebra.recipes import (
     _CARVE_STAGES,
     T2STAR_GAP_MULT,
@@ -501,6 +502,7 @@ def test_the_declared_table_and_shading_are_the_papers():
     assert (len(_SUPP_FIG_10), len(_SUPP_FIG_11)) == (24, 22)
     assert sorted(composite.SHADED) == sorted(shaded) and len(shaded) == 3 + 11
     survey = composite.job.dag["compliance_survey"]
+    assert survey.kwargs["flag_text"] == FLAG_TEXT, "the one flag text"
     extra = set(survey.kwargs["records"]) - {r for _, r in table}
     assert extra == {"q4_070723", "q4_100723", "q5_070723", "q6_070723"}
 

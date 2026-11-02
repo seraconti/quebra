@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 
 from quebra.core.dataset import Dataset
-from quebra.core.types import Norm
+from quebra.core.types import Norm, RecordContentError
 from quebra.transforms.lookup_prior import check_unix_s
 
 
@@ -54,7 +54,7 @@ class RamseySeriesSchema:
             frequency.to_numpy(dtype=float)
         )
         if not np.any(valid):
-            raise ValueError(
+            raise RecordContentError(
                 f"Dataset {dataset.path} has no valid numeric timestamp/frequency rows"
             )
 

@@ -174,6 +174,28 @@ def test_renderer_produces_figure_without_data_arithmetic() -> None:
     matplotlib.pyplot.close(fig)
 
 
+@pytest.mark.parametrize("build", ["t2star", "fidelity"])
+@pytest.mark.parametrize("style", ["default", "paper"])
+def test_the_panel_is_laid_out_by_its_constrained_layout(build, style) -> None:
+    """Oracle: matplotlib's layout engine, which warns when it gives up on a figure and
+    leaves every axes where the grid alone put it. Drawn on both targets' styles."""
+    import warnings
+
+    from quebra.plots import theme
+
+    d = _t2star_like() if build == "t2star" else _fidelity_like()
+    with theme.style_context(style):
+        fig = WithinCalibrationPanel(name="unit").build_matplotlib(d, style=style)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            fig.canvas.draw()
+    matplotlib.pyplot.close(fig)
+    assert type(fig.get_layout_engine()).__name__ == "ConstrainedLayoutEngine"
+    assert not [w for w in caught if "layout" in str(w.message)], [
+        str(w.message) for w in caught
+    ]
+
+
 def test_the_caption_names_the_dataset_and_refuses_an_artifact_without_one() -> None:
     """Oracle: AGENTS.md section 3, errors are raised, not swallowed; the name set by hand.
 

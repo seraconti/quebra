@@ -22,8 +22,8 @@ between-record variance mixes qubits, nights and temperature periods, the 2x2 vo
 configurations, and on the 6D2S possibly voltage settings.
 
 Fourteen records are flagged as the paper's dataset tables shade them, 3 on the 6D2S and
-11 on the 2x2 (`SHADED`, `FLAG`). They stay in their groups; the flag is printed beside
-them in the forest and in the table.
+11 on the 2x2 (`SHADED`, `paper_tables.FLAG_TEXT`). They stay in their groups; the flag
+is printed beside them in the forest and in the table.
 
 Two figures: the forest at one rung and side (`FOREST_THRESHOLD`, `FOREST_SIDE`), and the
 pooled ladder over every rung and both sides. Each prints the tau and the record that set it,
@@ -42,6 +42,7 @@ from quebra.comparison_recipe import (
     wire_record_forest,
 )
 from quebra.core.job import Job
+from quebra.paper_tables import FLAG_TEXT
 
 JOB_ID = "compare_r4_two_devices"
 JOB_FAMILY = "survival"
@@ -54,12 +55,7 @@ CONF_LEVEL = 0.95
 # The rung and side the forest figure draws; the pooled ladder draws every one.
 FOREST_THRESHOLD = "3 µs"
 FOREST_SIDE = "in_spec"
-# Sera's flag for the rows the paper's dataset tables shade (Supp. Figs. 10 and 11). Each
-# shaded row has more than 5% of its points filtered, and no unshaded row does.
-FLAG = (
-    "shaded in the paper's dataset table (high filtered share; the paper excluded >5% "
-    "filtered datasets from its Fourier analysis)"
-)
+# The rows the paper's dataset tables shade (Supp. Figs. 10 and 11) carry `FLAG_TEXT`.
 SHADED = (
     "280623_6D2S_qubit1",
     "280623_6D2S_qubit2",
@@ -153,7 +149,7 @@ refs = wire_record_forest(
     groups=GROUPS,
     evidence=EVIDENCE,
     tau_scope=TAU_SCOPE,
-    flags={stem: FLAG for stem in SHADED},
+    flags={stem: FLAG_TEXT for stem in SHADED},
     tau_rule=TAU_RULE,
     conf_level=CONF_LEVEL,
 )
@@ -164,5 +160,5 @@ wire_forest_figures(
     evidence=EVIDENCE,
     threshold_label=FOREST_THRESHOLD,
     side=FOREST_SIDE,
-    flags={stem: FLAG for stem in SHADED},
+    flags={stem: FLAG_TEXT for stem in SHADED},
 )

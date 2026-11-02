@@ -8,9 +8,9 @@ persists one by one as `{record}_windows`), so it carves nothing: every number i
 the carve that record's ledger scored.
 
 The figure draws the records of the paper's dataset tables, one row per record, 6D2S and
-2x2 side by side; a record the paper shades carries `FLAG_TEXT`. A ledger record outside the
-tables is computed, kept on the artifact and listed under its panel, not drawn. A record
-that failed to load or carve reads `not computed` with its reason.
+2x2 side by side; a record the paper shades carries `paper_tables.FLAG_TEXT`. A ledger
+record outside the tables is computed, kept on the artifact and listed under its panel, not
+drawn. A record that failed to load or carve reads `not computed` with its reason.
 
 In `jobs/composite/` and `JOB_SWEEP = False` because a fresh run re-runs every included
 ledger job, once each: one ref per job.
@@ -23,6 +23,7 @@ from __future__ import annotations
 from quebra.analyzers.compliance_survey import build_compliance_survey
 from quebra.core.job import Job
 from quebra.ledger_recipe import included_carves
+from quebra.paper_tables import FLAG_TEXT
 from quebra.plots.compliance_survey_plot import ComplianceSurveyPlot
 
 JOB_ID = "compliance_survey"
@@ -34,13 +35,6 @@ PREFIX = "compliance_survey"
 TABLE_SOURCE = (
     "Capannelli et al., Supplementary notes, Supplementary Fig. 10 (6D2S, p. 10) and "
     "Supplementary Fig. 11 (2x2, p. 11)"
-)
-# The text a shaded row carries; keep it identical wherever a figure flags these records.
-# Its rule: Supplementary notes, p. 9, the paragraph before Supplementary Fig. 10 (more than
-# 5% of a dataset's points filtered; unsuitable for the Fourier analysis of main-text Fig. 8).
-FLAG_TEXT = (
-    "shaded in the paper's dataset table (high filtered share; the paper excluded >5% "
-    "filtered datasets from its Fourier analysis)"
 )
 
 # The paper's dataset tables as (device, run name), table order. Supplementary Fig. 10 for

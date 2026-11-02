@@ -34,6 +34,7 @@ from quebra.comparison_recipe import (
     wire_record_pair,
 )
 from quebra.core.job import Job
+from quebra.paper_tables import FLAG_TEXT
 
 JOB_ID = "compare_j_across_jump"
 JOB_FAMILY = "survival"
@@ -43,10 +44,7 @@ JOB_SWEEP = False
 TAU_RULE = "min_largest_age"
 CONF_LEVEL = 0.95
 EVIDENCE = "two halves of one run, split at a frequency jump: one voltage setting"
-HALF_FLAG = (
-    "half of a record shaded in the paper's dataset table (high filtered share; the "
-    "paper excluded >5% filtered datasets from its Fourier analysis)"
-)
+HALF_FLAG = f"half of a record {FLAG_TEXT}"
 
 # Each record split at its jump; its halves are compared before - after.
 SPLIT = ("120423_6D2S_qubit1", "270623_6D2S_qubit2", "280623_6D2S_qubit2")

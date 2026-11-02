@@ -120,9 +120,10 @@ class WithinCalibrationPanel(BasePlot):
                 1, 2, width_ratios=[1.0, 1.35], wspace=0.18
             )
             ax_shape = fig.add_subplot(gs_detail[0, 0])
-            gs_stat = gs_detail[0, 1].subgridspec(
-                2, 1, height_ratios=[1.0, 1.0], hspace=0.55
-            )
+            # No hspace: constrained layout spaces the pair around the rotated labels
+            # itself, and an explicit fraction it cannot fit makes it give up on the
+            # whole figure ("axes sizes collapsed to zero").
+            gs_stat = gs_detail[0, 1].subgridspec(2, 1, height_ratios=[1.0, 1.0])
             ax_xi = fig.add_subplot(gs_stat[0, 0])
             ax_rho = fig.add_subplot(gs_stat[1, 0])
 

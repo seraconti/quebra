@@ -753,3 +753,38 @@ def test_the_p_value_ladder_draws_cvm_from_its_permutation_row():
         assert list(lines[0].get_ydata()) == list(cvm["p_value"].astype(float))
     finally:
         plt.close(fig)
+
+
+def test_the_ledger_figure_is_laid_out_by_tight_layout():
+    """Oracle: matplotlib's tight_layout, which warns when it skips an axes, as it skips
+    every axes of a grid whose spacing is set locally. The figure holds both tables and the
+    ladder with its twin event-count axis."""
+    import warnings
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    import quebra.analyzers.check_ledger as ledger_module
+    from quebra.panels.check_ledger import CheckLedgerPanel
+
+    ledger = ledger_module.run(
+        ledger_module.CheckLedgerInputs(
+            windows=_varied_carve(),
+            bench_size_table=_bench_table(),
+            thresholds=[("3 µs", 3.0, True)],
+            n_permutations=19,
+            seed=7,
+        )
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        fig = CheckLedgerPanel(name="layout_probe").build_matplotlib(ledger)
+        fig.canvas.draw()
+    plt.close(fig)
+    labels = [ax.get_ylabel() for ax in fig.axes]
+    assert labels.count("p-value") == labels.count("Events (windows)") == 1, labels
+    assert not [w for w in caught if "layout" in str(w.message)], [
+        str(w.message) for w in caught
+    ]

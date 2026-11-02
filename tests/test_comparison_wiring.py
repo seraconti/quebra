@@ -28,6 +28,7 @@ from quebra.core.dataset import Dataset
 from quebra.core.job import Job
 from quebra.core.reference import LocalRef
 from quebra.core.runner import _toposort
+from quebra.paper_tables import FLAG_TEXT
 from quebra.schemas.track912 import track912Schema
 
 pytestmark = pytest.mark.integration
@@ -731,10 +732,7 @@ def test_the_comparison_jobs_wire_the_records_and_settings_of_the_specification(
 
     # The rows the paper's dataset tables shade, 3 on the 6D2S and 11 on the 2x2, carry
     # one flag on the condition and device tables; no other record does.
-    flag = (
-        "shaded in the paper's dataset table (high filtered share; the paper excluded "
-        ">5% filtered datasets from its Fourier analysis)"
-    )
+    flag = FLAG_TEXT
     shaded = {
         "280623_6D2S_qubit1",
         "280623_6D2S_qubit2",

@@ -59,11 +59,10 @@ class CheckLedgerPanel(BasePlot):
                 check for check in CHECK_SHORT if check in set(result.rows["check_id"])
             ]
             fig = plt.figure(figsize=(16, 4.2 + 3.4 * len(clocks)))
+            # No hspace: tight_layout skips every axes of a grid whose spacing is set
+            # locally ("not compatible with tight_layout") and spaces the rows itself.
             grid = fig.add_gridspec(
-                len(clocks) + 1,
-                1,
-                height_ratios=[3.4] * len(clocks) + [4.2],
-                hspace=0.45,
+                len(clocks) + 1, 1, height_ratios=[3.4] * len(clocks) + [4.2]
             )
 
             for index, clock in enumerate(clocks):

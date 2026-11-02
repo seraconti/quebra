@@ -26,7 +26,8 @@ class RecordFailure(StaleArtifactGuard):
     A job that scores many records carries this in place of one record's result, so that
     record reads `not computed: <stage> failed: <reason>` downstream and is never dropped,
     while every other record is scored. `stage` names the step that failed. Only a failure
-    of the record's own content is recorded; a missing file still raises.
+    of the record's own content is recorded; a missing or unreadable file and a declaration
+    the load cannot use still raise.
     """
 
     dataset_id: str
@@ -35,6 +36,12 @@ class RecordFailure(StaleArtifactGuard):
 
     def note(self) -> str:
         return f"{self.stage} failed: {self.reason}"
+
+
+class RecordContentError(ValueError):
+    """A record's own content cannot become a `Norm`: the normaliser found no read it can
+    use. A load that records failures records this one, as it does a schema's validation
+    error. A `ValueError`, so a caller that catches that still catches it."""
 
 
 @dataclass

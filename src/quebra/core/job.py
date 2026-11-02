@@ -25,7 +25,7 @@ from quebra.core.dataset import Dataset
 from quebra.core.identity import Identity, content_hash
 from quebra.core.paths import repo_root, resolve_dataset_path, resolve_repo_path
 from quebra.core.reference import ArtifactRef, LocalRef, Reference
-from quebra.core.types import Norm, RecordFailure
+from quebra.core.types import Norm, RecordContentError, RecordFailure
 from quebra.provenance import hash_string
 from quebra.schemas.ramsey_series import RamseySeriesSchema
 
@@ -149,12 +149,12 @@ _LOAD_NODE_FN_NAMES = frozenset(
 # The two that read a record into a Norm, as opposed to a raw side table.
 _NORM_LOAD_FN_NAMES = frozenset({"_load_dataset", "_load_dataset_or_failure"})
 
-# What a record's own content raises at load: the normaliser's ValueError and KeyError and
-# a schema's validation errors. A missing or unreadable file is not among them: that is
-# the job's declaration failing, and it raises.
+# What a record's own content raises at load: a schema's validation errors and the
+# normaliser's `RecordContentError`. Nothing else is recorded. A missing or unreadable file
+# (one the parser refuses) and a declaration the load cannot use (no run start, a run start
+# out of range, an unregistered extension, a qubit that is not an integer) raise.
 _RECORD_LOAD_ERRORS: tuple[type[Exception], ...] = (
-    ValueError,
-    KeyError,
+    RecordContentError,
     pandera.errors.SchemaError,
     pandera.errors.SchemaErrors,
 )
@@ -222,7 +222,8 @@ def _load_dataset_or_failure(dataset: Dataset) -> Norm | RecordFailure:
 
     For a job that scores many records: one record whose file the schema or the normaliser
     rejects reads `not computed` with the reason, and the others are still scored. A file
-    that is missing or unreadable raises, as in `_load_dataset`.
+    that is missing or unreadable, or a declaration the load cannot use, raises, as in
+    `_load_dataset` (`_RECORD_LOAD_ERRORS`).
     """
     try:
         return _load_dataset(dataset)

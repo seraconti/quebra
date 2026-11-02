@@ -3,6 +3,8 @@
 Oracles:
 - the loader's and the carve stages' own errors: a recorded failure names the error the plain
   path raises, at the stage that raised it;
+- the declaration: a missing or unreadable file, or a declaration the load cannot use, is the
+  job's error and raises, where only the record's content is recorded;
 - the failure's contract: it passes through every later stage unchanged, and its ledger reads
   `not computed` with the failure's note at every threshold and both clocks, so the record is
   never dropped;
@@ -14,6 +16,7 @@ Oracles:
 from __future__ import annotations
 
 import pickle
+from dataclasses import replace
 from itertools import product
 from pathlib import Path
 
@@ -27,7 +30,7 @@ from quebra.cli import _module_from_path
 from quebra.core.dataset import Dataset
 from quebra.core.job import _load_dataset, _load_dataset_or_failure
 from quebra.core.runner import run_job
-from quebra.core.types import Norm, RecordFailure
+from quebra.core.types import Norm, RecordContentError, RecordFailure
 from quebra.ledger_recipe import (
     CARVE_SUFFIX,
     CARVES_DATA_SUFFIX,
@@ -114,6 +117,64 @@ def test_a_missing_file_still_raises(tmp_path):
     record's content, and the recording loader raises it."""
     with pytest.raises(FileNotFoundError):
         _load_dataset_or_failure(_dataset(tmp_path / "070423_none.csv", "none"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "case",
+    [
+        "no run start",
+        "run start out of range",
+        "unregistered extension",
+        "qubit not an integer",
+        "unparseable file",
+    ],
+)
+def test_a_declaration_the_load_cannot_use_or_an_unreadable_file_raises(tmp_path, case):
+    """Oracle: the declaration. Each case is the job's error, not the record's content: the
+    recording loader raises the plain loader's own error and records nothing. Each is a
+    ValueError, so a catch of every ValueError would have recorded it."""
+    sound = _track912_csv(tmp_path / "070423_ok.csv")
+    dataset = _dataset(sound, "probe")
+    if case == "no run start":
+        dataset = _dataset(_track912_csv(tmp_path / "undated.csv"), "probe")
+    elif case == "run start out of range":
+        dataset = replace(dataset, extra={"run_name": "probe", "run_start_unix_s": 5.0})
+    elif case == "unregistered extension":
+        text = tmp_path / "070423_ok.txt"
+        text.write_text(sound.read_text())
+        dataset = _dataset(text, "probe")
+    elif case == "qubit not an integer":
+        dataset = replace(dataset, qubit="one")
+    else:
+        ragged = tmp_path / "070423_ragged.csv"
+        ragged.write_text(
+            sound.read_text() + ",".join(["1"] * (len(_COLUMNS) + 2)) + "\n"
+        )
+        dataset = _dataset(ragged, "probe")
+    with pytest.raises(ValueError) as plain:
+        _load_dataset(dataset)
+    assert not isinstance(plain.value, RecordContentError), "premise: not content"
+    with pytest.raises(type(plain.value)):
+        _load_dataset_or_failure(dataset)
+
+
+@pytest.mark.unit
+def test_a_record_with_no_usable_read_is_recorded_as_its_content(tmp_path):
+    """Oracle: the normaliser's own error. A record none of whose frequencies is a number is
+    the record's content: the plain loader raises `RecordContentError`, and the recording
+    loader records it at the load stage."""
+    empty = tmp_path / "070423_empty.csv"
+    empty.write_text("timestamp,frequency\n0.0,nan\n30.0,nan\n")
+    dataset = Dataset(path=str(empty), extra={"run_name": "empty"})
+    with pytest.raises(RecordContentError):
+        _load_dataset(dataset)
+    failure = _load_dataset_or_failure(dataset)
+    assert isinstance(failure, RecordFailure)
+    assert (failure.stage, failure.reason.split(":")[0]) == (
+        "load",
+        "RecordContentError",
+    )
 
 
 @pytest.mark.unit

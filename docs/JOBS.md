@@ -28,7 +28,7 @@ breaking any composite, and recategorising costs one string edit.
 
 | JOB_ID | file | datasets | includes | parameters |
 |---|---|---|---|---|
-| `compliance_survey` | `jobs/composite/compliance_survey.py` | — | `check_ledger_2x2_q1`<br>`check_ledger_2x2_q2`<br>`check_ledger_2x2_q3`<br>`check_ledger_2x2_q4`<br>`check_ledger_6d2s_q1`<br>`check_ledger_6d2s_q2`<br>`check_ledger_6d2s_q3`<br>`check_ledger_6d2s_q4`<br>`check_ledger_6d2s_q5`<br>`check_ledger_6d2s_q6` | `FLAG_TEXT="shaded in the paper's dataset table (high filtered share; the paper excluded >5% filtered datasets from its Fourier analysis)"`<br>`PREFIX='compliance_survey'`<br>`TABLE_SOURCE='Capannelli et al., Supplementary notes, Supplementary Fig. 10 (6D2S, p. 10) and Supplementary Fig. 11 (2x2, p. 11)'` |
+| `compliance_survey` | `jobs/composite/compliance_survey.py` | — | `check_ledger_2x2_q1`<br>`check_ledger_2x2_q2`<br>`check_ledger_2x2_q3`<br>`check_ledger_2x2_q4`<br>`check_ledger_6d2s_q1`<br>`check_ledger_6d2s_q2`<br>`check_ledger_6d2s_q3`<br>`check_ledger_6d2s_q4`<br>`check_ledger_6d2s_q5`<br>`check_ledger_6d2s_q6` | `PREFIX='compliance_survey'`<br>`TABLE_SOURCE='Capannelli et al., Supplementary notes, Supplementary Fig. 10 (6D2S, p. 10) and Supplementary Fig. 11 (2x2, p. 11)'` |
 
 ## independence
 
@@ -57,11 +57,11 @@ breaking any composite, and recategorising costs one string edit.
 
 | JOB_ID | file | datasets | includes | parameters |
 |---|---|---|---|---|
-| `compare_j_across_jump` | `jobs/composite/compare_j_across_jump.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE='two halves of one run, split at a frequency jump: one voltage setting'`<br>`HALF_FLAG="half of a record shaded in the paper's dataset table (high filtered share; the paper excluded >5% filtered datasets from its Fourier analysis)"`<br>`TAU_RULE='min_largest_age'` |
+| `compare_j_across_jump` | `jobs/composite/compare_j_across_jump.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE='two halves of one run, split at a frequency jump: one voltage setting'`<br>`TAU_RULE='min_largest_age'` |
 | `compare_r1_qubits_one_night` | `jobs/composite/compare_r1_qubits_one_night.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE='one run, one voltage setting'`<br>`TAU_RULE='min_largest_age'` |
 | `compare_r2_nights_one_qubit` | `jobs/composite/compare_r2_nights_one_qubit.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE='temperature period stated; voltage settings can change between nights and are not listed per night'`<br>`TAU_RULE='min_largest_age'` |
-| `compare_r3_records_one_condition` | `jobs/composite/compare_r3_records_one_condition.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE_2X2='temperature and voltage configuration stated (Supp. Fig. S13)'`<br>`EVIDENCE_6D2S='temperature period stated; voltage settings can change between nights and are not listed per night'`<br>`FLAG="shaded in the paper's dataset table (high filtered share; the paper excluded >5% filtered datasets from its Fourier analysis)"`<br>`FOREST_SIDE='in_spec'`<br>`FOREST_THRESHOLD='3 µs'`<br>`TAU_RULE='min_largest_age'`<br>`TAU_SCOPE='per_group'` |
-| `compare_r4_two_devices` | `jobs/composite/compare_r4_two_devices.py` | — | — | `CONF_LEVEL=0.95`<br>`FLAG="shaded in the paper's dataset table (high filtered share; the paper excluded >5% filtered datasets from its Fourier analysis)"`<br>`FOREST_SIDE='in_spec'`<br>`FOREST_THRESHOLD='3 µs'`<br>`TAU_RULE='min_largest_age'`<br>`TAU_SCOPE='across_groups'` |
+| `compare_r3_records_one_condition` | `jobs/composite/compare_r3_records_one_condition.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE_2X2='temperature and voltage configuration stated (Supp. Fig. S13)'`<br>`EVIDENCE_6D2S='temperature period stated; voltage settings can change between nights and are not listed per night'`<br>`FOREST_SIDE='in_spec'`<br>`FOREST_THRESHOLD='3 µs'`<br>`TAU_RULE='min_largest_age'`<br>`TAU_SCOPE='per_group'` |
+| `compare_r4_two_devices` | `jobs/composite/compare_r4_two_devices.py` | — | — | `CONF_LEVEL=0.95`<br>`FOREST_SIDE='in_spec'`<br>`FOREST_THRESHOLD='3 µs'`<br>`TAU_RULE='min_largest_age'`<br>`TAU_SCOPE='across_groups'` |
 | `km_poster_6d2s` | `jobs/active/km_poster_6d2s.py` | — | — | `PREFIX='km_poster_6d2s'`<br>`THRESHOLD_LABEL='3.0 µs'` |
 
 ## t2star
