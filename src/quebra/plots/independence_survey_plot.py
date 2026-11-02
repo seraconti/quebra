@@ -5,7 +5,9 @@ single composite of all of them would make each grid unreadably small. `SURVEY_P
 one class per entry of `independence_survey.SURVEY_KEYS`, in that order, so the job can
 wire them in a loop.
 
-Each figure is one instrument, both clocks stacked: datasets down, threshold ladder across.
+Each figure is one instrument: its grids are the clocks down and the bags across, each grid
+datasets down and threshold ladder across, each headed on a strip of its bag's colour
+(`theme.bag_header`).
 
 PURE RENDERER. Every value drawn is a field of `IndependenceSurveyData`. Colour comes from
 `plots.theme.verdict_color` - the SAME palette the per-dataset ledger panel uses, so a
@@ -54,21 +56,28 @@ class _InstrumentSurveyPlot(BasePlot):
                 "instrument, so there is nothing to draw and a blank figure would lie"
             )
 
+        sides = [side for side in pd_.sides if any(g.side == side for g in grids)]
+        clocks = [clock for clock in pd_.clocks if any(g.clock == clock for g in grids)]
         n_rows = len(pd_.datasets)
         n_cols = len(pd_.thresholds)
         with theme.style_context(style):
             fig, axes = plt.subplots(
-                len(grids),
-                1,
+                len(clocks),
+                len(sides),
                 figsize=(
-                    max(7.0, 0.62 * n_cols + 4.2),
-                    max(3.0, 0.30 * n_rows) * len(grids) + 2.2,
+                    max(7.0, 0.62 * n_cols + 4.2) * len(sides),
+                    max(3.0, 0.30 * n_rows) * len(clocks) + 2.2,
                 ),
                 squeeze=False,
                 facecolor="white",
             )
-            for ax, grid in zip(axes[:, 0], grids):
-                self._draw_grid(ax, grid, pd_)
+            for row, clock in enumerate(clocks):
+                for col, side in enumerate(sides):
+                    grid = pd_.grid(self.KEY, side, clock)
+                    if grid is None:
+                        axes[row][col].axis("off")
+                        continue
+                    self._draw_grid(axes[row][col], grid, pd_)
 
             first = grids[0]
             fig.suptitle(first.label)
@@ -83,7 +92,7 @@ class _InstrumentSurveyPlot(BasePlot):
                 **theme.LEGEND_TEXT,
             )
             decided = [
-                f"{g.clock}: {g.counts['fail']} of "
+                f"{theme.BAG_LABELS[g.side]}, {g.clock} clock: {g.counts['fail']} of "
                 f"{g.counts['pass'] + g.counts['fail']} decided cells reject, "
                 f"{g.counts['not computed']} of {g.verdicts.size} not computed"
                 for g in grids
@@ -92,7 +101,8 @@ class _InstrumentSurveyPlot(BasePlot):
                 0.5,
                 0.035,
                 f"This instrument {first.null_statement}. A red cell is a statement about "
-                f"the DATA, not a failed test. Pale cells carry no information: an "
+                f"the DATA, not a failed test. A grid title's colour names its bag, not a "
+                f"verdict. Pale cells carry no information: an "
                 f"inconclusive non-rejection (too few events, a size the bench found "
                 f"wrong, or no bench cell) is not evidence of independence. "
                 f"{'; '.join(decided)}. "
@@ -149,7 +159,12 @@ class _InstrumentSurveyPlot(BasePlot):
         ax.invert_yaxis()
         ax.set_xlabel("Threshold")
         ax.set_ylabel("Dataset")
-        ax.set_title(f"{grid.clock} clock", loc="left", **theme.LABEL_TEXT)
+        ax.set_title(
+            f"{theme.BAG_LABELS[grid.side]} - {grid.clock} clock",
+            loc="left",
+            **theme.LABEL_TEXT,
+            **theme.bag_header(grid.side),
+        )
         for spine in ax.spines.values():
             spine.set_visible(False)
         ax.tick_params(length=0)
@@ -179,12 +194,13 @@ for _cls in SURVEY_PLOTS:
 
 
 class IndependenceSurveyOverviewPlot(BasePlot):
-    """EVERY instrument in one image: one row per instrument, one column per clock.
+    """EVERY instrument in one image: one row per instrument, columns grouped by bag, one
+    column per clock within each bag, each column headed on a strip of its bag's colour.
 
     The per-instrument figures above are for reading one instrument closely. This one is
     for the question they cannot answer between them - does the picture change when you
-    swap the instrument, or only when you swap the CLOCK? Laid out so that comparison is a
-    left-right glance rather than a memory exercise across as many files.
+    swap the instrument, or only when you swap the BAG or the CLOCK? Laid out so that
+    comparison is a left-right glance rather than a memory exercise across as many files.
 
     TRANSPOSED relative to the per-instrument figures: thresholds on y (the ladder's rungs) and
     datasets on x (28 on the device-wide survey). Keeping datasets on y would make every
@@ -195,7 +211,7 @@ class IndependenceSurveyOverviewPlot(BasePlot):
 
     def build_matplotlib(self, result: object, style: str = "default") -> plt.Figure:
         pd_ = _check(result)
-        clocks = pd_.clocks
+        columns = [(side, clock) for side in pd_.sides for clock in pd_.clocks]
         keys = [k for k in SURVEY_KEYS if any(g.key == k for g in pd_.grids)]
         if not keys:
             raise ValueError("the survey artifact carries no instrument grids")
@@ -204,21 +220,28 @@ class IndependenceSurveyOverviewPlot(BasePlot):
         with theme.style_context(style):
             fig, axes = plt.subplots(
                 len(keys),
-                len(clocks),
-                figsize=(0.30 * n_datasets * len(clocks) + 3.0, 1.55 * len(keys) + 2.6),
+                len(columns),
+                figsize=(
+                    0.30 * n_datasets * len(columns) + 3.0,
+                    1.55 * len(keys) + 2.6,
+                ),
                 squeeze=False,
                 facecolor="white",
             )
             for row, key in enumerate(keys):
-                for col, clock in enumerate(clocks):
+                for col, (side, clock) in enumerate(columns):
                     ax = axes[row][col]
-                    grid = pd_.grid(key, clock)
+                    grid = pd_.grid(key, side, clock)
                     if grid is None:
                         ax.axis("off")
                         continue
                     self._draw_transposed(ax, grid)
                     if row == 0:
-                        ax.set_title(f"{clock} clock", **theme.LABEL_TEXT)
+                        ax.set_title(
+                            f"{theme.BAG_LABELS[side]} - {clock} clock",
+                            **theme.LABEL_TEXT,
+                            **theme.bag_header(side),
+                        )
                     if col == 0:
                         ax.set_ylabel(
                             grid.label.replace(" (", "\n("),
@@ -252,15 +275,17 @@ class IndependenceSurveyOverviewPlot(BasePlot):
             fig.text(
                 0.5,
                 0.028,
-                "Rows are instruments, columns are clocks; within each panel the y axis is "
-                "the threshold ladder and the x axis is the dataset. Red is a rejection - "
-                "a statement about the DATA, not a failed test. Grey carries no "
-                "information. The two clocks ask different questions of the same record: "
-                "in-spec time advances only while the metric is in spec and its events are "
-                "window DEATHS, calendar time is wall clock and its events are window "
+                "Rows are instruments; columns are grouped by bag, the windows on each "
+                "side of the threshold, each group headed in its colour and holding the "
+                "two clocks; a header's colour names its bag, not a verdict. Within each "
+                "grid the y axis is the threshold ladder and the x "
+                "axis is the dataset. Red is a rejection - a statement about the DATA, not "
+                "a failed test. Grey carries no information. The two clocks ask different "
+                "questions of the same bag: the side clock advances only while the record "
+                "is on the bag's side and its events are window DEATHS, the crossings that "
+                "leave the side; calendar time is wall clock and its events are window "
                 "BIRTHS - so they can disagree without either being wrong. Read a p-value "
-                "off the per-instrument "
-                "figures, not this one.",
+                "off the per-instrument figures, not this one.",
                 ha="center",
                 wrap=True,
                 **theme.CAPTION,

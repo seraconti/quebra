@@ -3,6 +3,9 @@
 A pure renderer. Every verdict arrives already decided by `analyzers/check_ledger.py`; this
 file chooses colours and positions and nothing else.
 
+One bag per figure: a ledger scores the in-spec and the out-of-spec windows, and the figure
+draws the rows of one (`ledger_recipe.ledger_bag` selects them), naming it in the title.
+
 Two parts, one figure, because they answer two halves of one question. The table says what
 each check concluded and whether that conclusion is worth anything. The panels below say
 how the evidence changes down the threshold ladder - and because the event count is drawn
@@ -21,7 +24,7 @@ import numpy as np
 from matplotlib.patches import Patch
 
 from quebra.analyzers.check_ledger import CheckLedger, VERDICTS
-from quebra.analyzers.checks.result import CLOCK_CALENDAR, CLOCK_IN_SPEC
+from quebra.analyzers.checks.result import CLOCK_CALENDAR, CLOCK_SIDE
 from quebra.panels._check_ledger_render import (
     CHECK_SHORT,
     format_p,
@@ -30,6 +33,7 @@ from quebra.panels._check_ledger_render import (
 )
 from quebra.plots.base import BasePlot
 from quebra.plots.theme import (
+    BAG_LABELS,
     REFERENCE_LINE,
     UNOBSERVED_HATCH,
     ordered_color,
@@ -49,10 +53,16 @@ class CheckLedgerPanel(BasePlot):
     ) -> plt.Figure:
         if not isinstance(result, CheckLedger):
             raise TypeError("CheckLedgerPanel expects a CheckLedger artifact")
+        sides = sorted({str(side) for side in result.rows["side"]})
+        if len(sides) != 1 or sides[0] not in BAG_LABELS:
+            raise ValueError(
+                f"CheckLedgerPanel draws one bag; these rows hold the sides {sides}. "
+                "Select one with `ledger_recipe.ledger_bag`."
+            )
         with style_context(style):
             clocks = [
                 clock
-                for clock in (CLOCK_IN_SPEC, CLOCK_CALENDAR)
+                for clock in (CLOCK_SIDE, CLOCK_CALENDAR)
                 if len(result.rows[result.rows["clock"] == clock])
             ]
             checks = [
@@ -70,8 +80,8 @@ class CheckLedgerPanel(BasePlot):
             self._draw_ladder(fig.add_subplot(grid[len(clocks), 0]), result, checks)
 
             fig.suptitle(
-                f"Check ledger - {result.dataset_id}, alpha {result.alpha:g}, "
-                f"B = {result.n_permutations}, seed {result.seed}"
+                f"Check ledger - {result.dataset_id}, {BAG_LABELS[sides[0]]}, "
+                f"alpha {result.alpha:g}, B = {result.n_permutations}, seed {result.seed}"
             )
             fig.tight_layout(rect=(0, 0, 1, 0.97))
             return fig
@@ -131,7 +141,7 @@ class CheckLedgerPanel(BasePlot):
                     color="white" if verdict in ("pass", "fail") else "black",
                 )
         ax.set_title(f"{clock} clock", loc="left")
-        if clock == CLOCK_IN_SPEC:
+        if clock == CLOCK_SIDE:
             ax.legend(
                 handles=[
                     Patch(facecolor=verdict_color(v), edgecolor="white", label=v)
@@ -154,7 +164,7 @@ class CheckLedgerPanel(BasePlot):
         labels = [label for label, _v, _b in result.thresholds]
         positions = {label: index for index, label in enumerate(labels)}
         for index, check in enumerate(checks):
-            series = statistic_series(result.rows, CLOCK_IN_SPEC, check, labels)
+            series = statistic_series(result.rows, CLOCK_SIDE, check, labels)
             if all(np.isnan(series)):
                 continue
             ax.plot(
@@ -171,13 +181,13 @@ class CheckLedgerPanel(BasePlot):
         ax.set_xticklabels(labels)
         ax.set_xlabel("Threshold")
         ax.set_ylabel("p-value")
-        ax.set_title("Evidence across the threshold ladder - in-spec clock", loc="left")
+        ax.set_title("Evidence across the threshold ladder - side clock", loc="left")
         ax.legend(loc="lower left", frameon=False, ncol=2)
 
         # Event count on a second axis: the reader sees power collapsing down the ladder
         # instead of having to infer it from the p-values.
         counts = (
-            result.rows[result.rows["clock"] == CLOCK_IN_SPEC]
+            result.rows[result.rows["clock"] == CLOCK_SIDE]
             .groupby("threshold_label")["n_events"]
             .max()
         )

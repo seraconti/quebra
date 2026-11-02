@@ -196,7 +196,8 @@ class CheckOutcome(StaleArtifactGuard):
     figure read six months from now has to say which checks were asked for as well as which
     are shown. `asked_but_unanswered` is the difference that matters most: a row that was run
     and produced nothing is not the same as a row nobody asked for, and only the artifact can
-    tell them apart.
+    tell them apart. `side` is the bag the rows were kept from, None when they were not
+    filtered by bag.
     """
 
     grids: list[OutcomeGrid]
@@ -207,6 +208,7 @@ class CheckOutcome(StaleArtifactGuard):
     datasets: tuple[str, ...] = ()
     clocks: tuple[str, ...] = ()
     alpha: float = 0.05
+    side: str | None = None
 
     def check_thresholds(self, labels: list[str]) -> None:
         """Match the artifact-guard contract the other panel artifacts use."""
@@ -231,8 +233,14 @@ def build_check_outcome(
     clocks: tuple[str, ...],
     dataset_labels: tuple[str, ...] | None = None,
     alpha: float,
+    side: str | None = None,
 ) -> CheckOutcome:
     """Turn ledger rows into one grid per displayed key.
+
+    `side` keeps the rows of one bag: a window ledger scores both, and a band is drawn
+    from one. None keeps every row, which must then hold one row per dataset, clock and
+    check (calibration cycles carry no bag); two rows for one cell raise ValueError. A
+    threshold, side or clock the non-empty ledger never scored raises KeyError.
 
     `ledger_rows` is the concatenation of every drawn dataset's `CheckLedger.rows`. Passing
     the frame rather than the ledgers keeps this a pure reshape: it reads columns and writes
@@ -256,16 +264,39 @@ def build_check_outcome(
                 f"threshold {threshold_label!r} is not in the ledger. Scored thresholds: "
                 f"{sorted(known)}"
             )
-        at_threshold = ledger_rows[
+        # The same wiring mistake on the other two keys a cell is read by: a bag or clock
+        # name the ledger never scored reads as a column of absent cells.
+        if side is not None and side not in set(ledger_rows["side"].astype(str)):
+            raise KeyError(
+                f"side {side!r} is not in the ledger. Scored bags: "
+                f"{sorted(set(ledger_rows['side'].astype(str)))}"
+            )
+        scored_clocks = set(ledger_rows["clock"].astype(str))
+        unscored = [clock for clock in clocks if clock not in scored_clocks]
+        if unscored:
+            raise KeyError(
+                f"clocks {unscored} are not in the ledger. Scored clocks: "
+                f"{sorted(scored_clocks)}"
+            )
+        on_rung = ledger_rows[
             ledger_rows["threshold_label"].astype(str) == threshold_label
         ]
     else:
-        at_threshold = ledger_rows
+        on_rung = ledger_rows
+
+    if side is not None:
+        on_rung = on_rung[on_rung["side"] == side]
 
     # Indexed once so a missing cell is a lookup miss rather than a repeated frame scan.
     cells: dict[tuple[str, str, RowKey], pd.Series] = {}
-    for _, row in at_threshold.iterrows():
-        cells[(str(row["dataset_id"]), str(row["clock"]), _row_key_of(row))] = row
+    for _, row in on_rung.iterrows():
+        cell = (str(row["dataset_id"]), str(row["clock"]), _row_key_of(row))
+        if cell in cells:
+            raise ValueError(
+                f"two ledger rows for the cell {cell}: the rows hold more than one bag; "
+                "pass side= to keep one"
+            )
+        cells[cell] = row
 
     grids: list[OutcomeGrid] = []
     for key in display:
@@ -306,7 +337,7 @@ def build_check_outcome(
             )
         )
 
-    present = list(at_threshold.itertuples(index=False)) if len(at_threshold) else []
+    present = list(on_rung.itertuples(index=False)) if len(on_rung) else []
     unanswered = missing_rows(
         present,
         run,
@@ -322,6 +353,7 @@ def build_check_outcome(
         datasets=tuple(datasets),
         clocks=tuple(clocks),
         alpha=alpha,
+        side=side,
     )
 
 

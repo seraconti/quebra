@@ -39,7 +39,8 @@ non-finite reads, for the carve and for every other step that segments a record.
 - **`windows_out_of_spec`**: the out-of-spec windows.
 
 The **read table** keeps one row per read and threshold; its `window_index` refers to the
-in-spec table. A **bag** is the collection of windows.
+in-spec table. A **bag** is the collection of windows of one side; the check ledger scores
+both bags (`docs/iid_checks/iid_checks_basics.md`, "Two clocks").
 
 For a window with reads at indices `s .. e-1`:
 
@@ -138,8 +139,8 @@ calibration cycles, `a2_renewal_cycles`), the checks asked, and those that gave 
 Empty means NOT ASSESSED.
 
 **Whether a verdict transfers is UNRESOLVED.** A verdict computed on the battery's sample
-(complete in-spec durations on the in-spec clock, or births on the calendar clock) is not
-automatically a verdict about the Kaplan-Meier sample. `analyzers/assumptions.py` records
+(a bag's complete durations on the side clock, or its births on the calendar clock) is not
+automatically a verdict about the Kaplan-Meier sample of that bag. `analyzers/assumptions.py` records
 that open question.
 
 **Single-interval Turnbull is biased here.** On a read grid, the chance that a length shows

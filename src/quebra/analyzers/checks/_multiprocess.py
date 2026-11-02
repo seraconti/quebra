@@ -6,8 +6,9 @@ the results depend on, so both are stated rather than buried:
 
 **Segment boundaries are read gaps**, taken from `diagnostics["gap_spans_s"]` and from the
 birth taxonomy together. Neither alone is enough. The taxonomy is authoritative when the
-carve recorded it, but `analyzers/windows.carve` only emits `gap_resume` next to an in-spec
-read - a gap flanked by out-of-spec reads leaves NO trace in the window table, and reading
+carve recorded it, but `analyzers/windows.carve` only emits `gap_resume` next to a read of
+the bag's own side - a gap flanked by reads of the other side leaves NO trace in the bag's
+window table, and reading
 births alone silently merged two renewal processes separated by unobserved hours and folded
 an interior censored window into `tau`. Neither source re-derives the gap policy: the gap
 threshold, the strict `>` test and gap-wins-ties all stay in `analyzers/windows.py`.
@@ -18,8 +19,10 @@ one. Callers that omit `gap_spans_s` fall back to the birth-only behaviour and l
 guarantee.
 
 **Two clocks, because the mapping from windows to a renewal process is not unique.**
-See `CLOCK_IN_SPEC` / `CLOCK_CALENDAR` below. Reporting one alone would hide that the
-answer depends on the choice.
+See `CLOCK_SIDE` / `CLOCK_CALENDAR` below. Reporting one alone would hide that the
+answer depends on the choice. Both run on either bag, the in-spec or the out-of-spec
+windows, by one rule: nothing below depends on which side a bag is, except which crossing
+ends its windows (`windows.SIDE_CROSSINGS`).
 """
 
 from __future__ import annotations
@@ -30,11 +33,12 @@ import pandas as pd
 from quebra.analyzers.windows import (
     BIRTH_GAP_RESUME,
     BIRTH_SCAN_START,
+    SIDE_CROSSINGS,
     SIDE_IN_SPEC,
 )
 from quebra.analyzers.checks.result import (
     CLOCK_CALENDAR,
-    CLOCK_IN_SPEC,
+    CLOCK_SIDE,
     Segment,
     last_event_time,
 )
@@ -211,9 +215,9 @@ def _segment_starts(
     """Indices where a new segment begins.
 
     Birth types alone are NOT sufficient, which is why `gap_spans_s` exists.
-    `analyzers/windows.carve` only emits `gap_resume` when the gap is adjacent to an
-    in-spec read; if the record went out of spec before the gap, or stayed out across it,
-    the carve emits `down_crossing` ... `up_crossing` and the gap leaves no trace in the
+    `analyzers/windows.carve` only emits `gap_resume` when the gap is adjacent to a read of
+    the bag's side; if the record left that side before the gap, or stayed off it across
+    the gap, the carve emits a crossing either way and the gap leaves no trace in the bag's
     window table at all. Two renewal processes separated by unobserved hours then became
     one segment, and an interior censored window got folded into `tau`.
 
@@ -246,27 +250,33 @@ def segments_from_windows(
     windows: pd.DataFrame,
     *,
     clock: str,
+    side: str = SIDE_IN_SPEC,
     min_events: int = 2,
     observation_end_s: float | None = None,
     gap_spans_s: list[tuple[float, float]] | None = None,
 ) -> tuple[list[Segment], int]:
-    """Split one threshold's in-spec window table into time-censored renewal segments.
+    """Split one threshold's window table of one bag into time-censored renewal segments.
 
-    A `side` column with any value other than `SIDE_IN_SPEC` raises ValueError; a table
-    without one (the bench carve) is taken as in-spec.
+    `side` names the bag. The table's `side` column must hold that side and nothing else; a
+    table without the column (the bench carve) is the in-spec bag, and asking it for the
+    other raises. Both raise ValueError.
 
     Returns `(segments, n_segments_dropped)`. A segment with fewer than `min_events`
     complete gaps is dropped rather than padded - it carries no information about
     ordering, and silently keeping it would let a record of twenty one-window segments
     report `n_segments=20` while testing nothing.
 
-    `CLOCK_IN_SPEC`: an event is a window dying by `down_crossing`, `x` is its duration,
-    and `tau` is the segment's TOTAL in-spec time (complete windows plus the trailing
-    censored one). Time advances only while in spec, so this asks whether successive
-    in-spec lifetimes look like a renewal process.
+    `CLOCK_SIDE`: an event is a window ended by the crossing that leaves its side (a
+    `down_crossing` death in spec, an `up_crossing` out of spec; `windows.SIDE_CROSSINGS`),
+    `x` is its duration, and `tau` is the segment's TOTAL time on that side (complete
+    windows plus the trailing censored one). Time advances only while on the side, so this
+    asks whether successive lifetimes on it look like a renewal process. A window whose
+    death is that crossing must be exactly a window not `censored`; a table where the two
+    disagree raises ValueError.
 
     `CLOCK_CALENDAR`: an event is a window BIRTH, `x` is the wall-clock time between
-    consecutive births, and `tau` is the segment's observed length. This asks whether
+    consecutive births, and `tau` is the segment's observed length. On the in-spec bag a
+    birth is an entry into spec, on the out-of-spec bag an exit from it. This asks whether
     failures arrive as a renewal process in real time, which is the question a
     maintenance schedule actually poses. It is honest only within a segment - across a
     gap, wall-clock time passed unobserved, which is why segments exist.
@@ -287,21 +297,43 @@ def segments_from_windows(
     event-determined boundary `observation_end_s` exists to avoid for the final segment.
     Passing it is strongly recommended; omitted, both behaviours degrade to the old ones.
     """
-    if clock not in (CLOCK_IN_SPEC, CLOCK_CALENDAR):
+    if clock not in (CLOCK_SIDE, CLOCK_CALENDAR):
         raise ValueError(
-            f"unknown clock {clock!r}; known: {CLOCK_IN_SPEC!r}, {CLOCK_CALENDAR!r}"
+            f"unknown clock {clock!r}; known: {CLOCK_SIDE!r}, {CLOCK_CALENDAR!r}"
         )
-    required = {"birth_type", "censored", "duration_s", "t_birth_s", "t_death_s"}
+    if side not in SIDE_CROSSINGS:
+        raise ValueError(f"unknown side {side!r}; known: {sorted(SIDE_CROSSINGS)}")
+    required = {
+        "birth_type",
+        "censored",
+        "death_type",
+        "duration_s",
+        "t_birth_s",
+        "t_death_s",
+    }
     missing = required - set(windows.columns)
     if missing:
         raise KeyError(f"segments_from_windows needs columns {sorted(missing)}")
-    if "side" in windows.columns and (windows["side"] != SIDE_IN_SPEC).any():
-        other = sorted({str(v) for v in windows["side"]} - {SIDE_IN_SPEC})
+    if "side" in windows.columns:
+        other = sorted({str(v) for v in windows["side"]} - {side})
+        if other:
+            raise ValueError(
+                f"segments_from_windows was asked for the {side} bag; got rows with side "
+                f"{other}. Each bag's events are its own crossings, so a window of "
+                "another bag would put every event at the opposite crossing."
+            )
+    elif side != SIDE_IN_SPEC:
         raise ValueError(
-            "segments_from_windows takes the in-spec window table; got rows with side "
-            f"{other}. Both clocks take their events from the in-spec table (a death by "
-            "down_crossing on the in-spec clock, a birth on the calendar clock), and an "
-            "out-of-spec table would put every event at the opposite crossing."
+            f"segments_from_windows was asked for the {side} bag of a table with no side "
+            f"column; such a table (the bench carve) is the {SIDE_IN_SPEC} bag only."
+        )
+    # Positional, in the table's row order, which `frame` below keeps.
+    leaves = windows["death_type"].astype(str).to_numpy() == SIDE_CROSSINGS[side][1]
+    if np.any(leaves == windows["censored"].to_numpy(dtype=bool)):
+        raise ValueError(
+            f"the {side} bag's death_type and censored columns disagree: a window is "
+            f"complete exactly when it dies by {SIDE_CROSSINGS[side][1]}, the crossing "
+            "that leaves its side"
         )
     if not len(windows):
         return [], 0
@@ -329,7 +361,7 @@ def segments_from_windows(
         if not len(block):
             continue
         is_final_block = position == n_blocks - 1
-        complete = ~block["censored"].to_numpy(dtype=bool)
+        complete = leaves[lo:hi]
         t_birth = block["t_birth_s"].to_numpy(dtype=float)
         t_death = block["t_death_s"].to_numpy(dtype=float)
         # When observation of THIS block stopped. For an interior block that is the start
@@ -351,7 +383,7 @@ def segments_from_windows(
                 else float(observation_end_s)
             )
 
-        if clock == CLOCK_IN_SPEC:
+        if clock == CLOCK_SIDE:
             durations = block["duration_s"].to_numpy(dtype=float)
             # Only the LAST window of a block may be censored: blocks split at read gaps, so
             # a gap_start death lands at a block end. `x` drops a censored window's duration
@@ -364,13 +396,14 @@ def segments_from_windows(
             # `Segment` documents `n_censored_dropped` as 0 or 1 and nothing enforces it.
             interior_censored = int((~complete[:-1]).sum())
             x = durations[complete]
-            # In-spec time does not accrue during a gap, so an interior block's tau is its
-            # own accumulated in-spec time regardless of when the gap started.
+            # Time on the side does not accrue during a gap, so an interior block's tau is
+            # its own accumulated time on the side regardless of when the gap started.
             tau = float(durations.sum())
             n_censored = int((~complete).sum())
         else:
-            # Not applicable on this clock: the guard below is in-spec only, because what the
-            # calendar clock's tau should be when a block ends at a gap is an open question.
+            # Not applicable on this clock: the guard below is side-clock only, because what
+            # the calendar clock's tau should be when a block ends at a gap is an open
+            # question.
             interior_censored = 0
             x = np.diff(t_birth)
             end_s = float(t_death[-1]) if block_end_s is None else block_end_s
@@ -382,12 +415,12 @@ def segments_from_windows(
             continue
         # After the drop, not before: `min_events` means "too small to say anything about",
         # so a block on its way to `n_dropped` must not abort the run.
-        if clock == CLOCK_IN_SPEC and interior_censored:
+        if clock == CLOCK_SIDE and interior_censored:
             raise ValueError(
                 f"block at position {position} has {interior_censored} censored window(s) "
                 f"before its last. Only the final window of a block may be censored; without "
-                f"gap_spans_s a gap flanked by out-of-spec reads leaves a censored death "
-                f"mid-block, and every event time after it would be wrong."
+                f"gap_spans_s a gap flanked by reads of the other side leaves a censored "
+                f"death mid-block, and every event time after it would be wrong."
             )
         segments.append(Segment(x=x, tau=tau, n_censored_dropped=n_censored))
     return segments, n_dropped

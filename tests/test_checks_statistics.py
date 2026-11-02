@@ -44,6 +44,7 @@ from quebra.analyzers.checks._multiprocess import (
     gamma_hat_batch,
 )
 from quebra.analyzers import windows
+from quebra.analyzers.windows import SIDE_IN_SPEC, SIDE_OUT_OF_SPEC
 from quebra.analyzers.checks._multiprocess import segments_from_windows
 from quebra.analyzers.checks._permutation import (
     PermutationSet,
@@ -68,7 +69,7 @@ from quebra.analyzers.checks.result import (
     CALIB_ASYMPTOTIC,
     CALIB_PERMUTATION,
     CLOCK_CALENDAR,
-    CLOCK_IN_SPEC,
+    CLOCK_SIDE,
     Segment,
 )
 
@@ -790,7 +791,7 @@ def test_the_gapped_record_really_hides_its_gap_from_the_window_table():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("clock", [CLOCK_IN_SPEC, CLOCK_CALENDAR])
+@pytest.mark.parametrize("clock", [CLOCK_SIDE, CLOCK_CALENDAR])
 def test_segments_split_on_gap_spans_the_birth_taxonomy_cannot_see(clock):
     frame, gaps = _gapped_record()
     merged, _ = segments_from_windows(frame, clock=clock)
@@ -837,35 +838,75 @@ def test_omitting_gap_spans_keeps_the_old_behaviour():
     t = np.arange(40, dtype=float)
     frame, gaps = _carve_windows(t, rng.random(40) > 0.4)
     assert not gaps, "a uniformly spaced record has no gaps"
-    without, _ = segments_from_windows(frame, clock=CLOCK_IN_SPEC)
-    with_empty, _ = segments_from_windows(frame, clock=CLOCK_IN_SPEC, gap_spans_s=gaps)
+    without, _ = segments_from_windows(frame, clock=CLOCK_SIDE)
+    with_empty, _ = segments_from_windows(frame, clock=CLOCK_SIDE, gap_spans_s=gaps)
     assert len(without) == len(with_empty)
     for a, b in zip(without, with_empty):
         assert np.array_equal(a.x, b.x) and a.tau == b.tau
 
 
+def _censor_a_complete_window(carved):
+    """The out-of-spec table with one window that dies by `up_crossing` marked censored."""
+    table = carved.windows_out_of_spec.copy()
+    table.loc[table.index[~table["censored"]][0], "censored"] = True
+    return table
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    "mangle, error, match",
+    "mangle, side, error, match",
     [
-        (lambda r: r.windows_out_of_spec, ValueError, "in-spec window table"),
+        (
+            lambda r: r.windows_out_of_spec,
+            SIDE_IN_SPEC,
+            ValueError,
+            "asked for the in_spec bag",
+        ),
+        (
+            lambda r: r.windows_in_spec,
+            SIDE_OUT_OF_SPEC,
+            ValueError,
+            "asked for the out_of_spec bag",
+        ),
+        (
+            lambda r: r.windows_out_of_spec.drop(columns="side"),
+            SIDE_OUT_OF_SPEC,
+            ValueError,
+            "no side column",
+        ),
+        (
+            _censor_a_complete_window,
+            SIDE_OUT_OF_SPEC,
+            ValueError,
+            "death_type and censored columns disagree",
+        ),
         (
             lambda r: r.windows_in_spec.drop(columns="censored"),
+            SIDE_IN_SPEC,
             KeyError,
             r"needs columns \['censored'\]",
         ),
     ],
-    ids=["out_of_spec_table", "no_censored_column"],
+    ids=[
+        "out_of_spec_table_as_in_spec",
+        "in_spec_table_as_out_of_spec",
+        "no_side_column_as_out_of_spec",
+        "deaths_and_censoring_disagree",
+        "no_censored_column",
+    ],
 )
-@pytest.mark.parametrize("clock", [CLOCK_IN_SPEC, CLOCK_CALENDAR])
-def test_a_table_segments_cannot_be_read_from_is_refused(mangle, error, match, clock):
+@pytest.mark.parametrize("clock", [CLOCK_SIDE, CLOCK_CALENDAR])
+def test_a_table_segments_cannot_be_read_from_is_refused(
+    mangle, side, error, match, clock
+):
     """Oracle: specification, the `segments_from_windows` contract.
 
-    Both clocks take their events from the in-spec table: a death by down_crossing on the
-    in-spec clock, a window birth on the calendar clock. An out-of-spec table would put
-    every event at the opposite crossing. Both refusals are types `check_ledger` reports
-    as a row. The in-spec table of the same carve is the control: a guard refusing every
-    table would fail it.
+    The table's bag must be the one asked for: each bag's events are its own crossings, so
+    a window of the other bag would put every event at the opposite crossing. A table with
+    no side column (the bench carve) is the in-spec bag only. A window is complete exactly
+    when it dies by the crossing that leaves its side, so a table whose `censored` flags
+    say otherwise is refused. Every refusal is a type `check_ledger` reports as a row. Each
+    bag's own table is the control: a guard refusing every table would fail it.
     """
     rng = np.random.default_rng(3)
     in_spec = rng.random(40) > 0.4
@@ -876,11 +917,42 @@ def test_a_table_segments_cannot_be_read_from_is_refused(mangle, error, match, c
             thresholds=[("thr", 0.0, True)],
         )
     )
-    assert segments_from_windows(carved.windows_in_spec, clock=clock)[0]
+    for own, own_side in (
+        (carved.windows_in_spec, SIDE_IN_SPEC),
+        (carved.windows_out_of_spec, SIDE_OUT_OF_SPEC),
+    ):
+        assert segments_from_windows(own, clock=clock, side=own_side)[0]
     table = mangle(carved)
     assert len(table), "the guard must be handed rows to refuse"
     with pytest.raises(error, match=match):
-        segments_from_windows(table, clock=clock)
+        segments_from_windows(table, clock=clock, side=side)
+
+
+# Ten reads 10 s apart, threshold 3, big values good: in spec at reads 0, 3, 5 and 6.
+_HAND_T_S = np.arange(10, dtype=float) * 10.0
+_HAND_VALUES = np.array([4.0, 2.0, 2.0, 4.0, 1.0, 4.0, 4.0, 2.0, 2.0, 2.0])
+
+
+@pytest.mark.unit
+def test_the_out_of_spec_bags_segments_equal_a_hand_table():
+    """Oracle: hand computation. The out-of-spec windows are reads 1-2 (born at 10 s, ended
+    by the up-crossing at read 3, 30 s), read 4 (40 s to 50 s) and reads 7-9 (born at
+    70 s, still out at the last read, so censored at 90 s). Side clock: x = (20, 10) and
+    tau = 20 + 10 + 20 = 50, one window censored. Calendar clock, watching until 100 s:
+    x = (30, 30) between the births and tau = 100 - 10 = 90."""
+    out = windows.run(
+        windows.WindowsInputs(
+            t_rel_s=_HAND_T_S, values=_HAND_VALUES, thresholds=[("3", 3.0, True)]
+        )
+    ).windows_out_of_spec
+    (side,), _ = segments_from_windows(
+        out, clock=CLOCK_SIDE, side=SIDE_OUT_OF_SPEC, observation_end_s=100.0
+    )
+    assert (list(side.x), side.tau, side.n_censored_dropped) == ([20.0, 10.0], 50.0, 1)
+    (calendar,), _ = segments_from_windows(
+        out, clock=CLOCK_CALENDAR, side=SIDE_OUT_OF_SPEC, observation_end_s=100.0
+    )
+    assert (list(calendar.x), calendar.tau) == ([30.0, 30.0], 90.0)
 
 
 # -------------------- calendar-clock truncation (R8.1)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pathlib
 import sys
+from itertools import product
 
 import numpy as np
 import pandas as pd
@@ -30,8 +31,11 @@ from quebra.analyzers.checks import battery
 from quebra.analyzers.checks.result import (
     CALIB_PERMUTATION,
     CALIB_R_COPULA,
+    CLOCK_CALENDAR,
+    CLOCK_SIDE,
     CheckResult,
 )
+from quebra.analyzers.windows import SIDE_IN_SPEC
 
 pytestmark = pytest.mark.unit
 
@@ -162,16 +166,33 @@ def test_the_ledger_derives_its_stream_through_stream_for(monkeypatch):
     expression narrowed the mutable surface rather than covering it, so re-inlining
     `hash(...)` at the call site would leave `stream_for` correct, unused, and the suite
     green. This asserts the routing, so both halves of the seed derivation are pinned.
+
+    Each row's clock is paired with the stream it drew, against the names written out here
+    (issue #19 addendum, decision 1): the side clock's stream and bench cells are named
+    `in_spec`, as before the rename, so the in-spec bag keeps its p-values and bench cells.
+    Reading the names back from `BENCH_CLOCK` would pass with the mapping swapped.
     """
     import quebra.analyzers.check_ledger as ledger_module
+    from quebra.analyzers.checks.result import BENCH_CLOCK
+
+    assert BENCH_CLOCK == {"side": "in_spec", "calendar": "calendar"}
 
     calls: list[tuple[str, str]] = []
+    row_clock: list[str] = []
+    pairs: set[tuple[str, str]] = set()
+    score_segments = ledger_module.score_segments
 
     def spy(label: str, clock: str) -> int:
         calls.append((label, clock))
+        pairs.add((row_clock[-1], clock))
         return stream_for(label, clock)
 
+    def scoring(*args, **kwargs):
+        row_clock.append(kwargs["clock"])
+        return score_segments(*args, **kwargs)
+
     monkeypatch.setattr(ledger_module, "stream_for", spy)
+    monkeypatch.setattr(ledger_module, "score_segments", scoring)
 
     # Varied durations: a fixed-period carve is one degenerate segment, which the ledger
     # drops before it draws a stream.
@@ -187,8 +208,57 @@ def test_the_ledger_derives_its_stream_through_stream_for(monkeypatch):
     )
 
     assert calls, "check_ledger.run no longer routes its rng stream through stream_for"
-    assert {clock for _, clock in calls} == {"in_spec", "calendar"}
+    assert pairs == {("side", "in_spec"), ("calendar", "calendar")}
     assert {label for label, _ in calls} == {"3 µs"}
+
+
+def test_a_ledger_holds_each_bag_clock_and_check_once_at_every_threshold():
+    """Oracle: the ledger's contract. Every (threshold, bag, clock) cell holds each check's
+    row exactly once, for both bags of the carve; a record that failed reads `not computed`
+    on both bags and both clocks at every threshold, under its own dataset id."""
+    import quebra.analyzers.check_ledger as ledger_module
+    from quebra.analyzers.checks.result import CLOCKS
+    from quebra.analyzers.event_table import SIDES
+
+    ladder = [("3 µs", 3.0, True), ("4 µs", 4.0, True)]
+    rows = ledger_module.run(
+        ledger_module.make_inputs_from_windows(
+            _varied_result(ladder),
+            _bench_table(),
+            thresholds=ladder,
+            alpha=0.05,
+            min_events_pass=35,
+            tie_cutoff_distinct=5,
+            lag_max=5,
+            n_permutations=19,
+            seed=7,
+        )
+    ).rows
+    cells = rows.groupby(["threshold_label", "side", "clock", "check_id"]).size()
+    assert (cells == 1).all(), cells[cells != 1]
+    expected = set(product(("3 µs", "4 µs"), SIDES, CLOCKS))
+    assert set(cells.index.droplevel("check_id")) == expected
+    assert "(all)" not in set(rows["check_id"]), "premise: every cell was scored"
+    # Both bags read the bench, on both clocks: the side clock's cells are keyed `in_spec`.
+    benched = rows.groupby(["side", "clock"])["bench_size_cell"].apply(
+        lambda cells: bool((cells != "").all())
+    )
+    assert benched.all(), benched
+
+    failed = ledger_module.run(
+        ledger_module.CheckLedgerInputs(
+            windows=pd.DataFrame({"threshold_label": []}),
+            bench_size_table=_bench_table(),
+            thresholds=ladder,
+            dataset_id="broken",
+            record_failure="load failed: E",
+        )
+    ).rows
+    assert sorted(zip(failed["threshold_label"], failed["side"], failed["clock"])) == (
+        sorted(expected)
+    )
+    assert set(failed["dataset_id"]) == {"broken"}
+    assert set(failed["verdict"]) == {VERDICT_NOT_COMPUTED}
 
 
 def test_tie_stats_counts_what_it_says():
@@ -220,21 +290,25 @@ def _varied_carve() -> pd.DataFrame:
     declines a constant rank vector, so a fixture built that way would report a blank row
     and could not tell a lost check from a degenerate cell.
     """
+    return _varied_result().windows_in_spec
+
+
+def _varied_result(thresholds=(("3 µs", 3.0, True),)) -> windows.WindowsResult:
+    """`_varied_carve`'s whole carve: both bags, on `thresholds`."""
     rng = np.random.default_rng(3)
     values: list[float] = []
     for _ in range(60):
         values += [5.0] * int(rng.integers(2, 12))
         values += [1.0] * int(rng.integers(2, 8))
     series = np.asarray(values, dtype=float)
-    carved = windows.run(
+    return windows.run(
         windows.WindowsInputs(
             t_rel_s=np.arange(len(series), dtype=float) * 60.0,
             values=series,
-            thresholds=[("3 µs", 3.0, True)],
+            thresholds=list(thresholds),
             dataset_id="unit",
         )
     )
-    return carved.windows_in_spec
 
 
 def _bench_table() -> pd.DataFrame:
@@ -315,7 +389,9 @@ def test_with_no_rscript_the_r_fields_read_absent_and_every_row_is_still_built(
     assert ledger.r_executable == "absent"
     assert ledger.r_library_paths == ()
 
-    in_spec = ledger.rows[ledger.rows["clock"] == "in_spec"]
+    in_spec = ledger.rows[
+        (ledger.rows["side"] == SIDE_IN_SPEC) & (ledger.rows["clock"] == CLOCK_SIDE)
+    ]
     built = set(zip(in_spec["check_id"], in_spec["calibration"], in_spec["variant"]))
     expected = set(battery.ROW_KEYS) | {(c3.CHECK_NAME, CALIB_R_COPULA, "")}
     # The in-spec clock re-emits every battery row, C1's and C2's as `not computed` rows
@@ -325,7 +401,7 @@ def test_with_no_rscript_the_r_fields_read_absent_and_every_row_is_still_built(
         f"R absence changed which rows the in-spec cell carries: {built ^ expected}"
     )
     c3_rows = ledger.rows[ledger.rows["check_id"] == c3.CHECK_NAME]
-    assert set(c3_rows["clock"]) == {"in_spec", "calendar"}
+    assert set(c3_rows["clock"]) == {CLOCK_SIDE, CLOCK_CALENDAR}
     assert set(c3_rows["verdict"]) == {VERDICT_NOT_COMPUTED}
     assert set(c3_rows["notes"]) == {"R unavailable"}
 
@@ -490,7 +566,9 @@ def test_an_unusable_r_is_recorded_on_the_ledger_and_does_not_stop_it(
         "a failed library probe must leave a visible sentinel: an empty tuple is also what "
         "`not asked` and `absent` carry, so silence here would hide the failure"
     )
-    in_spec = ledger.rows[ledger.rows["clock"] == "in_spec"]
+    in_spec = ledger.rows[
+        (ledger.rows["side"] == SIDE_IN_SPEC) & (ledger.rows["clock"] == CLOCK_SIDE)
+    ]
     built = set(zip(in_spec["check_id"], in_spec["calibration"], in_spec["variant"]))
     expected = set(battery.ROW_KEYS) | {(c3.CHECK_NAME, CALIB_R_COPULA, "")}
     assert built == expected, (
@@ -694,13 +772,13 @@ def test_a_segment_of_identical_durations_is_dropped_and_the_others_answer():
                 n_permutations=99,
                 seed=7,
             )
-        ).rows
+        ).rows.pipe(lambda rows: rows[rows["side"] == SIDE_IN_SPEC])
 
     rows = ledger_rows([0, 1, 2])
     assert "(all)" not in set(rows["check_id"])
     columns = ["clock", "check_id", "calibration", "statistic", "p_value", "verdict"]
     pd.testing.assert_frame_equal(rows[columns], ledger_rows([0, 2])[columns])
-    for clock in ("in_spec", "calendar"):
+    for clock in (CLOCK_SIDE, CLOCK_CALENDAR):
         cell = rows[rows["clock"] == clock]
         assert set(cell["n_segments"]) == {2}, clock
         assert (
@@ -720,14 +798,15 @@ def test_a_segment_of_identical_durations_is_dropped_and_the_others_answer():
 
 def test_the_p_value_ladder_draws_cvm_from_its_permutation_row():
     """Oracle: the ledger's own CvM row. A ledger carries one CvM row per cell, its
-    permutation row, so the ladder draws a CvM line through that row's p-value on the
-    in-spec clock."""
+    permutation row, so the in-spec bag's figure draws a CvM line through that row's
+    p-value on the side clock."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     import quebra.analyzers.check_ledger as ledger_module
+    from quebra.ledger_recipe import ledger_bag
     from quebra.panels.check_ledger import CheckLedgerPanel
 
     ledger = ledger_module.run(
@@ -741,11 +820,15 @@ def test_the_p_value_ladder_draws_cvm_from_its_permutation_row():
     )
     rows = ledger.rows
     cvm = rows[
-        (rows["check_id"] == "cvm_cramer_von_mises") & (rows["clock"] == "in_spec")
+        (rows["check_id"] == "cvm_cramer_von_mises")
+        & (rows["side"] == SIDE_IN_SPEC)
+        & (rows["clock"] == CLOCK_SIDE)
     ]
     assert list(cvm["calibration"]) == [CALIB_PERMUTATION]
-    assert cvm["p_value"].notna().all(), "premise: CvM answers on the in-spec clock"
-    fig = CheckLedgerPanel(name="ladder_probe").build_matplotlib(ledger)
+    assert cvm["p_value"].notna().all(), "premise: CvM answers on the side clock"
+    fig = CheckLedgerPanel(name="ladder_probe").build_matplotlib(
+        ledger_bag(ledger, side=SIDE_IN_SPEC)
+    )
     try:
         (ladder,) = [ax for ax in fig.axes if ax.get_ylabel() == "p-value"]
         lines = [line for line in ladder.get_lines() if line.get_label() == "CvM"]
@@ -753,6 +836,40 @@ def test_the_p_value_ladder_draws_cvm_from_its_permutation_row():
         assert list(lines[0].get_ydata()) == list(cvm["p_value"].astype(float))
     finally:
         plt.close(fig)
+
+
+def test_the_ledger_figure_refuses_rows_of_both_bags():
+    """Oracle: the panel's contract, one bag per figure. A whole ledger holds both bags,
+    and drawing it would put two bags' rows in one table cell; `ledger_bag` selects one."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    import quebra.analyzers.check_ledger as ledger_module
+    from quebra.ledger_recipe import ledger_bag
+    from quebra.panels.check_ledger import CheckLedgerPanel
+
+    ledger = ledger_module.run(
+        ledger_module.make_inputs_from_windows(
+            _varied_result(),
+            _bench_table(),
+            thresholds=[("3 µs", 3.0, True)],
+            alpha=0.05,
+            min_events_pass=35,
+            tie_cutoff_distinct=5,
+            lag_max=5,
+            n_permutations=19,
+            seed=7,
+        )
+    )
+    with pytest.raises(ValueError, match="draws one bag"):
+        CheckLedgerPanel(name="both_probe").build_matplotlib(ledger)
+    plt.close(
+        CheckLedgerPanel(name="one_probe").build_matplotlib(
+            ledger_bag(ledger, side=SIDE_IN_SPEC)
+        )
+    )
 
 
 def test_the_ledger_figure_is_laid_out_by_tight_layout():
@@ -767,6 +884,7 @@ def test_the_ledger_figure_is_laid_out_by_tight_layout():
     import matplotlib.pyplot as plt
 
     import quebra.analyzers.check_ledger as ledger_module
+    from quebra.ledger_recipe import ledger_bag
     from quebra.panels.check_ledger import CheckLedgerPanel
 
     ledger = ledger_module.run(
@@ -780,7 +898,9 @@ def test_the_ledger_figure_is_laid_out_by_tight_layout():
     )
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        fig = CheckLedgerPanel(name="layout_probe").build_matplotlib(ledger)
+        fig = CheckLedgerPanel(name="layout_probe").build_matplotlib(
+            ledger_bag(ledger, side=SIDE_IN_SPEC)
+        )
         fig.canvas.draw()
     plt.close(fig)
     labels = [ax.get_ylabel() for ax in fig.axes]

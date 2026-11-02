@@ -39,10 +39,9 @@ is much weaker evidence than a monotone trend down the ladder.
 ## 3. The two clocks can disagree, and neither is wrong
 
 On the 070423 record of qubit 1 at 4 µs, the calendar clock passes every check except C3,
-which has no bench cell and cannot read `pass`, while the in-spec clock rejects C5, C6 and
-CvM and cannot compute C1 or C2 at all (`jobs/active/check_ledger_6d2s_q1.py`). That is not a contradiction: they ask different questions
-(see `iid_checks_basics.md`, "Two clocks"), and the in-spec clock's `tau == T_N` collapse is structural for a record
-that ends out of spec.
+which has no bench cell and cannot read `pass`, while the in-spec bag's side clock rejects C5, C6 and CvM and cannot compute C1 or C2 at all (`jobs/active/check_ledger_6d2s_q1.py`). That is not a contradiction: they ask different questions
+(see `iid_checks_basics.md`, "Two clocks"), and the side clock's `tau == T_N` collapse is structural for a record
+that ends on the other side of the threshold.
 
 ## 4. C3 is unassessed
 

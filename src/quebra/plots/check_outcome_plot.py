@@ -74,7 +74,9 @@ class CheckOutcomePlot(BasePlot):
                 frameon=False,
                 **theme.LEGEND_TEXT,
             )
-        fig.suptitle(f"Independence checks at {result.threshold_label}")
+        # The bag is named in the title: a column header reads only "side".
+        bag = f", {theme.BAG_LABELS[result.side]}" if result.side else ""
+        fig.suptitle(f"Independence checks at {result.threshold_label}{bag}")
         fig.text(
             0.5,
             0.02,

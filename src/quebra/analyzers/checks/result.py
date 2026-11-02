@@ -30,10 +30,19 @@ import numpy as np
 
 
 # Clock labels. Which one a result used is part of the result: the two ask different
-# questions of the same record and can legitimately disagree.
-CLOCK_IN_SPEC = "in_spec"
+# questions of the same record and can legitimately disagree. Each runs on either bag
+# (`_multiprocess.segments_from_windows`): on the side clock an event is a window ended by
+# the crossing that leaves its side, on the calendar clock a window birth.
+CLOCK_SIDE = "side"
 CLOCK_CALENDAR = "calendar"
-CLOCKS = (CLOCK_IN_SPEC, CLOCK_CALENDAR)
+CLOCKS = (CLOCK_SIDE, CLOCK_CALENDAR)
+# The side clock's name where it was calibrated and seeded as the in-spec bag's clock: the
+# bench tables (`jobs/bench/results/*.csv`), the bench's own cells, and the permutation
+# streams (`check_ledger.stream_for`). `BENCH_CLOCK` maps each clock to the name those
+# lookups use, so the in-spec bag keeps its bench cells and its p-values. The checks'
+# `clock=` defaults are bench names too, because the bench calls them without one.
+CLOCK_IN_SPEC = "in_spec"
+BENCH_CLOCK = {CLOCK_SIDE: CLOCK_IN_SPEC, CLOCK_CALENDAR: CLOCK_CALENDAR}
 
 # Calibration labels.
 CALIB_ASYMPTOTIC = "asymptotic"

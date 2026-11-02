@@ -60,9 +60,9 @@ def main(argv: list[str] | None = None) -> int:
     counts = trend_group_counts(ledgers)
     with pd.option_context("display.width", 200, "display.max_colwidth", 120):
         print(f"{len(ledgers)} ledgers from {len(args.folders)} folders\n")
-        print("Cells where neither C1 nor C2 answered, by clock and message:")
+        print("Cells where neither C1 nor C2 answered, by bag, clock and message:")
         print(counts.no_answer.to_string(index=False))
-        print("\nThe trend group, per clock:")
+        print("\nThe trend group, per bag and clock:")
         print(
             counts.cvm_alone.to_string(index=False, float_format=lambda v: f"{v:.4f}")
         )

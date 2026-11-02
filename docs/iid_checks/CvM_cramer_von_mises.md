@@ -53,7 +53,7 @@ statistics are sums weighted by `tau_j` with a simulated null (Section 8.2, Tabl
 `m > 1` route here is an UNWEIGHTED sum with a permutation null. The paper does not propose
 the unweighted sum; it suggests a permutation null only in general terms (Section 9, p. 113).
 
-It also survives a case C2 cannot. On the in-spec clock of a carved record `tau == T_N`, which
+It also survives a case C2 cannot. On the side clock of a carved record `tau == T_N`, which
 makes eq (7) singular and silences C1 and C2; CvM's integrand carries no `1/(s(1-s))` weight,
 so its statistic stays finite there.
 

@@ -447,8 +447,9 @@ def in_spec_mask(
     return margin(values, threshold_value, big_values_good) >= 0.0
 
 
-# The crossing that bears and the one that kills a window on each side, in spec terms.
-_SIDE_CROSSINGS = {
+# The crossing that bears and the one that kills a window on each side, in spec terms. The
+# one source: the checks take a side clock's events from it (`segments_from_windows`).
+SIDE_CROSSINGS = {
     SIDE_IN_SPEC: (BIRTH_UP_CROSSING, DEATH_DOWN_CROSSING),
     SIDE_OUT_OF_SPEC: (BIRTH_DOWN_CROSSING, DEATH_UP_CROSSING),
 }
@@ -463,7 +464,7 @@ def _side_windows(
     base: dict[str, object],
 ) -> list[dict[str, object]]:
     """Window rows for one side. `_s` and `_e` carry the read indices for the checks."""
-    born_by, dies_by = _SIDE_CROSSINGS[side]
+    born_by, dies_by = SIDE_CROSSINGS[side]
     rows: list[dict[str, object]] = []
     for index, w in enumerate(carve(t, on_side, is_gap)):
         s, e = int(w["s"]), int(w["e"])

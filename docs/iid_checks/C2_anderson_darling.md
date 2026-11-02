@@ -44,8 +44,8 @@ C2 carries `1/gamma_hat^2` and so moves by `N/(N-1)`.
 **`tau == T_N` makes it singular.** Its `i = N - 1` summand, `ln((tau - T_{N-1})/(tau - T_N))`, is `+inf` when the last
 event lands exactly on the truncation time. That is failure censoring, a different sampling
 scheme from the time censoring the equation is derived for, so the check declines it. On the
-in-spec clock of a carved record this is the common case, not a corner one: ~73% of
-synthetic replicates, and every threshold above 3 µs on the real 0704 record (measured on
+side clock of a carved record this is the common case, not a corner one: ~73% of
+synthetic replicates on the in-spec bag, and every threshold above 3 µs on the real 0704 record (measured on
 the 1 to 10 µs ladder, commit aff894e; the 3.5 and 4.5 µs rungs are not measured).
 
 Float summation order matters here. `np.sum` is pairwise and `np.cumsum[-1]` is sequential;

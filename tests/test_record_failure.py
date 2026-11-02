@@ -24,7 +24,8 @@ import numpy as np
 import pytest
 
 from quebra.analyzers.check_ledger import VERDICT_NOT_COMPUTED, CheckLedger
-from quebra.analyzers.checks.result import CLOCK_CALENDAR, CLOCK_IN_SPEC
+from quebra.analyzers.checks.result import CLOCKS
+from quebra.analyzers.event_table import SIDES
 from quebra.analyzers.windows import WindowsResult
 from quebra.cli import _module_from_path
 from quebra.core.dataset import Dataset
@@ -35,6 +36,7 @@ from quebra.ledger_recipe import (
     CARVE_SUFFIX,
     CARVES_DATA_SUFFIX,
     LEDGER_DATA_SUFFIX,
+    ledger_bag,
     ledger_step,
 )
 from quebra.recipes import T2STAR_THRESHOLDS, _carve_stage
@@ -203,8 +205,9 @@ def test_a_carve_stage_records_its_refusal_and_passes_a_failure_through():
 
 @pytest.mark.unit
 def test_a_failed_record_reads_not_computed_at_every_threshold_and_clock():
-    """Oracle: the failure's contract. Its ledger has one `(all)` row per threshold and
-    clock, each `not computed` with the failure's note, and the ledger panel draws it."""
+    """Oracle: the failure's contract. Its ledger has one `(all)` row per threshold, bag
+    and clock, each `not computed` with the failure's note under the record's own dataset
+    id, and the ledger panel draws each bag."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -223,14 +226,18 @@ def test_a_failed_record_reads_not_computed_at_every_threshold_and_clock():
     rows = ledger.rows
     labels = [label for label, _v, _b in T2STAR_THRESHOLDS]
     assert ledger.dataset_id == "2x2_q1_090623"
-    assert sorted(zip(rows["threshold_label"], rows["clock"])) == sorted(
-        product(labels, (CLOCK_IN_SPEC, CLOCK_CALENDAR))
+    assert sorted(zip(rows["threshold_label"], rows["side"], rows["clock"])) == sorted(
+        product(labels, SIDES, CLOCKS)
     )
+    assert set(rows["dataset_id"]) == {"2x2_q1_090623"}
     assert set(rows["check_id"]) == {"(all)"}
     assert set(rows["verdict"]) == {VERDICT_NOT_COMPUTED}
     assert set(rows["notes"]) == {"t2star failed: E: z"}
-    fig = CheckLedgerPanel(name="failed_probe").build_matplotlib(ledger)
-    plt.close(fig)
+    for side in SIDES:
+        fig = CheckLedgerPanel(name="failed_probe").build_matplotlib(
+            ledger_bag(ledger, side=side)
+        )
+        plt.close(fig)
 
 
 @pytest.mark.integration

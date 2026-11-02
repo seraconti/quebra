@@ -13,6 +13,7 @@ Importing a job builds its graph and reads no data, so the graph half needs no d
 from __future__ import annotations
 
 import importlib.util
+from itertools import product
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +27,9 @@ from quebra.analyzers.check_ledger import (
     VERDICT_PASS,
 )
 from quebra.analyzers.checks.battery import ROW_KEYS
+from quebra.analyzers.checks.result import CLOCK_SIDE
+from quebra.analyzers.event_table import SIDES
+from quebra.analyzers.windows import SIDE_IN_SPEC, SIDE_OUT_OF_SPEC
 from quebra.analyzers.independence_survey import (
     CHECK_LABELS,
     CHECK_NULL,
@@ -242,6 +246,29 @@ def test_a_ledger_job_draws_and_writes_only_ledgers_and_their_survey():
                 ), f"{job_id} materializes {sink.name}"
 
 
+def test_every_record_ledger_is_drawn_once_per_bag():
+    """Oracle: the job graphs and `CheckLedgerPanel`'s one-bag contract. Every record's
+    ledger feeds one `ledger_bag` step per bag, and each such step one ledger figure; no
+    figure draws a whole ledger, which holds both bags."""
+    from quebra.ledger_recipe import ledger_bag, ledger_step
+
+    for job_id, job in _ledger_jobs().items():
+        drawn = {
+            sink.input.node_id
+            for sink in job.sinks
+            if getattr(sink, "plot_class", None) is CheckLedgerPanel
+        }
+        bags = {node.node_id: node for node in _nodes(job, ledger_bag)}
+        assert drawn == set(bags), f"{job_id}: a ledger figure draws no single bag"
+        for ledger in _nodes(job, ledger_step):
+            sides = sorted(
+                node.kwargs["side"]
+                for node in bags.values()
+                if node.inputs[0].node_id == ledger.node_id
+            )
+            assert sides == sorted(SIDES), (job_id, ledger.node_id, sides)
+
+
 def test_each_ledger_job_bundles_and_surveys_every_ledger_under_its_own_records_label():
     """Oracle: the record each ledger's chain loads, read off its load node.
 
@@ -351,6 +378,16 @@ def test_declared_rows_out_of_step_with_the_bundles_raise():
         survey_ledgers(*sets, dataset_labels=("q2 210423", "q1 040423"), alpha=0.05)
 
 
+def test_two_rows_in_one_grid_cell_raise_rather_than_keeping_the_first():
+    """Oracle: the pivot's contract. A grid is one instrument on one bag and clock, so a
+    dataset and threshold hold one row; two would be pivoted to the first and the other
+    dropped unseen, so the survey raises."""
+    a = _fake_ledger("A", {"1 µs": VERDICT_PASS})
+    a.rows = pd.concat([a.rows, a.rows], ignore_index=True)
+    with pytest.raises(ValueError, match="more than one row"):
+        build_independence_survey(a, dataset_labels=("A",))
+
+
 def test_a_repeated_label_raises_rather_than_drawing_one_record_twice():
     """Oracle: pivot semantics. The grid keeps the first row per label and drops the rest."""
     a = _fake_ledger("A", {"1 µs": VERDICT_PASS})
@@ -400,15 +437,18 @@ def test_every_surveyed_key_has_a_label_and_a_stated_null():
 # --------------------------------------------------------------------- the reshape
 
 
-def _fake_ledger(dataset_id: str, verdicts: dict[str, str]) -> object:
+def _fake_ledger(
+    dataset_id: str, verdicts: dict[str, str], sides: tuple[str, ...] = (SIDE_IN_SPEC,)
+) -> object:
     rows = []
     for threshold, verdict in verdicts.items():
-        for check, calibration, variant in ROW_KEYS:
+        for side, (check, calibration, variant) in product(sides, ROW_KEYS):
             rows.append(
                 {
                     "dataset_id": dataset_id,
                     "threshold_label": threshold,
-                    "clock": "in_spec",
+                    "side": side,
+                    "clock": CLOCK_SIDE,
                     "check_id": check,
                     "calibration": calibration,
                     "variant": variant,
@@ -469,7 +509,8 @@ def test_rejection_share_divides_by_DECIDED_cells_not_by_every_cell():
         key=ROW_KEYS[0],
         label="x",
         null_statement="rejects when x",
-        clock="in_spec",
+        side=SIDE_IN_SPEC,
+        clock=CLOCK_SIDE,
         verdicts=verdicts,
         p_values=verdicts,
         n_events=verdicts,
@@ -485,7 +526,8 @@ def test_a_grid_with_nothing_decided_reports_nan_not_zero():
         key=ROW_KEYS[0],
         label="x",
         null_statement="rejects when x",
-        clock="in_spec",
+        side=SIDE_IN_SPEC,
+        clock=CLOCK_SIDE,
         verdicts=verdicts,
         p_values=verdicts,
         n_events=verdicts,
@@ -516,6 +558,7 @@ def _trend_cell(record, clock, c1, c2, cvm, value="3.5"):
             {
                 "dataset_id": record,
                 "threshold_label": "3 µs",
+                "side": SIDE_IN_SPEC,
                 "clock": clock,
                 "check_id": check,
                 "calibration": "permutation",
@@ -532,23 +575,24 @@ def _trend_ledgers():
     from quebra.analyzers.check_ledger import CheckLedger
 
     asymptotic_answer = {
-        **_trend_cell("A", "in_spec", True, False, False)[0],
+        **_trend_cell("A", CLOCK_SIDE, True, False, False)[0],
         "calibration": "asymptotic",
     }
     no_windows = {
         "dataset_id": "B",
         "threshold_label": "3 µs",
-        "clock": "in_spec",
+        "side": SIDE_IN_SPEC,
+        "clock": CLOCK_SIDE,
         "check_id": "(all)",
         "calibration": "",
         "variant": "",
         "verdict": VERDICT_NOT_COMPUTED,
         "notes": "no windows at this threshold",
     }
-    a = _trend_cell("A", "in_spec", False, False, True)
+    a = _trend_cell("A", CLOCK_SIDE, False, False, True)
     a += [asymptotic_answer] + _trend_cell("A", "calendar", True, True, True)
     b = [no_windows] + _trend_cell("B", "calendar", False, False, False, value="7")
-    c = _trend_cell("C", "in_spec", False, True, True)
+    c = _trend_cell("C", CLOCK_SIDE, False, True, True)
     return [
         CheckLedger(rows=pd.DataFrame(rows), dataset_id=record)
         for record, rows in (("A", a), ("B", b), ("C", c))
@@ -556,27 +600,35 @@ def _trend_ledgers():
 
 
 def test_the_trend_group_counts_equal_a_hand_table():
-    """Oracle: the hand table of `_trend_ledgers`. A in-spec: C1 and C2 silent, CvM
-    answers, and an asymptotic C1 answer that must not count. B in-spec has no windows;
-    B calendar has nothing at all. C in-spec: C1 silent, C2 answers. Numbers in a message
+    """Oracle: the hand table of `_trend_ledgers`, all on the in-spec bag. A side clock: C1
+    and C2 silent, CvM answers, and an asymptotic C1 answer that must not count. B side
+    clock has no windows; B calendar has nothing at all. C side clock: C1 silent, C2
+    answers. Numbers in a message
     read `#`, the digits of `C1/C2` and `T_N` do not."""
     counts = trend_group_counts(_trend_ledgers())
     undefined = "C1/C2 undefined here: tau # equals T_N #"
+    in_spec = SIDE_IN_SPEC
     assert counts.no_answer.to_dict("records") == [
-        {"clock": "calendar", "message": undefined, "n_cells": 1},
-        {"clock": "in_spec", "message": undefined, "n_cells": 1},
-        {"clock": "in_spec", "message": "no windows at this threshold", "n_cells": 1},
+        {"side": in_spec, "clock": "calendar", "message": undefined, "n_cells": 1},
+        {"side": in_spec, "clock": CLOCK_SIDE, "message": undefined, "n_cells": 1},
+        {
+            "side": in_spec,
+            "clock": CLOCK_SIDE,
+            "message": "no windows at this threshold",
+            "n_cells": 1,
+        },
     ]
+    assert set(counts.cvm_alone["side"]) == {in_spec}
     per_clock = counts.cvm_alone.set_index("clock")
     assert per_clock.loc[
         "calendar", ["n_cells", "n_trend_answered", "n_cvm_alone"]
     ].tolist() == [2, 1, 0]
     assert per_clock.loc[
-        "in_spec", ["n_cells", "n_trend_answered", "n_cvm_alone"]
+        CLOCK_SIDE, ["n_cells", "n_trend_answered", "n_cvm_alone"]
     ].tolist() == [3, 2, 1]
     assert per_clock.loc["calendar", "share_of_all"] == 0.0
-    assert per_clock.loc["in_spec", "share_of_answered"] == 0.5
-    assert per_clock.loc["in_spec", "share_of_all"] == pytest.approx(1.0 / 3.0)
+    assert per_clock.loc[CLOCK_SIDE, "share_of_answered"] == 0.5
+    assert per_clock.loc[CLOCK_SIDE, "share_of_all"] == pytest.approx(1.0 / 3.0)
     with pytest.raises(ValueError, match="repeat"):
         trend_group_counts(_trend_ledgers() + _trend_ledgers()[:1])
 
@@ -587,7 +639,7 @@ def test_the_trend_count_refuses_a_cell_where_c1_and_c2_were_never_asked():
     cell has nothing to count."""
     from quebra.analyzers.check_ledger import CheckLedger
 
-    cvm_only = _trend_cell("D", "in_spec", False, False, True)[2:]
+    cvm_only = _trend_cell("D", CLOCK_SIDE, False, False, True)[2:]
     with pytest.raises(ValueError, match="never asked"):
         trend_group_counts([CheckLedger(rows=pd.DataFrame(cvm_only), dataset_id="D")])
     no_rows = pd.DataFrame(columns=list(cvm_only[0]))
@@ -597,7 +649,7 @@ def test_the_trend_count_refuses_a_cell_where_c1_and_c2_were_never_asked():
 
 def test_one_reason_is_one_message_however_the_ledger_prints_its_numbers():
     """Oracle: the ledger itself. One carve at five time scales fails C1 and C2 on the
-    in-spec clock for one reason, `tau == T_N`; the ledger prints its numbers at different
+    in-spec bag's side clock for one reason, `tau == T_N`; the ledger prints its numbers at different
     widths, cuts the note and writes it twice, and the count still reads one message."""
     from quebra.analyzers import check_ledger, windows
 
@@ -644,14 +696,18 @@ def test_one_reason_is_one_message_however_the_ledger_prints_its_numbers():
     for ledger in ledgers:
         rows = ledger.rows
         c1 = rows[
-            (rows["clock"] == "in_spec")
+            (rows["side"] == SIDE_IN_SPEC)
+            & (rows["clock"] == CLOCK_SIDE)
             & (rows["check_id"] == "c1_lewis_robinson")
             & (rows["calibration"] == "permutation")
         ]
         raw.add(str(c1["notes"].iloc[0]))
     assert len(raw) == len(ledgers), "premise: the raw notes differ in their numbers"
     counts = trend_group_counts(ledgers)
-    in_spec = counts.no_answer[counts.no_answer["clock"] == "in_spec"]
+    in_spec = counts.no_answer[
+        (counts.no_answer["side"] == SIDE_IN_SPEC)
+        & (counts.no_answer["clock"] == CLOCK_SIDE)
+    ]
     assert in_spec["n_cells"].tolist() == [len(ledgers)], in_spec.to_dict("records")
     assert (
         in_spec["message"]
@@ -679,6 +735,63 @@ def test_no_survey_figure_names_c3():
             assert texts, f"control: {plot.__name__} draws text"
             named = [t for t in texts if "C3" in t]
             assert not named, (plot.__name__, named)
+        finally:
+            plt.close(fig)
+
+
+def test_the_survey_draws_both_bags_each_headed_in_its_colour_and_says_grid():
+    """Oracle: the figures' own text and the theme's bag colours (issue #19, 30 Oct
+    addendum). From ledgers of both bags the survey holds one grid per instrument, bag and
+    clock, the two bags reading their own rows; every survey figure heads each bag's grids
+    with its name on a strip of its colour, says the colour names the bag, and no figure's
+    text says "panel"."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import to_hex
+    from matplotlib.text import Text
+
+    from quebra.analyzers.independence_survey import SURVEY_KEYS
+    from quebra.plots import theme
+
+    both = (SIDE_IN_SPEC, SIDE_OUT_OF_SPEC)
+    a = _fake_ledger("A", {"2 µs": VERDICT_PASS, "3 µs": VERDICT_FAIL}, sides=both)
+    b = _fake_ledger("B", {"2 µs": VERDICT_FAIL, "3 µs": VERDICT_PASS}, sides=both)
+    rows = a.rows
+    rows.loc[rows["side"] == SIDE_OUT_OF_SPEC, "verdict"] = VERDICT_INCONCLUSIVE
+    data = build_independence_survey(a, b, dataset_labels=("A", "B"))
+    assert data.sides == list(both)
+    assert {(g.key, g.side, g.clock) for g in data.grids} == {
+        (key, side, CLOCK_SIDE) for key in SURVEY_KEYS for side in both
+    }
+    key = SURVEY_KEYS[0]
+    assert data.grid(key, SIDE_IN_SPEC, CLOCK_SIDE).verdicts.loc["A", "2 µs"] == (
+        VERDICT_PASS
+    )
+    assert data.grid(key, SIDE_OUT_OF_SPEC, CLOCK_SIDE).verdicts.loc["A", "2 µs"] == (
+        VERDICT_INCONCLUSIVE
+    )
+
+    for plot in (*SURVEY_PLOTS, IndependenceSurveyOverviewPlot):
+        fig = plot(name="bag_probe").build_matplotlib(data)
+        try:
+            texts = [t for t in fig.findobj(Text) if t.get_text()]
+            assert not [t.get_text() for t in texts if "panel" in t.get_text()]
+            # The pass and fail fills share the bags' colours, so the caption says which
+            # one a header carries.
+            assert [t for t in texts if "names its bag, not a verdict" in t.get_text()]
+            for side in both:
+                headers = [
+                    t for t in texts if t.get_text().startswith(theme.BAG_LABELS[side])
+                ]
+                assert headers, (plot.__name__, side)
+                for header in headers:
+                    strip = header.get_bbox_patch()
+                    assert strip is not None, (plot.__name__, header.get_text())
+                    assert to_hex(strip.get_facecolor()) == (
+                        theme.STATE_COLORS[side].lower()
+                    )
         finally:
             plt.close(fig)
 

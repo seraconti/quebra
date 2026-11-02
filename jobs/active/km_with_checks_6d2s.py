@@ -30,7 +30,8 @@ from quebra.analyzers.check_outcome import (
 )
 from quebra.analyzers.kaplan_meier import KaplanMeierComparison, KaplanMeierCurve
 from quebra.analyzers.t2star import T2StarResult
-from quebra.analyzers.windows import WindowsResult
+from quebra.analyzers.checks.result import CLOCK_CALENDAR, CLOCK_SIDE
+from quebra.analyzers.windows import SIDE_IN_SPEC, WindowsResult
 from quebra.core.dataset import Dataset
 from quebra.core.job import Job
 from quebra.plots.check_outcome_plot import CheckOutcomePlot
@@ -81,7 +82,10 @@ DISPLAY_SET = (
     ("c6_exchangeability", "permutation", ""),
 )
 
-CLOCKS = ("in_spec", "calendar")
+CLOCKS = (CLOCK_SIDE, CLOCK_CALENDAR)
+# The bag the band is drawn from (`windows_in_spec` below), so the checks shown beside it are
+# that bag's; the ledgers score both.
+SIDE = SIDE_IN_SPEC
 
 # The record in `analyzers/assumptions.py` this band rests on. Named on the artifact so a
 # figure can say WHICH assumption the checks below are evidence about.
@@ -175,8 +179,9 @@ def _outcome(
     display_set: tuple[tuple[str, str, str], ...],
     threshold_label: str,
     alpha: float,
+    side: str,
 ) -> CheckOutcome:
-    """Every drawn record's rows, reshaped into one grid per shown check."""
+    """Every drawn record's rows of one bag, reshaped into one grid per shown check."""
     rows = pd.concat([led.rows for led in ledgers], ignore_index=True)
     return build_check_outcome(
         rows,
@@ -189,6 +194,7 @@ def _outcome(
         dataset_labels=tuple(display for _stem, _qubit, display in DATASETS),
         clocks=CLOCKS,
         alpha=alpha,
+        side=side,
     )
 
 
@@ -269,6 +275,7 @@ _check_outcome = job.step(
     display_set=_DISPLAY,
     threshold_label=THRESHOLD_LABEL,
     alpha=ALPHA,
+    side=SIDE,
 )
 
 # Both materialized: the ranking behind the drawn pair, and the check outcome. The run-set is

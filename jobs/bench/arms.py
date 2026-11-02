@@ -80,7 +80,11 @@ from scipy.special import gamma as gamma_fn
 
 from jobs.bench.carve import carve_windows
 from quebra.analyzers.checks._multiprocess import segments_from_windows
-from quebra.analyzers.checks.result import CLOCK_IN_SPEC, Segment
+from quebra.analyzers.checks.result import BENCH_CLOCK, CLOCK_IN_SPEC, Segment
+
+# The bench names its clocks as its tables do (`BENCH_CLOCK`); the segment builder names
+# them as the pipeline does. A carved arm has no side column, so it is the in-spec bag.
+_BUILDER_CLOCK = {bench: clock for clock, bench in BENCH_CLOCK.items()}
 
 ARM_A = "A_iid_weibull"
 ARM_B = "B_iid_reads_carved"
@@ -321,7 +325,7 @@ def _carved_segments(
     windows = carve_windows(t, values, threshold, big_values_good=True)
     return segments_from_windows(
         windows,
-        clock=clock,
+        clock=_BUILDER_CLOCK[clock],
         min_events=min_events,
         observation_end_s=n_reads * READ_DT_S,
     )

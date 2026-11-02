@@ -47,19 +47,36 @@ On Arm E's dependence grid alone the figures are 0.017 and 0.077.
 
 A window table can become a renewal process two ways, and they ask different questions.
 
-- **In-spec clock** (`CLOCK_IN_SPEC`): an event is a window dying by `down_crossing`, `x`
-  is its duration, `tau` is the segment's total in-spec time. Asks whether successive
-  in-spec lifetimes look renewal.
+- **Side clock** (`CLOCK_SIDE`): an event is a window ended by the crossing that leaves its
+  side (`down_crossing` in spec, `up_crossing` out of spec), `x` is its duration, `tau` is
+  the segment's total time on that side. Asks whether successive lifetimes on the side look
+  renewal.
 - **Calendar clock** (`CLOCK_CALENDAR`): an event is a window BIRTH, `x` is wall-clock time
   between births, `tau` is the observed length. Asks whether failures arrive as a renewal
   process in real time - the question a maintenance schedule poses.
 
+Both clocks run on both bags, the in-spec and the out-of-spec windows, by one rule
+(`checks/_multiprocess.segments_from_windows`), and a ledger row names its bag (`side`) and
+its clock. The bench and the permutation streams name the side clock `in_spec`
+(`checks/result.BENCH_CLOCK`), so the in-spec bag keeps its bench cells and its p-values,
+and the out-of-spec bag reads the same cells. That rests on the bench's arms: the carved
+arms (B, C) threshold a symmetric series at its median, so their two bags have one law, and
+the other arms generate durations with no side. Every calendar-clock cell comes from B and
+C, so there the median arms are the whole basis.
+
+The argument holds at the median only. At a rung where a fraction p of reads is in spec, the
+out-of-spec bag has the law of the in-spec bag at 1 - p, and no cell measured that either.
+The cells transfer to the out-of-spec bag as far as they transfer to the in-spec bag, which
+is the open question it already was. The two bags also draw from one permutation stream, so
+their p-values share draws wherever their segment sizes match and are not independent.
+
 Both are reported. Reporting one alone would hide that the answer depends on the choice,
 and on the real record they DO disagree: at 4 µs the calendar clock passes every check
-while the in-spec clock cannot compute C1 or C2 at all.
+while the in-spec bag's side clock cannot compute C1 or C2 at all (measured on the
+in-spec bag, on the 1 to 10 µs ladder).
 
-That last point is structural, not a bug. On the in-spec clock, time stops accruing the
-moment the record ends out of spec, so `tau == T_N` and eq (7) (Kvaloy and Lindqvist 2020, p. 104) is `+inf`: its
+That last point is structural, not a bug. On the side clock, time stops accruing the
+moment the record ends on the other side, so `tau == T_N` and eq (7) (Kvaloy and Lindqvist 2020, p. 104) is `+inf`: its
 summand `ln((tau - T_{N-1})/(tau - T_N))` has a zero denominator. Measured on synthetic iid reads: ~73% of replicates. Those rows read `not computed`
 with the reason attached.
 

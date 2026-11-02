@@ -74,6 +74,23 @@ STATE_COLORS = {
 UNOBSERVED_HATCH = "////"
 UNOBSERVED_EDGE = "#9A9A9A"
 
+# A bag (the windows of one side) as a figure names it, and its header: white text on a
+# strip of its side's colour, so the bag reads at a glance and the text stays legible.
+BAG_LABELS = {"in_spec": "in-spec bag", "out_of_spec": "out-of-spec bag"}
+
+
+def bag_header(side: str) -> dict:
+    """Text kwargs for a header that names one bag (`BAG_LABELS`)."""
+    return {
+        "color": "#FFFFFF",
+        "bbox": {
+            "facecolor": STATE_COLORS[side],
+            "edgecolor": "none",
+            "boxstyle": "square,pad=0.3",
+        },
+    }
+
+
 # Confidence/tolerance bands: the fill carries the extent, the edge carries the method.
 BAND_STYLE = {
     "fill_alpha": 0.18,

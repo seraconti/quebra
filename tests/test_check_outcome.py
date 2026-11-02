@@ -17,6 +17,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -36,6 +37,7 @@ from quebra.analyzers.check_ledger import (
     VERDICT_PASS,
 )
 from quebra.plots.check_outcome_plot import CheckOutcomePlot
+from quebra.plots.theme import BAG_LABELS
 
 pytestmark = pytest.mark.unit
 
@@ -82,16 +84,79 @@ def _every_verdict_ledger() -> pd.DataFrame:
     )
 
 
-def _build(ledger, run_set=(C1_PERM, C6_PERM), display_set=(C1_PERM, C6_PERM)):
+def _build(
+    ledger, run_set=(C1_PERM, C6_PERM), display_set=(C1_PERM, C6_PERM), clocks=CLOCKS
+):
+    # A one-clock ledger asks for that clock alone: a clock no row carries raises.
     return build_check_outcome(
         ledger,
         threshold_label=THRESHOLD,
         run_set=run_set,
         display_set=display_set,
         datasets=DATASETS,
-        clocks=CLOCKS,
+        clocks=clocks,
         alpha=0.05,
     )
+
+
+def test_two_bags_in_one_cell_raise_unless_side_keeps_one():
+    """Oracle: the builder's contract. A window ledger scores both bags, so one dataset,
+    clock and check holds two rows, and a grid cell must not keep one of them unseen.
+    Without `side` the builder raises; with it, the cell reads that bag's row."""
+    ledger = _ledger(
+        {**_row("rec_a", "in_spec", C1_PERM, VERDICT_PASS, 0.62), "side": "in_spec"},
+        {
+            **_row("rec_a", "in_spec", C1_PERM, VERDICT_FAIL, 0.004),
+            "side": "out_of_spec",
+        },
+    )
+    with pytest.raises(ValueError, match="more than one bag"):
+        _build(ledger, run_set=(C1_PERM,), display_set=(C1_PERM,), clocks=("in_spec",))
+    for side, verdict in (("in_spec", VERDICT_PASS), ("out_of_spec", VERDICT_FAIL)):
+        outcome = build_check_outcome(
+            ledger,
+            threshold_label=THRESHOLD,
+            run_set=(C1_PERM,),
+            display_set=(C1_PERM,),
+            datasets=("rec_a",),
+            clocks=("in_spec",),
+            alpha=0.05,
+            side=side,
+        )
+        assert outcome.grids[0].verdicts == ((verdict,),), side
+        # The bag travels on the artifact and is named on the figure.
+        assert outcome.side == side
+        fig = CheckOutcomePlot("probe").build_matplotlib(outcome)
+        assert BAG_LABELS[side] in fig.get_suptitle(), fig.get_suptitle()
+        plt.close(fig)
+
+
+def test_a_side_or_clock_the_ledger_never_scored_raises_rather_than_rendering_absent():
+    """Oracle: the twin of the threshold guard below. A bag or clock name the ledger never
+    scored is a wiring mistake, and a column of absent cells would read as a result."""
+    ledger = _ledger(
+        {**_row("rec_a", "side", C1_PERM, VERDICT_PASS, 0.62), "side": "in_spec"},
+        {**_row("rec_a", "calendar", C1_PERM, VERDICT_PASS, 0.5), "side": "in_spec"},
+    )
+    build = dict(
+        threshold_label=THRESHOLD,
+        run_set=(C1_PERM,),
+        display_set=(C1_PERM,),
+        datasets=("rec_a",),
+        alpha=0.05,
+    )
+    good = build_check_outcome(
+        ledger, clocks=("side", "calendar"), side="in_spec", **build
+    )
+    assert good.grids[0].verdicts == ((VERDICT_PASS, VERDICT_PASS),), "control"
+    with pytest.raises(KeyError, match="side 'in-spec' is not in the ledger"):
+        build_check_outcome(
+            ledger, clocks=("side", "calendar"), side="in-spec", **build
+        )
+    with pytest.raises(KeyError, match=r"clocks \['in_spec'\] are not in the ledger"):
+        build_check_outcome(
+            ledger, clocks=("in_spec", "calendar"), side="in_spec", **build
+        )
 
 
 # ------------------------------------------------- a result never prevents execution
@@ -113,7 +178,9 @@ def test_every_verdict_builds_and_renders(verdict):
             None if verdict == VERDICT_NOT_COMPUTED else 0.2,
         )
     )
-    outcome = _build(ledger, run_set=(C1_PERM,), display_set=(C1_PERM,))
+    outcome = _build(
+        ledger, run_set=(C1_PERM,), display_set=(C1_PERM,), clocks=("in_spec",)
+    )
     assert len(outcome.grids) == 1
     assert outcome.grids[0].verdicts[0][0] == verdict
     figure = CheckOutcomePlot("probe").build_matplotlib(outcome)
@@ -143,7 +210,7 @@ def test_cells_are_looked_up_by_dataset_id_while_labels_are_only_shown():
         display_set=(C1_PERM,),
         datasets=("rec_a",),
         dataset_labels=("Record A",),
-        clocks=CLOCKS,
+        clocks=("in_spec",),
         alpha=0.05,
     )
     grid = outcome.grids[0]
@@ -205,7 +272,9 @@ def test_the_display_set_selects_and_the_run_set_is_still_recorded():
 def test_a_missing_cell_is_absent_not_a_fabricated_verdict():
     """rec_b has no C1 row at all here. The cell must say so rather than inherit rec_a's."""
     ledger = _ledger(_row("rec_a", "in_spec", C1_PERM, VERDICT_PASS, 0.7))
-    grid = _build(ledger, run_set=(C1_PERM,), display_set=(C1_PERM,)).grids[0]
+    grid = _build(
+        ledger, run_set=(C1_PERM,), display_set=(C1_PERM,), clocks=("in_spec",)
+    ).grids[0]
     assert grid.verdicts[0][0] == VERDICT_PASS
     assert grid.verdicts[1][0] == VERDICT_ABSENT
     assert grid.p_values[1][0] is None
@@ -242,11 +311,18 @@ def test_rows_at_another_threshold_are_not_mixed_in():
 def test_asked_for_but_unanswered_is_reported_separately_from_never_asked():
     """The distinction R8.3 insisted on, now visible on the artifact."""
     ledger = _ledger(_row("rec_a", "in_spec", C1_PERM, VERDICT_PASS, 0.7))
-    outcome = _build(ledger, run_set=(C1_PERM, C6_PERM), display_set=(C1_PERM,))
+    outcome = _build(
+        ledger,
+        run_set=(C1_PERM, C6_PERM),
+        display_set=(C1_PERM,),
+        clocks=("in_spec",),
+    )
     assert outcome.asked_but_unanswered == (C6_PERM,)
 
     # The discriminator: a row nobody asked for is not reported as unanswered.
-    only_c1 = _build(ledger, run_set=(C1_PERM,), display_set=(C1_PERM,))
+    only_c1 = _build(
+        ledger, run_set=(C1_PERM,), display_set=(C1_PERM,), clocks=("in_spec",)
+    )
     assert only_c1.asked_but_unanswered == ()
 
 
@@ -444,7 +520,8 @@ def test_the_battery_switches_are_derived_from_the_run_set_and_reach_the_ledger(
     from quebra.analyzers import check_ledger
 
     class _W:
-        windows_in_spec = None
+        windows_in_spec = pd.DataFrame()
+        windows_out_of_spec = pd.DataFrame()
         meta: dict = {}
         diagnostics: dict = {}
 

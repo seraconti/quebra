@@ -13,9 +13,19 @@ three to hold:
 If any fails, the verdict is NOT `pass`. That is the entire point of the ledger: a
 non-rejection must never print as a pass on a p-value alone.
 
-**Which clock.** Both are run. On the in-spec clock of a carved record, time stops
-accruing the moment the record ends out of spec, so `tau == T_N` - measured at ~73% of
-synthetic replicates. Kvaloy and Lindqvist's eq (7) (Technometrics 2020, p. 104) is
+**Which bag, which clock.** Both bags, the in-spec and the out-of-spec windows, on both
+clocks: a row is one (threshold, side, clock, check). The bags are scored by one rule
+(`_multiprocess.segments_from_windows`), draw their permutations from one stream per
+threshold and clock (`stream_for`), and read one bench cell: the bench calibrated the side
+clock on arms that either carry no side or threshold a symmetric series at its median, and
+the calendar clock on the median arms alone (B and C), so its cells do not depend on the
+bag. That holds at the median only. At a rung where a fraction p of reads is in spec, the
+out-of-spec bag has the law of the in-spec bag at 1 - p, which no cell measured either: the
+cells transfer to both bags as far as they transfer to one, an open question for both. The
+shared stream means the bags' p-values share their draws wherever their segment sizes
+match, so they are not independent. On the side clock of a carved record, time on the side
+stops accruing the moment the record ends on the other side, so `tau == T_N` - measured at
+~73% of synthetic replicates on the in-spec bag. Kvaloy and Lindqvist's eq (7) (Technometrics 2020, p. 104) is
 singular there, so C1's and C2's rows read `not computed` with the reason. The ledger carries
 no asymptotic row, whose limiting null would also assume a `tau` chosen independently of the
 events. CvM by permutation and the rank checks (which never touch `tau`) still run there.
@@ -56,13 +66,14 @@ from quebra.analyzers.checks.battery import (
     run_battery,
 )
 from quebra.analyzers.checks.result import (
+    BENCH_CLOCK,
     CALIB_PERMUTATION,
     CALIB_R_COPULA,
-    CLOCK_CALENDAR,
-    CLOCK_IN_SPEC,
+    CLOCKS,
     CheckResult,
     Segment,
 )
+from quebra.analyzers.event_table import SIDES
 from quebra.core._artifact_guard import StaleArtifactGuard
 
 VERDICT_PASS = "pass"
@@ -99,9 +110,13 @@ VERDICTS = (
 # them.
 TIE_SENSITIVE_CHECKS = ("c3_serial_copula", "c5_rank_autocorr", "c6_exchangeability")
 
+# The side of a row whose durations are no bag's windows (calibration cycles).
+NO_SIDE = ""
+
 LEDGER_COLUMNS = [
     "dataset_id",
     "threshold_label",
+    "side",
     "clock",
     "check_id",
     "calibration",
@@ -126,7 +141,7 @@ LEDGER_COLUMNS = [
 
 @dataclass
 class CheckLedger(StaleArtifactGuard):
-    """One row per (threshold, clock, check, calibration), plus the settings that made it.
+    """One row per (threshold, side, clock, check, calibration), plus the settings that made it.
 
     The settings are ON the artifact rather than only in the job file because a ledger read
     six months from now has to be interpretable without opening the job that produced it -
@@ -177,6 +192,8 @@ class CheckLedger(StaleArtifactGuard):
 
 @dataclass(slots=True)
 class CheckLedgerInputs:
+    # Both bags' windows, one table, each row with its `side` (`make_inputs_from_windows`).
+    # A bag with no rows at a threshold reads `no windows at this threshold` there.
     windows: pd.DataFrame
     bench_size_table: pd.DataFrame
     thresholds: list[tuple[str, float, bool]]
@@ -228,7 +245,7 @@ def make_inputs_from_windows(
     include_c2_asymptotic: bool = True,
     c3_n_null_sim: int = c3.N_NULL_SIM,
 ) -> CheckLedgerInputs:
-    """Build inputs from a `WindowsResult`, taking the gap spans with it.
+    """Build inputs from a `WindowsResult`: both bags' windows, and the gap spans.
 
     `gap_spans_s` is not optional in spirit: without it `segments_from_windows` falls back
     to reading birth types alone, which cannot see a gap flanked by out-of-spec reads and
@@ -236,7 +253,10 @@ def make_inputs_from_windows(
     """
     diagnostics = getattr(window_result, "diagnostics", {}) or {}
     return CheckLedgerInputs(
-        windows=window_result.windows_in_spec,
+        windows=pd.concat(
+            [window_result.windows_in_spec, window_result.windows_out_of_spec],
+            ignore_index=True,
+        ),
         bench_size_table=bench_size_table,
         thresholds=list(thresholds),
         dataset_id=str(getattr(window_result, "meta", {}).get("dataset_id", "")),
@@ -384,23 +404,41 @@ def run(inputs: CheckLedgerInputs) -> CheckLedger:
     r_version, r_executable, r_libraries = _r_provenance(inputs.include_c3)
 
     rows: list[dict[str, object]] = []
+    if not inputs.record_failure and len(inputs.windows):
+        if "side" not in inputs.windows.columns:
+            raise KeyError("the ledger's window table has no side column")
+        unknown = sorted({str(v) for v in inputs.windows["side"]} - set(SIDES))
+        if unknown:
+            raise ValueError(f"window rows of no bag: side {unknown}; bags: {SIDES}")
     for label, _value, _big_good in inputs.thresholds:
-        if inputs.record_failure:
-            for clock in (CLOCK_IN_SPEC, CLOCK_CALENDAR):
-                rows.append(_blank_row(label, clock, inputs, inputs.record_failure))
-            continue
-        table = inputs.windows[inputs.windows["threshold_label"] == label]
-        for clock in (CLOCK_IN_SPEC, CLOCK_CALENDAR):
-            rows.extend(
-                _rows_for(
-                    table=table,
-                    label=label,
-                    clock=clock,
-                    inputs=inputs,
-                    acceptance=acceptance,
-                    grid=grid,
+        for side in SIDES:
+            for clock in CLOCKS:
+                if inputs.record_failure:
+                    rows.append(
+                        _blank_row(
+                            label,
+                            side,
+                            clock,
+                            inputs.dataset_id,
+                            inputs.record_failure,
+                        )
+                    )
+                    continue
+                table = inputs.windows[
+                    (inputs.windows["threshold_label"] == label)
+                    & (inputs.windows["side"] == side)
+                ]
+                rows.extend(
+                    _rows_for(
+                        table=table,
+                        label=label,
+                        side=side,
+                        clock=clock,
+                        inputs=inputs,
+                        acceptance=acceptance,
+                        grid=grid,
+                    )
                 )
-            )
     frame = pd.DataFrame(rows).reindex(columns=LEDGER_COLUMNS)
     ledger = CheckLedger(
         rows=frame,
@@ -423,6 +461,7 @@ def run(inputs: CheckLedgerInputs) -> CheckLedger:
 
 def _blank_row(
     label: str,
+    side: str,
     clock: str,
     dataset_id: str,
     note: str,
@@ -431,6 +470,7 @@ def _blank_row(
     return {
         "dataset_id": dataset_id,
         "threshold_label": label,
+        "side": side,
         "clock": clock,
         "check_id": "(all)",
         "calibration": "",
@@ -457,6 +497,7 @@ def _rows_for(
     *,
     table: pd.DataFrame,
     label: str,
+    side: str,
     clock: str,
     inputs: CheckLedgerInputs,
     acceptance: pd.DataFrame,
@@ -464,12 +505,15 @@ def _rows_for(
 ) -> list[dict[str, object]]:
     if not len(table):
         return [
-            _blank_row(label, clock, inputs.dataset_id, "no windows at this threshold")
+            _blank_row(
+                label, side, clock, inputs.dataset_id, "no windows at this threshold"
+            )
         ]
     try:
         segments, n_dropped = segments_from_windows(
             table,
             clock=clock,
+            side=side,
             min_events=inputs.min_events_per_segment,
             gap_spans_s=inputs.gap_spans_s,
         )
@@ -477,6 +521,7 @@ def _rows_for(
         return [
             _blank_row(
                 label,
+                side,
                 clock,
                 inputs.dataset_id,
                 f"segmentation failed: {exc}"[:200],
@@ -493,6 +538,7 @@ def _rows_for(
         n_degenerate=n_degenerate,
         n_used=len(table),
         label=label,
+        side=side,
         clock=clock,
         dataset_id=inputs.dataset_id,
         acceptance=acceptance,
@@ -533,8 +579,13 @@ def score_segments(
     include_c2_asymptotic: bool,
     include_c3: bool,
     c3_n_null_sim: int,
+    side: str = NO_SIDE,
 ) -> list[dict[str, object]]:
-    """Ledger rows for durations already cut into segments, on one label and clock.
+    """Ledger rows for durations already cut into segments, on one label, side and clock.
+
+    `side` is the bag the segments came from, `NO_SIDE` for durations that are no bag's
+    windows. The permutation stream and the bench cell are looked up under the clock's
+    bench name (`checks.result.BENCH_CLOCK`) and do not depend on the side.
 
     The half of the ledger that does not care where the segments came from: the battery
     off one permutation set, C3, the bench match and the verdict. `_rows_for` reaches it
@@ -554,7 +605,7 @@ def score_segments(
             else f"no segment reached {min_events_per_segment} events "
             f"({n_dropped} dropped)"
         )
-        return [_blank_row(label, clock, dataset_id, note, n_used)]
+        return [_blank_row(label, side, clock, dataset_id, note, n_used)]
     degenerate_note = (
         f"{n_degenerate} segment(s) with every duration identical dropped"
         if n_degenerate
@@ -566,7 +617,7 @@ def score_segments(
     n_events = int(len(durations))
     bench_n = nearest_bracketing_n(grid, n_events)
 
-    stream = stream_for(label, clock)
+    stream = stream_for(label, BENCH_CLOCK[clock])
     rng = np.random.default_rng([seed, stream])
     perm = block_permutations([s.n_events for s in segments], n_permutations, rng)
 
@@ -583,13 +634,15 @@ def score_segments(
         )
     except (ValueError, KeyError) as exc:
         return [
-            _blank_row(label, clock, dataset_id, f"battery failed: {exc}"[:200], n_used)
+            _blank_row(
+                label, side, clock, dataset_id, f"battery failed: {exc}"[:200], n_used
+            )
         ]
     tau_checks = ("c1_lewis_robinson", "c2_anderson_darling")
     refused = [r for r in results if r.check in tau_checks and UNDEFINED in r.extra]
     if refused:
         # Either of C1 and C2 undefined drops both, with the first one's reason (usually
-        # tau == T_N on the in-spec clock): a mathematical refusal, so it overrides a
+        # tau == T_N on the side clock): a mathematical refusal, so it overrides a
         # run-set that asked for those rows. Say so with their own rows: without them the
         # reader sees a ladder where the trend checks simply vanish at the loose thresholds
         # and cannot tell whether they were attempted, declined, or forgotten. A ledger runs
@@ -654,7 +707,7 @@ def score_segments(
             (acceptance["check"] == result.check)
             & (acceptance["calibration"] == result.calibration)
             & (acceptance["variant"].fillna("") == variant)
-            & (acceptance["clock"] == clock)
+            & (acceptance["clock"] == BENCH_CLOCK[clock])
             & (acceptance["n_target"] == bench_n)
         ]
         if len(match):
@@ -687,6 +740,7 @@ def score_segments(
             {
                 "dataset_id": dataset_id,
                 "threshold_label": label,
+                "side": side,
                 "clock": clock,
                 "check_id": result.check,
                 "calibration": result.calibration,

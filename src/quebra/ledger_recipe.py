@@ -2,7 +2,8 @@
 
 A ledger job runs the checks and nothing else. Per record it wires the T2* carve
 (`recipes.wire_t2star_carve`, the definition the T2* panel is drawn from), the check ledger
-of those windows, its `CheckLedgerPanel` and a materialized `{prefix}_check_ledger_data`.
+of both bags of those windows, one `CheckLedgerPanel` per bag and a materialized
+`{record}_check_ledger_data`.
 Over all of the job's records it then builds one independence survey: one grid per
 instrument, records down, thresholds across.
 
@@ -22,7 +23,7 @@ re-key every T2* job whenever a check changed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pandas as pd
@@ -33,6 +34,7 @@ from quebra.analyzers.check_ledger import (
     make_inputs_from_windows,
 )
 from quebra.analyzers.check_ledger import run as run_ledger
+from quebra.analyzers.event_table import SIDES
 from quebra.analyzers.independence_survey import (
     IndependenceSurveyData,
     build_independence_survey,
@@ -166,6 +168,16 @@ def ledger_step(
     )
 
 
+def ledger_bag(ledger: CheckLedger, *, side: str) -> CheckLedger:
+    """One bag's rows of a record's ledger, for the figure that draws that bag."""
+    if side not in SIDES:
+        raise ValueError(f"side must be one of {SIDES}; got {side!r}")
+    rows = ledger.rows[ledger.rows["side"] == side].reset_index(drop=True)
+    if not len(rows):
+        raise ValueError(f"the ledger of {ledger.dataset_id!r} has no {side} row")
+    return replace(ledger, rows=rows)
+
+
 def collect_ledgers(*ledgers: CheckLedger, labels: tuple[str, ...]) -> CheckLedgers:
     """Bundle a job's ledgers, so one ref carries all of them.
 
@@ -278,7 +290,8 @@ def configure_check_ledger_job(
     include_c3: bool,
     c3_n_null_sim: int,
 ) -> None:
-    """Per record: the carve, then its check ledger. Then the bundle, and one survey.
+    """Per record: the carve, then its check ledger and one figure per bag. Then the
+    bundle, and one survey.
 
     A record's prefix is its dataset's `extra["run_name"]`, which also becomes the ledger's
     `dataset_id`, so the label a row carries is derived from the record and not retyped.
@@ -323,11 +336,19 @@ def configure_check_ledger_job(
             include_c3=include_c3,
             c3_n_null_sim=c3_n_null_sim,
         )
-        job.figure(
-            CheckLedgerPanel, ledger, targets=TARGETS, title=f"{record} check ledger"
-        )
-        # Not `{record}_check_ledger`: that is the figure's safe-named title, and two sinks
-        # may not share a provenance name.
+        # One figure per bag. The titles name the bag; `ledger_bag` hands each its rows.
+        for side in SIDES:
+            bag = job.step(
+                ledger_bag, ledger, name=f"check_ledger_{record}_{side}", side=side
+            )
+            job.figure(
+                CheckLedgerPanel,
+                bag,
+                targets=TARGETS,
+                title=f"{record} check ledger {side} bag",
+            )
+        # Not `{record}_check_ledger_{side}_bag`: that is a figure's safe-named title, and
+        # two sinks may not share a provenance name.
         job.materialize(ledger, name=f"{record}{LEDGER_DATA_SUFFIX}")
         ledgers.append(ledger)
         labels.append(record_label(record))

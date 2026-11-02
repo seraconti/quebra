@@ -206,3 +206,29 @@ def test_bench_carve_refuses_a_non_finite_threshold_on_a_one_read_record(thresho
         )
     with pytest.raises(ValueError, match="non-finite"):
         carve_windows(t, values, threshold, big_values_good=True)
+
+
+@pytest.mark.parametrize(
+    ("clock", "builder_clock"), [("in_spec", "side"), ("calendar", "calendar")]
+)
+def test_a_carved_arm_segments_through_the_pipelines_clock(clock, builder_clock):
+    """Oracle: the pipeline's segment builder. A carved bench arm labels its clocks as the
+    bench tables do (`in_spec`, `calendar`) and must reach the builder's side and calendar
+    clocks, written out here rather than read back from `BENCH_CLOCK`: its segments are the
+    builder's segments of the bench's own carve, the in-spec bag, watched until one read
+    interval past the last read."""
+    from jobs.bench import arms
+    from quebra.analyzers.checks._multiprocess import segments_from_windows
+
+    values = np.random.default_rng(17).standard_normal(400)
+    got, _ = arms._carved_segments(values, clock, 2)
+    t = np.arange(len(values), dtype=float) * arms.READ_DT_S
+    threshold = float(np.quantile(values, 1.0 - arms.IN_SPEC_P))
+    want, _ = segments_from_windows(
+        carve_windows(t, values, threshold, big_values_good=True),
+        clock=builder_clock,
+        min_events=2,
+        observation_end_s=len(values) * arms.READ_DT_S,
+    )
+    assert got, "premise: the arm yields segments"
+    assert [(list(s.x), s.tau) for s in got] == [(list(s.x), s.tau) for s in want]
