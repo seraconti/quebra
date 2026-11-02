@@ -60,7 +60,7 @@ from quebra.analyzers.checks.battery import (
     BENCH_ROW_KEYS,
     C5_RAW_KEY,
     ROW_KEYS,
-    drop_short_segments,
+    drop_unusable_segments,
     row_key,
     run_battery,
 )
@@ -295,6 +295,21 @@ def test_gamma_hat_distinguishes_a_negative_variance_from_a_constant_vector():
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("estimator", [GAMMA_COMPLETE, GAMMA_COMPLETE_SAMPLE])
+def test_gamma_hat_refuses_equal_gaps_whose_variance_rounds_above_zero(estimator):
+    """Oracle: a closed form. Seven gaps of 0.1 have a coefficient of variation of exactly
+    0, but 0.1 is not exact in binary and the one-pass variance rounds above zero. The
+    scalar and the batch path must refuse them, as they refuse gaps of 1.0, rather than
+    return a `gamma_hat` near 1e-8."""
+    x = np.full(7, 0.1)
+    assert float(np.mean(x**2) - np.mean(x) ** 2) > 0.0, "premise: rounds above zero"
+    with pytest.raises(ValueError, match="every gap is identical"):
+        gamma_hat(x, 1.0, estimator)
+    with pytest.raises(ValueError, match="degenerate gamma_hat"):
+        gamma_hat_batch(np.tile(x, (3, 1)), 1.0, estimator)
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("estimator", GAMMA_ESTIMATORS)
 def test_the_batch_estimator_refuses_one_gap_as_its_scalar_twin_does(estimator):
     """At N = 1 the sample divisor is 1/0: the batch path must raise, not return NaN."""
@@ -316,19 +331,27 @@ def test_permutation_p_value_is_tie_corrected():
 
 
 @pytest.mark.unit
-def test_drop_short_segments_hand_case():
-    """Oracle: a hand count. Gaps 1, 2, 3 and 2 at min 2 keep the last three, in order."""
+def test_drop_unusable_segments_hand_case():
+    """Oracle: a hand count. At min 2: one gap is short; three gaps of 30 are degenerate;
+    a lone gap of 30 is counted short, not degenerate; gaps that differ by one ulp are
+    kept. Three kept, in order."""
+    close = np.nextafter(30.0, 31.0)
     segments = [
         Segment(x=np.array([4.0]), tau=5.0),
         Segment(x=np.array([1.0, 2.0]), tau=4.0),
+        Segment(x=np.array([30.0, 30.0, 30.0]), tau=100.0),
         Segment(x=np.array([1.0, 2.0, 3.0]), tau=7.0),
-        Segment(x=np.array([5.0, 6.0]), tau=12.0),
+        Segment(x=np.array([30.0]), tau=40.0),
+        Segment(x=np.array([30.0, close]), tau=70.0),
     ]
-    kept, n_dropped = drop_short_segments(segments, 2)
-    assert n_dropped == 1
-    assert len(kept) == 3 and all(a is b for a, b in zip(kept, segments[1:]))
+    kept, n_short, n_degenerate = drop_unusable_segments(segments, 2)
+    assert (n_short, n_degenerate) == (2, 1)
+    assert len(kept) == 3
+    assert all(a is b for a, b in zip(kept, [segments[1], segments[3], segments[5]]))
+    # A lone gap is short at any minimum: no check reads fewer than two.
+    assert drop_unusable_segments([segments[4]], 1) == ([], 1, 0)
     with pytest.raises(ValueError, match="at least 1"):
-        drop_short_segments(segments, 0)
+        drop_unusable_segments(segments, 0)
 
 
 @pytest.mark.unit

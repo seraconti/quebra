@@ -74,7 +74,11 @@ over segments is an open question: the bench has not measured it.
 
 **`gamma_hat` is undefined on a fully tied duration vector.** A quantised metric where every
 window is one read long gives zero dispersion, and the statistic it scales has no meaning.
-This raises rather than returning a number.
+This raises rather than returning a number. Each segment has its own `gamma_hat`, so one
+such segment leaves C1, C2 and CvM undefined for the whole record. The ledger therefore
+drops a segment whose durations are all equal before the battery and counts it
+(`battery.drop_unusable_segments`); a permutation leaves that segment unchanged, so it
+carried no ordering information.
 
 ## What we do
 

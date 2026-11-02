@@ -35,13 +35,20 @@ null. The bench keeps measuring them, which is the evidence for that choice, and
 them with `include_asymptotic=True`. They take no permutation set and draw no randomness,
 so leaving them out changes no other row.
 
-Nothing is caught. A degenerate record - every duration tied, a zero-length window, a
-segment whose last event lands exactly on its truncation time - raises out of here, and the
-BENCH decides what to do with it, counting the failure into a `n_failed` column. Swallowing
-it at this level would turn a degenerate cell into a reported size.
+By default nothing is caught. A degenerate record - every duration tied, a zero-length
+window, a segment whose last event lands exactly on its truncation time - raises out of
+here, and the BENCH decides what to do with it, counting the failure into a `n_failed`
+column. Swallowing it at this level would turn a degenerate cell into a reported size.
+
+The ledger asks for `undefined_as_rows=True` instead: a check that raises on these segments
+returns a result with no p-value and the reason in `extra[UNDEFINED]`, and every other check
+still answers. Before the battery it drops the segments no check can read
+(`drop_unusable_segments`), so one degenerate segment does not cost a record its rows.
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
 
 import numpy as np
 
@@ -50,7 +57,7 @@ import quebra.analyzers.checks.c2_anderson_darling as c2
 import quebra.analyzers.checks.c5_rank_autocorr as c5
 import quebra.analyzers.checks.c6_exchangeability as c6
 import quebra.analyzers.checks.cvm_cramer_von_mises as cvm
-from quebra.analyzers.checks._multiprocess import GAMMA_DEFAULT
+from quebra.analyzers.checks._multiprocess import GAMMA_DEFAULT, gaps_all_equal
 from quebra.analyzers.checks._permutation import (
     resolve_perm,
     DEFAULT_N_PERM,
@@ -71,6 +78,9 @@ from quebra.analyzers.checks.result import (
     concatenated_gaps,
     segment_sizes,
 )
+
+# The `extra` key of a result whose check raised on its segments; the value is the reason.
+UNDEFINED = "undefined"
 
 C5_RAW_KEY = ("c5_rank_autocorr", CALIB_PERMUTATION, c5.VARIANT_RAW)
 
@@ -121,20 +131,66 @@ def row_key(result: CheckResult) -> tuple[str, str, str]:
     return (result.check, result.calibration, variant)
 
 
-def drop_short_segments(
+def drop_unusable_segments(
     segments: list[Segment], min_events: int
-) -> tuple[list[Segment], int]:
-    """The segments holding at least `min_events` complete gaps, in order, and how many
-    were dropped.
+) -> tuple[list[Segment], int, int]:
+    """The segments the battery can read, in order, and how many were dropped as short and
+    as degenerate.
 
-    Every check refuses a segment with fewer than two gaps (`result.validate_segment`), and
-    `run_battery` catches nothing, so one short segment costs a record all its rows. A caller
-    drops short segments here, before the battery, and reports the count beside the rows.
+    Short: fewer than `min_events` complete gaps, and never fewer than two, since every
+    check refuses such a segment (`result.validate_segment`).
+
+    Degenerate: every complete gap equal (`_multiprocess.gaps_all_equal`), as when a
+    sampling interval quantises the durations. Its coefficient of variation is zero in
+    exact arithmetic, and C1, C2 and CvM divide by each segment's own `gamma_hat`, which
+    raises on the same test, so one such segment leaves all three undefined for the
+    record. A within-segment permutation leaves it unchanged, so it carries no ordering
+    information for any check. Gaps that differ only by rounding are not equal here.
+
+    A segment is counted once, as short first. Both rules read only a segment's size and the
+    multiset of its gaps, which a within-segment permutation leaves fixed, so the
+    permutation rows on the kept segments keep their level. A caller drops here, before the
+    battery, and reports both counts beside the rows.
     """
     if min_events < 1:
         raise ValueError(f"min_events must be at least 1; got {min_events!r}")
-    kept = [segment for segment in segments if segment.n_events >= min_events]
-    return kept, len(segments) - len(kept)
+    kept: list[Segment] = []
+    n_short = 0
+    n_degenerate = 0
+    for segment in segments:
+        if segment.n_events < max(min_events, 2):
+            n_short += 1
+        elif gaps_all_equal(segment.x):
+            n_degenerate += 1
+        else:
+            kept.append(segment)
+    return kept, n_short, n_degenerate
+
+
+def _undefined(
+    check: str,
+    calibration: str,
+    variant: str,
+    segments: list[Segment],
+    clock: str,
+    exc: Exception,
+) -> CheckResult:
+    """The result of a check that raised on these segments: no p-value, and the reason.
+
+    The notes carry the variant token `row_key` reads, so the row lands on its own key.
+    """
+    return CheckResult(
+        check=check,
+        statistic=float("nan"),
+        p_value=None,
+        calibration=calibration,
+        clock=clock,
+        n_events=int(sum(s.n_events for s in segments)),
+        n_segments=len(segments),
+        n_censored_dropped=int(sum(s.n_censored_dropped for s in segments)),
+        notes=f"variant={variant} {exc}" if variant else str(exc),
+        extra={UNDEFINED: str(exc)},
+    )
 
 
 def run_battery(
@@ -150,10 +206,15 @@ def run_battery(
     include_tau_checks: bool = True,
     include_c5_raw: bool = False,
     include_asymptotic: bool = False,
+    undefined_as_rows: bool = False,
 ) -> list[CheckResult]:
     """Up to five results in `ROW_KEYS` order. `include_asymptotic` adds the three
     asymptotic rows and `include_c5_raw` C5's unstudentized row, in `BENCH_ROW_KEYS` order.
     Only the bench sets either.
+
+    `undefined_as_rows=True` turns a check's ValueError or KeyError into its result with no
+    p-value and the reason in `extra[UNDEFINED]` (`_undefined`), in the same position; the
+    shared rank arrays failing does that to C5 and C6. Left False, the first one raises.
 
     `include_c2_asymptotic` acts only with `include_asymptotic`. It exists because C2's
     asymptotic calibration is defined only for
@@ -195,41 +256,70 @@ def run_battery(
     # CvM wants the permuted matrix as well, and unlike C1/C2 it runs even when
     # `include_tau_checks` is False - so this is computed whatever that flag says.
     permuted = perm.apply(gaps)
-    layout = lag_layout(sizes, max_lag)
-    ranks = global_ranks(gaps)
-    observed_r = autocorrelations(ranks, layout)[0]
-    null_r = autocorrelations(perm.apply(ranks), layout)
-    autocorr = (observed_r, null_r, layout)
+    autocorr: tuple[np.ndarray, np.ndarray, object] | None = None
+    autocorr_error: Exception | None = None
+    try:
+        layout = lag_layout(sizes, max_lag)
+        ranks = global_ranks(gaps)
+        observed_r = autocorrelations(ranks, layout)[0]
+        null_r = autocorrelations(perm.apply(ranks), layout)
+        autocorr = (observed_r, null_r, layout)
+    except (ValueError, KeyError) as exc:
+        if not undefined_as_rows:
+            raise
+        autocorr_error = exc
 
     results: list[CheckResult] = []
+
+    def add(key: tuple[str, str, str], call: Callable[[], CheckResult]) -> None:
+        try:
+            results.append(call())
+        except (ValueError, KeyError) as exc:
+            if not undefined_as_rows:
+                raise
+            results.append(_undefined(*key, segments, clock, exc))
+
+    def add_ranked(
+        key: tuple[str, str, str],
+        call: Callable[[tuple[np.ndarray, np.ndarray, object]], CheckResult],
+    ) -> None:
+        if autocorr_error is not None:
+            results.append(_undefined(*key, segments, clock, autocorr_error))
+            return
+        ready = autocorr
+        add(key, lambda: call(ready))
+
     if include_tau_checks:
         if include_asymptotic:
-            results.append(
-                c1.run(
+            add(
+                ASYMPTOTIC_KEYS[0],
+                lambda: c1.run(
                     segments,
                     calibration=CALIB_ASYMPTOTIC,
                     clock=clock,
                     gamma_estimator=gamma_estimator,
-                )
+                ),
             )
-        results.append(
-            c1.run(
+        add(
+            (c1.CHECK_NAME, CALIB_PERMUTATION, ""),
+            lambda: c1.run(
                 segments,
                 calibration=CALIB_PERMUTATION,
                 clock=clock,
                 gamma_estimator=gamma_estimator,
                 perm=perm,
                 permuted=permuted,
-            )
+            ),
         )
         if include_asymptotic and include_c2_asymptotic and len(segments) == 1:
-            results.append(
-                c2.run(
+            add(
+                ASYMPTOTIC_KEYS[1],
+                lambda: c2.run(
                     segments,
                     calibration=CALIB_ASYMPTOTIC,
                     clock=clock,
                     gamma_estimator=gamma_estimator,
-                )
+                ),
             )
         # CvM's ASYMPTOTIC row runs inside this `include_tau_checks` branch with C1's and
         # C2's, and like C2's only for a single segment. Its STATISTIC is finite when
@@ -238,52 +328,57 @@ def run_battery(
         # event-determined `tau` breaks the tied-down bridge for CvM exactly as it does for
         # the other two. Only the permutation row below is entitled to that case.
         if include_asymptotic and len(segments) == 1:
-            results.append(
-                cvm.run(
+            add(
+                ASYMPTOTIC_KEYS[2],
+                lambda: cvm.run(
                     segments,
                     calibration=CALIB_ASYMPTOTIC,
                     clock=clock,
                     gamma_estimator=gamma_estimator,
-                )
+                ),
             )
-        results.append(
-            c2.run(
+        add(
+            (c2.CHECK_NAME, CALIB_PERMUTATION, ""),
+            lambda: c2.run(
                 segments,
                 calibration=CALIB_PERMUTATION,
                 clock=clock,
                 gamma_estimator=gamma_estimator,
                 perm=perm,
                 permuted=permuted,
-            )
-        )
-    results.extend(
-        [
-            c5.run(
-                segments,
-                variant=c5.VARIANT_STUDENTIZED,
-                clock=clock,
-                autocorr=autocorr,
             ),
-            c6.run(segments, clock=clock, autocorr=autocorr),
-        ]
+        )
+    add_ranked(
+        (c5.CHECK_NAME, CALIB_PERMUTATION, c5.VARIANT_STUDENTIZED),
+        lambda ready: c5.run(
+            segments, variant=c5.VARIANT_STUDENTIZED, clock=clock, autocorr=ready
+        ),
+    )
+    add_ranked(
+        (c6.CHECK_NAME, CALIB_PERMUTATION, ""),
+        lambda ready: c6.run(segments, clock=clock, autocorr=ready),
     )
     # CvM by PERMUTATION runs always, including when the tau checks are off. That is the
     # point of promoting it: on the in-spec clock of a carved record `tau == T_N` silences
     # C1 and C2 - measured, 311 of 340 survey cells - and the permutation calibration
     # conditions on the observed data, so it is entitled to that case while their
     # asymptotic routes are not.
-    results.append(
-        cvm.run(
+    add(
+        (cvm.CHECK_NAME, CALIB_PERMUTATION, ""),
+        lambda: cvm.run(
             segments,
             calibration=CALIB_PERMUTATION,
             clock=clock,
             gamma_estimator=gamma_estimator,
             perm=perm,
             permuted=permuted,
-        )
+        ),
     )
     if include_c5_raw:
-        results.append(
-            c5.run(segments, variant=c5.VARIANT_RAW, clock=clock, autocorr=autocorr)
+        add_ranked(
+            C5_RAW_KEY,
+            lambda ready: c5.run(
+                segments, variant=c5.VARIANT_RAW, clock=clock, autocorr=ready
+            ),
         )
     return results

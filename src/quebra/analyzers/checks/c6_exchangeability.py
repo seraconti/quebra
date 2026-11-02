@@ -62,9 +62,10 @@ Validity assumptions
   Diagnostic: `studentize` raises a ValueError when a lag's range across the B + 1 rows is
   at most `_rank_serial.ZERO_SPREAD_TOL`, as when every segment holds two events, or
   every segment that pairs at that lag is constant inside. C5's studentized variant raises
-  on the same arrays. `run_battery` then raises, so the ledger writes the whole cell as one
-  `not computed` row with the reason and reports no other check for it, C3 included, and
-  the bench drops the replicate from every row.
+  on the same arrays. The ledger drops a segment whose durations are all equal before the
+  battery (`battery.drop_unusable_segments`); if a lag still has no spread, C6's and C5's
+  rows read `not computed` with the reason and the other checks still answer
+  (`run_battery(undefined_as_rows=True)`). The bench drops the replicate from every row.
   Consequence of violation: `z_h` is undefined, and there is no fallback.
   Reference: `_rank_serial.studentize`.
 """

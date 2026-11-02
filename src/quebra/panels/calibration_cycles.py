@@ -288,7 +288,7 @@ def _counts(data: CyclesPanelData) -> str:
             f"excluded, start unknown: {data.n_unobserved_birth_dropped}",
             f"calibrations merged: {data.n_calibrations_merged}",
             f"segments: {data.n_segments}, too few cycles for the checks: "
-            f"{data.n_segments_dropped}",
+            f"{data.n_segments_dropped}, all cycles equal: {data.n_segments_degenerate}",
             f"zero-length outages dropped: {data.n_zero_outages_dropped}",
             f"gaps: {data.n_unobserved_spans}",
             "duplicate timestamps dropped: "

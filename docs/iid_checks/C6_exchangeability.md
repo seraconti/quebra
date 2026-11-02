@@ -51,8 +51,10 @@ difference by construction.
 
 **A lag with no spread is not computed.** When every permutation gives the same `r_h` at
 some lag, as when every segment holds two events, or every segment that pairs at that lag
-is constant inside, `studentize` raises. The battery raises with it, so the ledger writes
-the whole cell as one `not computed` row and reports no other check for it, C3 included.
+is constant inside, `studentize` raises. The ledger first drops a segment whose durations
+are all equal (`battery.drop_unusable_segments`), and counts it. If a lag still has no
+spread, C6's row reads `not computed` with the reason and the other checks still answer.
+The bench, which catches nothing in the battery, drops the replicate.
 
 **Power is low below n = 100.** Averaged over the bench's dependence grid
 (`jobs/bench/results/power_table.csv`, arm=E_copula_ar1_durations, mean over `rho` and

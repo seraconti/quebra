@@ -304,8 +304,8 @@ def test_cycles_hand_table_at_the_record_and_outage_boundaries() -> None:
     assert table.n_segments == 3
     assert table.n_unobserved_birth_dropped == 2
     assert table.n_calibrations_merged == 0
-    segments, n_dropped = cycles.battery_segments(table, 2)
-    assert (segments, n_dropped) == ([], 2)
+    segments, n_dropped, n_degenerate = cycles.battery_segments(table, 2)
+    assert (segments, n_dropped, n_degenerate) == ([], 2, 0)
     shares = cycles.status_shares(_spell_norm(rows, length_s=500.0))
     assert shares.statuses == ("offline", "calibrating", "idle", cycles.NOT_LISTED)
     assert shares.seconds == (120.0, 130.0, 40.0, 210.0)
@@ -334,10 +334,10 @@ def test_battery_segments_hand_table() -> None:
     """Oracle: a hand table. Segment 0: x = (70, 50), tau = 120 + 90 = 210. Segment 1:
     x = (40, 85, 30), tau = 155 + 80 = 235. Segment 2 holds only its censored cycle, no
     complete one, so it is dropped."""
-    segments, n_dropped = cycles.battery_segments(
+    segments, n_dropped, n_degenerate = cycles.battery_segments(
         cycles.cycles(_spell_norm(_HAND_ROWS)), 2
     )
-    assert n_dropped == 1
+    assert (n_dropped, n_degenerate) == (1, 0)
     assert [s.x.tolist() for s in segments] == [[70.0, 50.0], [40.0, 85.0, 30.0]]
     assert [s.tau for s in segments] == [210.0, 235.0]
     assert [s.n_censored_dropped for s in segments] == [1, 1]
@@ -433,7 +433,7 @@ def test_c5_rejects_an_alternating_cycle_sequence() -> None:
         & (checks.rows["calibration"] == "permutation")
     ].iloc[0]
     assert c1["verdict"] != "fail", c1["notes"]
-    segments, _ = cycles.battery_segments(table, 2)
+    segments, _, _ = cycles.battery_segments(table, 2)
     z = c6.run(segments, rng=np.random.default_rng(0), max_lag=5).extra["z"]
     assert z[0] < 0.0
 
@@ -500,7 +500,11 @@ def test_cycles_panel_data_carries_the_counts_and_the_check_summary() -> None:
     )
     assert (data.n_cycles, data.n_censored) == (8, 3)
     assert (data.n_unobserved_birth_dropped, data.n_calibrations_merged) == (3, 1)
-    assert (data.n_segments, data.n_segments_dropped) == (3, 1)
+    assert (
+        data.n_segments,
+        data.n_segments_dropped,
+        data.n_segments_degenerate,
+    ) == (3, 1, 0)
     assert data.mtbc.checks.assumption_id == "a2_renewal_cycles"
     assert data.checks == data.mtbc.checks
     assert data.check_summary == data.checks.summary()
@@ -552,7 +556,7 @@ def test_cycles_panel_renders_from_hand_built_data() -> None:
             "cycles: 8 (3 censored)",
             "excluded, start unknown: 3",
             "calibrations merged: 1",
-            "segments: 3, too few cycles for the checks: 1",
+            "segments: 3, too few cycles for the checks: 1, all cycles equal: 0",
             "zero-length outages dropped: 0",
             "gaps: 0",
             "duplicate timestamps dropped: 0 identical, 0 conflicting",
@@ -640,6 +644,101 @@ def test_a_record_with_nothing_to_score_still_gets_its_rows_and_says_why() -> No
             seed=1,
             min_events_per_segment=2,
         )
+
+
+def _segmented_rows(
+    segments: list[list[float]],
+) -> tuple[list[tuple[float, float, str]], float]:
+    """1 s calibrations with the given cycles between them, a 7 s censored cycle closing
+    each stretch, and a 20 s outage between stretches; the record ends after the last tail.
+    An empty list is a stretch with one calibration and no complete cycle."""
+    rows: list[tuple[float, float, str]] = []
+    t = 0.0
+    for index, lengths in enumerate(segments):
+        rows.append((t, t + 1.0, "calibrating"))
+        for length in lengths:
+            start = rows[-1][1] + length
+            rows.append((start, start + 1.0, "calibrating"))
+        t = rows[-1][1] + 7.0
+        if index < len(segments) - 1:
+            rows.append((t, t + 20.0, "offline"))
+            t += 20.0
+    return rows, t
+
+
+_KEPT_A = [40.0, 55.0, 47.0, 62.0, 51.0, 70.0]
+_KEPT_C = [44.0, 58.0, 39.0, 66.0, 52.0, 49.0]
+
+
+@pytest.mark.unit
+def test_a_segment_whose_cycles_all_have_one_length_is_dropped_and_counted() -> None:
+    """Oracle: the same record with that stretch's cycles never recorded. The middle of
+    three stretches holds six 30 s cycles, as a 30 s poll can quantise them. It is dropped
+    and counted, and the battery answers on the other two with the p-values it gives when
+    the middle stretch has no complete cycle at all (same segment sizes, same permutations).
+    The count reaches the rows, the panel data, the check summary and the drawn counts."""
+    rows, length = _segmented_rows([_KEPT_A, [30.0] * 6, _KEPT_C])
+    norm = _spell_norm(rows, length_s=length)
+    table = cycles.cycles(norm)
+    checks = _checks(table)
+    assert (checks.n_segments_dropped, checks.n_segments_degenerate) == (0, 1)
+    assert checks.battery_note == ""
+    assert set(checks.rows["n_segments"]) == {2}
+    assert checks.rows["p_value"].notna().all(), checks.rows[["check_id", "notes"]]
+    assert set(checks.rows["check_id"]) == {key[0] for key in PERMUTATION_KEYS}
+    assert (
+        checks.rows["notes"]
+        .str.contains("1 segment(s) with every duration identical dropped", regex=False)
+        .all()
+    )
+    rows_unrecorded, length_unrecorded = _segmented_rows([_KEPT_A, [], _KEPT_C])
+    unrecorded = _checks(
+        cycles.cycles(_spell_norm(rows_unrecorded, length_s=length_unrecorded))
+    )
+    assert (unrecorded.n_segments_dropped, unrecorded.n_segments_degenerate) == (1, 0)
+    key = ["check_id", "calibration", "variant"]
+    pd.testing.assert_frame_equal(
+        checks.rows[[*key, "statistic", "p_value", "verdict"]],
+        unrecorded.rows[[*key, "statistic", "p_value", "verdict"]],
+    )
+    data = cycles.build_cycles_panel_data(table, checks, cycles.status_shares(norm))
+    assert data.n_segments_degenerate == 1
+    assert data.check_summary == (
+        f"{data.checks.summary()}; 1 segment(s) with every cycle the same length "
+        "dropped before the checks"
+    )
+    fig = CalibrationCyclesPanel("cycles").build_matplotlib(data)
+    try:
+        counts = "\n".join(t.get_text() for t in fig.axes[0].texts)
+        assert "segments: 3, too few cycles for the checks: 0, all cycles equal: 1" in (
+            counts
+        )
+    finally:
+        plt.close(fig)
+
+
+@pytest.mark.unit
+def test_a_check_undefined_on_the_segments_left_is_not_computed_and_the_rest_answer() -> (
+    None
+):
+    """Oracle: a closed form. Every stretch holds two complete cycles, so its only lag-1
+    pair is the same two values whichever order a permutation puts them in, and lag 1 has
+    no spread across the ensemble: C5 and C6 are undefined, and read `not computed` with
+    that reason on their own keys. C1, C2 and CvM still answer."""
+    rows, length = _segmented_rows([[40.0, 55.0], [47.0, 62.0], [51.0, 70.0]])
+    norm = _spell_norm(rows, length_s=length)
+    table = cycles.cycles(norm)
+    checks = _checks(table)
+    assert checks.battery_note == ""
+    by_check = checks.rows.set_index("check_id")
+    for check in ("c5_rank_autocorr", "c6_exchangeability"):
+        assert by_check.loc[check, "verdict"] == VERDICT_NOT_COMPUTED
+        assert str(by_check.loc[check, "notes"]).startswith("a lag has no spread")
+    assert by_check.loc["c5_rank_autocorr", "variant"] == "studentized"
+    for check in ("c1_lewis_robinson", "c2_anderson_darling", "cvm_cramer_von_mises"):
+        assert pd.notna(by_check.loc[check, "p_value"]), by_check.loc[check, "notes"]
+    data = cycles.build_cycles_panel_data(table, checks, cycles.status_shares(norm))
+    assert VERDICT_ABSENT not in {verdict for _l, _p, verdict, _n in data.verdict_rows}
 
 
 @pytest.mark.unit

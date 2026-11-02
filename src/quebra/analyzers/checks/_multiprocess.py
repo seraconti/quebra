@@ -72,6 +72,18 @@ GAMMA_DEFAULT = GAMMA_COMPLETE_SAMPLE
 _VAR_NEGATIVE_TOL = 1e-9
 
 
+def gaps_all_equal(x: np.ndarray) -> bool:
+    """True when every gap is the same number: the one test of a degenerate segment.
+
+    `gamma_hat` raises on it for the complete-gap estimators and
+    `battery.drop_unusable_segments` drops on it, so the two cannot disagree. It is exact
+    equality rather than a zero variance: the one-pass variance of equal gaps that are not
+    exact in binary rounds a hair above zero (seven gaps of 0.1 give a `gamma_hat` near
+    1e-8), and a statistic scaled by that is finite and meaningless.
+    """
+    return bool(np.ptp(np.asarray(x, dtype=float)) == 0.0)
+
+
 def gamma_hat(x: np.ndarray, tau: float, estimator: str = GAMMA_DEFAULT) -> float:
     """Estimated coefficient of variation of the gap distribution.
 
@@ -132,7 +144,7 @@ def gamma_hat(x: np.ndarray, tau: float, estimator: str = GAMMA_DEFAULT) -> floa
             f"size (N = {n}); use {GAMMA_DEFAULT!r}, which cannot go negative."
         )
     var = max(var, 0.0)
-    if var == 0.0:
+    if var == 0.0 or (estimator != GAMMA_TRUNCATED and gaps_all_equal(x)):
         raise ValueError(
             "gamma_hat is zero: every gap is identical, so the statistic it scales is "
             "undefined. A fully quantised duration vector (every window one read long) "
@@ -179,7 +191,10 @@ def gamma_hat_batch(
             f"{GAMMA_DEFAULT!r}, which cannot go negative."
         )
     var = np.maximum(var, 0.0)
-    if np.any(mean <= 0.0) or np.any(var == 0.0):
+    equal_rows = estimator != GAMMA_TRUNCATED and bool(
+        np.any(np.ptp(x_matrix, axis=1) == 0.0)
+    )
+    if np.any(mean <= 0.0) or np.any(var == 0.0) or equal_rows:
         raise ValueError(
             "a permuted gap vector produced a degenerate gamma_hat (zero mean or zero "
             "variance). Permutation cannot change either, so the observed vector is "

@@ -36,9 +36,11 @@ segment is neither a cycle nor counted.
 The cycles become an event table (`event_table.CYCLES`), so the estimators are the ones the
 windows use. `battery_segments` gives the check battery one `checks.result.Segment` per
 segment that holds a cycle: the complete cycles in time order, and tau their sum plus the
-censored tail. Calibration time is not in x or tau, so the battery's clock stops while a
-calibration runs; the ledger rows still carry the calendar clock's label, because the
-cycles are wall-clock durations.
+censored tail. It drops and counts a segment with too few complete cycles, and one whose
+complete cycles all have the same length, which a sampling interval can produce and which
+no check can read (`checks.battery.drop_unusable_segments`). Calibration time is not in
+x or tau, so the battery's clock stops while a calibration runs; the ledger rows still
+carry the calendar clock's label, because the cycles are wall-clock durations.
 
 The status shares partition the record because the rows are refused unless they are in
 time order, disjoint and inside the record: the time per status and the time between rows
@@ -65,8 +67,9 @@ Validity assumptions
   Reference: no source located; the rule is this project's.
 - Assumption: every battery segment ends inside a cycle, so tau > T_N.
   Diagnostic: a segment whose last calibration ends exactly at the segment's end has
-  tau = T_N; C2 refuses it, and the ledger's retry drops C1 and C2 for the whole record,
-  whose rows then read `not computed` with the note "C1/C2 undefined here".
+  tau = T_N; C2 refuses it, and the ledger drops C1 and C2 together for the whole record
+  when either is undefined, whose rows then read `not computed` with the note "C1/C2
+  undefined here".
   Consequence of violation: C1 and C2 give no answer on that record, until the checks read
   a segment that ends at an event in its failure-truncated form; the cycles reach the
   battery only through the shared segment path, so they take that form unchanged.
@@ -95,7 +98,7 @@ from quebra.analyzers.check_outcome import (
     check_attachment_of,
     resolve,
 )
-from quebra.analyzers.checks.battery import drop_short_segments
+from quebra.analyzers.checks.battery import drop_unusable_segments
 from quebra.analyzers.checks.result import CLOCK_CALENDAR, Segment
 from quebra.analyzers.event_table import CYCLES, EventTable
 from quebra.analyzers.kaplan_meier import (
@@ -508,14 +511,18 @@ def cycle_event_table(table: CycleTable) -> EventTable:
     )
 
 
-def battery_segments(table: CycleTable, min_events: int) -> tuple[list[Segment], int]:
-    """One battery segment per segment that holds a cycle, short ones dropped and counted.
+def battery_segments(
+    table: CycleTable, min_events: int
+) -> tuple[list[Segment], int, int]:
+    """One battery segment per segment that holds a cycle, and how many were dropped as
+    short and as degenerate.
 
     x is the segment's complete cycles in time order; tau is their sum plus the censored
-    cycle that ends the segment, if there is one. A segment with fewer than `min_events`
-    complete cycles is dropped by `checks.battery.drop_short_segments` and counted in the
-    returned number; a segment holding no cycle at all is not a battery segment, so that
-    number and `CycleTable.n_segments` count different things.
+    cycle that ends the segment, if there is one. `checks.battery.drop_unusable_segments`
+    drops a segment with fewer than `min_events` complete cycles (short) and one whose
+    complete cycles all have the same length (degenerate), and counts each. A segment
+    holding no cycle at all is not a battery segment, so those counts and
+    `CycleTable.n_segments` count different things.
     """
     segments: list[Segment] = []
     for index in np.unique(table.segment):
@@ -528,7 +535,7 @@ def battery_segments(table: CycleTable, min_events: int) -> tuple[list[Segment],
         segments.append(
             Segment(x=x, tau=tau, n_censored_dropped=int(np.count_nonzero(~complete)))
         )
-    return drop_short_segments(segments, min_events)
+    return drop_unusable_segments(segments, min_events)
 
 
 @dataclass
@@ -588,15 +595,18 @@ class CycleChecks:
 
     `rows` has the ledger's columns (`check_ledger.LEDGER_COLUMNS`), `threshold_label` set to
     `CYCLES_LABEL` and `clock` to the calendar clock. `n_segments_dropped` counts the
-    segments holding a cycle but too few complete ones for the battery. `battery_note` is
-    the reason the scoring gave when it wrote no row per check (one `(all)` row instead),
-    and empty otherwise. The scoring knobs are kept, so a row can be read without the job.
+    segments holding a cycle but too few complete ones for the battery, and
+    `n_segments_degenerate` those whose complete cycles all have one length; the battery
+    reads the rest. `battery_note` is the reason the scoring gave when it wrote no row per
+    check (one `(all)` row instead), and empty otherwise. The scoring knobs are kept, so a
+    row can be read without the job.
     """
 
     dataset_id: str
     rows: pd.DataFrame
     outcome: CheckOutcome
     n_segments_dropped: int
+    n_segments_degenerate: int
     battery_note: str
     alpha: float
     min_events_pass: int
@@ -625,9 +635,10 @@ def cycle_checks(
     The run-set must be permutation rows (`check_outcome.PERMUTATION_KEYS`), the rows the
     a2 record names as its diagnostic. It sets the battery's switches
     (`check_outcome.battery_flags`), which are coarse, so `rows` can hold rows outside it;
-    the grid shows the run-set only. Never raises on degenerate cycles: with no segment
-    left, the one row is `not computed` with its reason (`battery_note`), and every asked
-    row reads as unanswered.
+    the grid shows the run-set only. Never raises on degenerate cycles: a check undefined
+    on the segments left reads `not computed` with its reason while the others answer, and
+    with no segment left the one row is `not computed` with its reason (`battery_note`),
+    and every asked row reads as unanswered.
     """
     outside = [key for key in run_set if tuple(key) not in PERMUTATION_KEYS]
     if outside:
@@ -636,12 +647,13 @@ def cycle_checks(
         )
     run, _display = resolve(run_set, run_set)
     flags = battery_flags(run)
-    segments, n_dropped = battery_segments(table, min_events_per_segment)
+    segments, n_dropped, n_degenerate = battery_segments(table, min_events_per_segment)
     acceptance = bench_acceptance_at_n(bench_size_table, alpha=alpha)
     grid = sorted({int(n) for n in acceptance["n_target"]})
     rows = score_segments(
         segments,
         n_dropped=n_dropped,
+        n_degenerate=n_degenerate,
         n_used=table.n_cycles,
         label=CYCLES_LABEL,
         clock=CLOCK_CALENDAR,
@@ -676,6 +688,7 @@ def cycle_checks(
         rows=frame,
         outcome=outcome,
         n_segments_dropped=n_dropped,
+        n_segments_degenerate=n_degenerate,
         battery_note="; ".join(str(note) for note in blank["notes"]),
         alpha=alpha,
         min_events_pass=min_events_pass,
@@ -692,6 +705,17 @@ def attachment(checks: CycleChecks) -> CheckAttachment:
     return check_attachment_of(checks.outcome, A2_RENEWAL_CYCLES_ID)
 
 
+def check_summary(attached: CheckAttachment, n_segments_degenerate: int) -> str:
+    """The attachment's one line, then the degenerate segments the battery did not read."""
+    line = attached.summary()
+    if n_segments_degenerate:
+        line += (
+            f"; {n_segments_degenerate} segment(s) with every cycle the same length "
+            "dropped before the checks"
+        )
+    return line
+
+
 # ---------------------------------------------------------------------------
 # The cycles figure's typed artifact
 # ---------------------------------------------------------------------------
@@ -703,12 +727,13 @@ class CyclesPanelData(StaleArtifactGuard):
 
     The curve and the MTBC are in minutes on the figure's axis (`mtbc_min` is point, lower,
     upper). `checks` is the check outcome the band and the MTBC interval rest on, and
-    `check_summary` its one line. `verdict_rows` holds (check, p-value, verdict, note) for
+    `check_summary` its one line, which also names the degenerate segments dropped, if
+    any. `verdict_rows` holds (check, p-value, verdict, note) for
     each check the run-set asked for, on the calendar clock; `battery_note` is the reason
     when the scoring wrote no row per check, so a column of absent cells says why. The
     counts: cycles, censored cycles, residuals dropped, calibrations merged, segments,
-    segments the battery dropped, zero-length outages dropped, unobserved spans, and
-    duplicate sample rows dropped (identical, conflicting).
+    segments the battery dropped as short and as degenerate, zero-length outages dropped,
+    unobserved spans, and duplicate sample rows dropped (identical, conflicting).
     """
 
     dataset_id: str
@@ -729,6 +754,7 @@ class CyclesPanelData(StaleArtifactGuard):
     n_calibrations_merged: int
     n_segments: int
     n_segments_dropped: int
+    n_segments_degenerate: int
     n_zero_outages_dropped: int
     n_unobserved_spans: int
     n_duplicates_identical_dropped: int
@@ -770,7 +796,7 @@ def build_cycles_panel_data(
         ),
         tau_min=summary.tau_s / 60.0,
         checks=attached,
-        check_summary=attached.summary(),
+        check_summary=check_summary(attached, checks.n_segments_degenerate),
         bench_note=BENCH_TRANSFER_NOTE,
         battery_note=checks.battery_note,
         verdict_rows=verdict_rows,
@@ -782,6 +808,7 @@ def build_cycles_panel_data(
         n_calibrations_merged=table.n_calibrations_merged,
         n_segments=table.n_segments,
         n_segments_dropped=checks.n_segments_dropped,
+        n_segments_degenerate=checks.n_segments_degenerate,
         n_zero_outages_dropped=table.n_zero_outages_dropped,
         n_unobserved_spans=table.n_unobserved_spans,
         n_duplicates_identical_dropped=table.n_duplicates_identical_dropped,

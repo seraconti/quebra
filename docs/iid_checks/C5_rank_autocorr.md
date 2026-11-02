@@ -58,7 +58,9 @@ survey or band carries it; the bench asks for it with `include_c5_raw=True`
 **A lag with no spread is not computed.** When every permutation gives the same `r_h` at
 some lag, as when every segment holds two events, or every segment that pairs at that lag
 is constant inside, the studentized variant raises rather than scale by rounding noise. The
-battery raises with it, so the ledger writes the whole cell as one `not computed` row.
+ledger first drops a segment whose durations are all equal, and counts it; if a lag still
+has no spread, C5's and C6's rows read `not computed` with the reason and the other checks
+answer.
 
 **It is a rank statistic, so ties degrade it.** On a quantised metric where most windows are
 one read long the ranks are mostly ties and the statistic loses meaning. The ledger's tie

@@ -50,7 +50,11 @@ from quebra.analyzers.calibration_summary import (
 from quebra.analyzers.checks._multiprocess import segments_from_windows
 from quebra.analyzers.checks._permutation import block_permutations
 from quebra.analyzers.checks._rank_serial import MAX_LAG_CAP
-from quebra.analyzers.checks.battery import run_battery
+from quebra.analyzers.checks.battery import (
+    UNDEFINED,
+    drop_unusable_segments,
+    run_battery,
+)
 from quebra.analyzers.checks.result import (
     CALIB_PERMUTATION,
     CALIB_R_COPULA,
@@ -479,9 +483,14 @@ def _rows_for(
                 len(table),
             )
         ]
+    # `segments_from_windows` already dropped the short ones, by the same rule.
+    segments, n_short, n_degenerate = drop_unusable_segments(
+        segments, inputs.min_events_per_segment
+    )
     return score_segments(
         segments,
-        n_dropped=n_dropped,
+        n_dropped=n_dropped + n_short,
+        n_degenerate=n_degenerate,
         n_used=len(table),
         label=label,
         clock=clock,
@@ -506,6 +515,7 @@ def score_segments(
     segments: list[Segment],
     *,
     n_dropped: int,
+    n_degenerate: int,
     n_used: int,
     label: str,
     clock: str,
@@ -529,22 +539,27 @@ def score_segments(
     The half of the ledger that does not care where the segments came from: the battery
     off one permutation set, C3, the bench match and the verdict. `_rows_for` reaches it
     after carving windows into segments; any other duration (calibration cycles) reaches it
-    with its own segments and the same rule. `n_dropped` counts segments the caller dropped
-    for having fewer than `min_events_per_segment` events, and `n_used` is what the
-    `n_windows_used` column records. With no segment left it returns one `not computed`
-    row with its reason and never raises.
+    with its own segments and the same rule. `n_dropped` and `n_degenerate` count the
+    segments the caller dropped through `battery.drop_unusable_segments`, as short and as
+    degenerate, and `n_used` is what the `n_windows_used` column records. A nonzero
+    `n_degenerate` is named in every row's notes. A check undefined on the segments that
+    remain reads `not computed` with its reason, and the others still answer. With no
+    segment left it returns one `not computed` row with its reason and never raises.
     """
     if not segments:
-        return [
-            _blank_row(
-                label,
-                clock,
-                dataset_id,
-                f"no segment reached {min_events_per_segment} events "
-                f"({n_dropped} dropped)",
-                n_used,
-            )
-        ]
+        note = (
+            f"no segment left: {n_dropped} below {min_events_per_segment} events, "
+            f"{n_degenerate} with every duration identical"
+            if n_degenerate
+            else f"no segment reached {min_events_per_segment} events "
+            f"({n_dropped} dropped)"
+        )
+        return [_blank_row(label, clock, dataset_id, note, n_used)]
+    degenerate_note = (
+        f"{n_degenerate} segment(s) with every duration identical dropped"
+        if n_degenerate
+        else ""
+    )
 
     durations = np.concatenate([s.x for s in segments])
     n_distinct, tie_fraction = _tie_stats(durations)
@@ -555,7 +570,6 @@ def score_segments(
     rng = np.random.default_rng([seed, stream])
     perm = block_permutations([s.n_events for s in segments], n_permutations, rng)
 
-    results: list[CheckResult] = []
     battery_note = ""
     try:
         results = run_battery(
@@ -565,32 +579,24 @@ def score_segments(
             max_lag=lag_max,
             include_tau_checks=include_tau_checks,
             include_c2_asymptotic=include_c2_asymptotic,
+            undefined_as_rows=True,
         )
     except (ValueError, KeyError) as exc:
-        battery_note = f"C1/C2 undefined here: {exc}"[:180]
-        try:
-            results = run_battery(
-                segments,
-                clock=clock,
-                perm=perm,
-                max_lag=lag_max,
-                # Hard False, not the input: this branch is a mathematical refusal (tau is
-                # singular here), and it must override a run-set that asked for those rows.
-                include_tau_checks=False,
-                include_c2_asymptotic=include_c2_asymptotic,
-            )
-        except (ValueError, KeyError) as inner:
-            return [
-                _blank_row(
-                    label, clock, dataset_id, f"battery failed: {inner}"[:200], n_used
-                )
-            ]
-        # The retry dropped C1 and C2. Say so with their own rows: without them the reader
-        # sees a ladder where the trend checks simply vanish at the loose thresholds and
-        # cannot tell whether they were attempted, declined, or forgotten. The reason
-        # (usually tau == T_N on the in-spec clock) belongs on the row it applies to. A
-        # ledger runs the permutation rows only, so those are the rows it accounts for.
-        for dropped in ("c1_lewis_robinson", "c2_anderson_darling"):
+        return [
+            _blank_row(label, clock, dataset_id, f"battery failed: {exc}"[:200], n_used)
+        ]
+    tau_checks = ("c1_lewis_robinson", "c2_anderson_darling")
+    refused = [r for r in results if r.check in tau_checks and UNDEFINED in r.extra]
+    if refused:
+        # Either of C1 and C2 undefined drops both, with the first one's reason (usually
+        # tau == T_N on the in-spec clock): a mathematical refusal, so it overrides a
+        # run-set that asked for those rows. Say so with their own rows: without them the
+        # reader sees a ladder where the trend checks simply vanish at the loose thresholds
+        # and cannot tell whether they were attempted, declined, or forgotten. A ledger runs
+        # the permutation rows only, so those are the rows it accounts for.
+        battery_note = f"C1/C2 undefined here: {refused[0].extra[UNDEFINED]}"[:180]
+        results = [r for r in results if r.check not in tau_checks]
+        for dropped in tau_checks:
             results.append(
                 CheckResult(
                     check=dropped,
@@ -674,7 +680,9 @@ def score_segments(
         # Appending it to every row put "C1/C2 undefined here: tau ..." on a C3 row, which
         # is a different check with a different reason.
         relevant = battery_note if result.check.startswith(("c1_", "c2_")) else ""
-        notes = "; ".join(part for part in (reason, relevant) if part)
+        if UNDEFINED in result.extra:
+            reason = str(result.extra[UNDEFINED])
+        notes = "; ".join(part for part in (reason, relevant, degenerate_note) if part)
         out.append(
             {
                 "dataset_id": dataset_id,

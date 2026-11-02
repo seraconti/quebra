@@ -173,30 +173,12 @@ def test_the_ledger_derives_its_stream_through_stream_for(monkeypatch):
 
     monkeypatch.setattr(ledger_module, "stream_for", spy)
 
-    t = np.arange(80, dtype=float) * 60.0
-    values = np.where((np.arange(80) // 7) % 2 == 0, 5.0, 1.0)
-    carved = windows.run(
-        windows.WindowsInputs(
-            t_rel_s=t,
-            values=values,
-            thresholds=[("3 µs", 3.0, True)],
-            dataset_id="unit",
-        )
-    )
-    # `Path(__file__)`, not `repo_root()`: the latter is defined by the working directory,
-    # so it breaks when the suite runs from elsewhere. Same idiom as test_checks_cvm.py.
-    bench_csv = (
-        pathlib.Path(__file__).resolve().parents[1]
-        / "jobs"
-        / "bench"
-        / "results"
-        / "size_table.csv"
-    )
-    bench = pd.read_csv(bench_csv)
+    # Varied durations: a fixed-period carve is one degenerate segment, which the ledger
+    # drops before it draws a stream.
     ledger_module.run(
         ledger_module.CheckLedgerInputs(
-            windows=carved.windows_in_spec,
-            bench_size_table=bench,
+            windows=_varied_carve(),
+            bench_size_table=_bench_table(),
             thresholds=[("3 µs", 3.0, True)],
             n_permutations=49,
             seed=7,
@@ -598,15 +580,17 @@ def test_an_uncalibrated_rejection_says_no_level_stands_behind_it():
 def test_score_segments_with_nothing_to_score_writes_not_computed():
     """Oracle: the ledger's verdict vocabulary; an empty segment list is a row, not a raise.
 
-    The shared scoring half is reached by callers whose segments all fell below the
-    minimum (`checks.battery.drop_short_segments`). It must still write the cell, with its
-    reason, so the band beside it is drawn.
+    The shared scoring half is reached by callers whose segments were all dropped
+    (`checks.battery.drop_unusable_segments`). It must still write the cell, with its
+    reason, so the band beside it is drawn; the reason names both counts once a segment
+    was degenerate.
     """
     from quebra.analyzers.check_ledger import score_segments
 
     rows = score_segments(
         [],
         n_dropped=3,
+        n_degenerate=0,
         n_used=4,
         label="cycles",
         clock="calendar",
@@ -635,6 +619,103 @@ def test_score_segments_with_nothing_to_score_writes_not_computed():
         "unit",
     )
     assert row["n_windows_used"] == 4
+    (row,) = score_segments(
+        [],
+        n_dropped=3,
+        n_degenerate=2,
+        n_used=4,
+        label="cycles",
+        clock="calendar",
+        dataset_id="unit",
+        acceptance=pd.DataFrame(),
+        grid=[20, 35],
+        alpha=0.05,
+        min_events_pass=35,
+        tie_cutoff_distinct=5,
+        lag_max=5,
+        n_permutations=99,
+        seed=0,
+        min_events_per_segment=2,
+        include_tau_checks=True,
+        include_c2_asymptotic=False,
+        include_c3=False,
+        c3_n_null_sim=10,
+    )
+    assert row["verdict"] == VERDICT_NOT_COMPUTED
+    assert row["notes"] == (
+        "no segment left: 3 below 2 events, 2 with every duration identical"
+    )
+
+
+def test_a_segment_of_identical_durations_is_dropped_and_the_others_answer():
+    """Oracle: a carve built so that the middle of three stretches, split by read gaps,
+    alternates on a fixed period: every in-spec window in it lasts three reads and every
+    gap between its births five, so its durations are identical on both clocks. The ledger
+    drops that one segment, names it in every row's notes, and C5, C6 and CvM answer on the
+    other two (C1 and C2 also answer on the calendar clock, where tau clears T_N), with the
+    rows the same carve gives without the middle stretch: same segments, same permutations.
+    """
+    import quebra.analyzers.check_ledger as ledger_module
+
+    rng = np.random.default_rng(5)
+
+    def varied() -> list[float]:
+        values: list[float] = []
+        for _ in range(20):
+            values += [5.0] * int(rng.integers(2, 12))
+            values += [1.0] * int(rng.integers(2, 8))
+        return values
+
+    stretches = [varied(), [1.0] + ([5.0] * 3 + [1.0] * 2) * 10, varied()]
+
+    def ledger_rows(kept: list[int]) -> pd.DataFrame:
+        t_rel_s: list[float] = []
+        values: list[float] = []
+        for index in kept:
+            t_rel_s += [index * 1.0e6 + 60.0 * i for i in range(len(stretches[index]))]
+            values += stretches[index]
+        carved = windows.run(
+            windows.WindowsInputs(
+                t_rel_s=np.asarray(t_rel_s),
+                values=np.asarray(values),
+                thresholds=[("3 µs", 3.0, True)],
+                dataset_id="unit",
+            )
+        )
+        gaps = carved.diagnostics["gap_spans_s"]
+        assert len(gaps) == len(kept) - 1, "premise: a read gap between stretches"
+        return ledger_module.run(
+            ledger_module.CheckLedgerInputs(
+                windows=carved.windows_in_spec,
+                bench_size_table=_bench_table(),
+                thresholds=[("3 µs", 3.0, True)],
+                dataset_id="unit",
+                gap_spans_s=gaps,
+                n_permutations=99,
+                seed=7,
+            )
+        ).rows
+
+    rows = ledger_rows([0, 1, 2])
+    assert "(all)" not in set(rows["check_id"])
+    columns = ["clock", "check_id", "calibration", "statistic", "p_value", "verdict"]
+    pd.testing.assert_frame_equal(rows[columns], ledger_rows([0, 2])[columns])
+    for clock in ("in_spec", "calendar"):
+        cell = rows[rows["clock"] == clock]
+        assert set(cell["n_segments"]) == {2}, clock
+        assert (
+            cell["notes"]
+            .str.contains(
+                "1 segment(s) with every duration identical dropped", regex=False
+            )
+            .all()
+        ), clock
+        answering = ["c5_rank_autocorr", "c6_exchangeability", "cvm_cramer_von_mises"]
+        if clock == "calendar":
+            answering += ["c1_lewis_robinson", "c2_anderson_darling"]
+        answered = cell[cell["check_id"].isin(answering)]
+        assert len(answered) == len(answering), clock
+        assert answered["p_value"].notna().all(), answered[["check_id", "notes"]]
 
 
 def test_the_p_value_ladder_draws_cvm_from_its_permutation_row():
