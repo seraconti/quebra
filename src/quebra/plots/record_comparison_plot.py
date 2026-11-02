@@ -55,6 +55,9 @@ _PAIR_INKS = (theme.ordered_color(0, 3), theme.ordered_color(1, 3))
 # One ink for forests and ladders: each group already has a panel of its own.
 _GROUP_INK = theme.ordered_color(0, 3)
 _WRAP = 58
+# Rungs to a row of the pair figure; each rung is a column of two panels, in spec over
+# out of spec, and the next rungs wrap onto a new pair of rows.
+_COLUMNS = 4
 DAGGER = "†"
 
 UNADJUSTED = "Each panel's log-rank p is unadjusted for the other thresholds and sides."
@@ -182,7 +185,11 @@ def _pair_panel(ax: plt.Axes, panel: PairPanel, style: str) -> None:
 
 
 class PairLadderPlot(BasePlot):
-    """Two records' window survival at every threshold (columns) and side (rows)."""
+    """Two records' window survival at each drawn threshold, in spec over out of spec.
+
+    The thresholds run along a row, `_COLUMNS` to a row, then wrap; which thresholds are
+    drawn is the artifact's `ladder` (`record_comparison.select_rungs`).
+    """
 
     def build_matplotlib(
         self, data: PairLadderData, style: str = "default"
@@ -192,18 +199,27 @@ class PairLadderPlot(BasePlot):
                 f"PairLadderPlot draws a PairLadderData, not {type(data).__name__}"
             )
         n = len(data.ladder)
+        cols = min(n, _COLUMNS)
+        blocks = -(-n // _COLUMNS)
+        rows = len(SIDES) * blocks
         with theme.style_context(style):
             fig, axes = plt.subplots(
-                len(SIDES), n, figsize=(3.4 * n, 7.4), squeeze=False, sharey=True
+                rows, cols, figsize=(3.4 * cols, 3.7 * rows), squeeze=False, sharey=True
             )
-            for col, label in enumerate(data.ladder):
+            for index, label in enumerate(data.ladder):
+                block, col = divmod(index, _COLUMNS)
                 for row, side in enumerate(SIDES):
-                    ax = axes[row][col]
+                    ax = axes[block * len(SIDES) + row][col]
                     _pair_panel(ax, data.panels[(label, side)], style)
                     ax.set_title(f"{_SIDE_WORDS[side]}, {label}")
                     if row == len(SIDES) - 1:
                         ax.set_xlabel("Window age (min)")
-            for row in range(len(SIDES)):
+            # The last row of thresholds may be short: its empty slots are not drawn.
+            for index in range(n, blocks * cols):
+                block, col = divmod(index, _COLUMNS)
+                for row in range(len(SIDES)):
+                    axes[block * len(SIDES) + row][col].remove()
+            for row in range(rows):
                 axes[row][0].set_ylabel("Surviving fraction of windows")
             axes[0][0].legend(
                 handles=[
@@ -241,7 +257,7 @@ class PairLadderPlot(BasePlot):
                             [data.record_a, data.record_b], data.flags
                         )
                     ),
-                    40 * n,
+                    40 * cols,
                 ),
                 **theme.scaled_text(theme.CAPTION, style),
             )

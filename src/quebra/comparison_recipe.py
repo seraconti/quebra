@@ -181,18 +181,28 @@ def wire_pair_figure(
     name: str,
     evidence: str,
     flags: Mapping[str, str] | None = None,
+    rungs: Sequence[str] | None = None,
+    thresholds: list[tuple[str, float, bool]] | None = None,
     targets: Sequence[str] = FIGURE_TARGETS,
 ) -> object:
-    """The pair figure: every threshold and side of `pair`, beside both records' curves.
+    """The pair figure: both sides of each drawn threshold of `pair`, beside the curves.
 
     `carves` and `pair` are what `wire_record_carves` and `wire_record_pair` gave for this
-    pair, a first, and `evidence` and `flags` what the pair's table was given. Returns the
-    figure-data node.
+    pair, a first, and `evidence` and `flags` what the pair's table was given. `rungs`
+    names the thresholds the figure draws, every rung of `thresholds` (the carves' ladder,
+    `recipes.T2STAR_THRESHOLDS` when None) by default; one the ladder lacks raises at graph
+    build. It is a kwarg of the figure-data step alone, passed only when given, so the
+    table keeps every rung. Returns the figure-data node.
     """
     if len(carves) != 2:
         raise ValueError(f"a pair is two records; got {list(carves)}")
     record_comparison.require_evidence({name: evidence}, [name])
     record_comparison.require_flags(dict(flags or {}), list(carves))
+    drawn: dict[str, object] = {}
+    if rungs is not None:
+        ladder = [label for label, _, _ in (thresholds or T2STAR_THRESHOLDS)]
+        record_comparison.select_rungs(ladder, rungs)
+        drawn["rungs"] = list(rungs)
     carve_a, carve_b = carves.values()
     data = job.step(
         record_comparison.build_pair_ladder_data,
@@ -203,6 +213,7 @@ def wire_pair_figure(
         comparison=name,
         evidence=evidence,
         flags=dict(flags or {}),
+        **drawn,  # type: ignore[arg-type]
     )
     job.figure(PairLadderPlot, data, targets=list(targets), title=f"{name}_pair_figure")
     return data

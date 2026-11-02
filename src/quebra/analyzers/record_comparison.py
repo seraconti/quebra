@@ -1063,6 +1063,22 @@ class PairLadderData(StaleArtifactGuard):
     flags: dict[str, str]
 
 
+def select_rungs(ladder: Sequence[str], rungs: Sequence[str] | None) -> tuple[str, ...]:
+    """The rungs of `ladder` that `rungs` names, in ladder order; every rung when None.
+
+    Raises unless `rungs` names at least one rung, each of the ladder and each once.
+    """
+    if rungs is None:
+        return tuple(ladder)
+    chosen = list(rungs)
+    unknown = sorted(set(chosen) - set(ladder))
+    if not chosen or unknown or len(set(chosen)) != len(chosen):
+        raise ValueError(
+            f"rungs must name distinct rungs of the ladder {list(ladder)}; got {chosen}"
+        )
+    return tuple(label for label in ladder if label in chosen)
+
+
 def build_pair_ladder_data(
     pairs: ByThresholdSide[PairComparison],
     carve_a: WindowsResult,
@@ -1071,18 +1087,24 @@ def build_pair_ladder_data(
     comparison: str,
     evidence: str,
     flags: Mapping[str, str] | None = None,
+    rungs: Sequence[str] | None = None,
 ) -> PairLadderData:
     """The pair figure's data: each comparison of `pairs` beside both records' curves.
 
     The carves must be the two records `pairs` compared, a first, on the ladder `pairs`
-    holds; anything else raises. `flags` is as in `pair_table`.
+    holds; anything else raises. `flags` is as in `pair_table`. `rungs` names the
+    thresholds the figure draws (`select_rungs`), both sides of each; it reaches no table,
+    so the pair's table keeps every rung.
     """
     require_evidence({comparison: evidence}, [comparison])
     ladder, (a, b) = _tables_on_one_ladder((carve_a, carve_b))
     if ladder != pairs.ladder:
         raise ValueError(f"carves on the ladder {ladder}, pairs on {pairs.ladder}")
+    drawn = select_rungs(ladder, rungs)
     panels: dict[tuple[str, str], PairPanel] = {}
     for (label, side), pair in pairs.items.items():
+        if label not in drawn:
+            continue
         table_a, table_b = a.table(label, side), b.table(label, side)
         carved = (table_a.dataset_id, table_b.dataset_id)
         if carved != (pair.record_a, pair.record_b):
@@ -1109,7 +1131,7 @@ def build_pair_ladder_data(
         record_a=first.record_a,
         record_b=first.record_b,
         evidence=evidence,
-        ladder=ladder,
+        ladder=drawn,
         panels=panels,
         flags=flags,
     )

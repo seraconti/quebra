@@ -30,13 +30,15 @@ RULE = record_comparison.TAU_RULE_MIN_LARGEST_AGE
 PER_GROUP = record_comparison.TAU_PER_GROUP
 
 
-def _carve(record: str, phase: float) -> windows.WindowsResult:
+def _carve(
+    record: str, phase: float, ladder: list[tuple[str, float, bool]] = LADDER
+) -> windows.WindowsResult:
     t = np.arange(120.0)
     rng = np.random.default_rng(zlib.crc32(record.encode()))
     v = 5.0 + 3.0 * np.sin(t / 3.0 + phase) + rng.normal(0.0, 0.8, t.size)
     return windows.run(
         windows.WindowsInputs(
-            t_rel_s=t, values=v, thresholds=LADDER, dataset_id=record, gap_mult=10.0
+            t_rel_s=t, values=v, thresholds=ladder, dataset_id=record, gap_mult=10.0
         )
     )
 
@@ -574,3 +576,73 @@ def test_a_flagged_record_carries_a_dagger_and_its_flag_is_printed_beside_it(
         plt.close(fig)
     assert legend == ["a: a", "b: rise †", "comparison tau"]
     assert "† line rise: rise." in caption
+
+
+def test_a_pair_figure_wraps_at_four_rungs_a_row_and_draws_only_the_rungs_asked() -> (
+    None
+):
+    """Oracle: specification. Five rungs draw as two rows of rungs, four then one, each
+    rung a column of two panels, with no empty panel left; `rungs` picks which rungs the
+    figure draws, in ladder order, and a rung the ladder lacks is refused at graph build.
+    """
+    five = [(str(v), float(v), True) for v in (3, 4, 5, 6, 7)]
+    a, b = _carve("a", 0.0, five), _carve("b", 1.0, five)
+    pairs = record_comparison.compare_pair_set(a, b, tau_rule=RULE)
+
+    def figure_of(rungs: list[str] | None) -> tuple[tuple[str, ...], list, list]:
+        data = record_comparison.build_pair_ladder_data(
+            pairs, a, b, comparison="p", evidence="x", rungs=rungs
+        )
+        fig = _draw(plot.PairLadderPlot, data)
+        try:
+            boxes = [ax.get_position() for ax in fig.axes]
+            titles = sorted(ax.get_title() for ax in fig.axes)
+        finally:
+            plt.close(fig)
+        columns = sorted({round(box.x0, 3) for box in boxes})
+        rows = sorted({round(box.y0, 3) for box in boxes})
+        return data.ladder, titles, [len(columns), len(rows), len(boxes)]
+
+    ladder, titles, shape = figure_of(None)
+    assert ladder == ("3", "4", "5", "6", "7")
+    assert titles == sorted(
+        f"{words}, {label}" for label in ladder for words in ("in spec", "out of spec")
+    )
+    assert shape == [4, 4, 10]
+    ladder, titles, shape = figure_of(["6", "4"])
+    assert ladder == ("4", "6")
+    assert titles == ["in spec, 4", "in spec, 6", "out of spec, 4", "out of spec, 6"]
+    assert shape == [2, 2, 4]
+    for bad in (["5x"], [], ["4", "4"]):
+        with pytest.raises(ValueError, match="rungs must name distinct rungs"):
+            record_comparison.build_pair_ladder_data(
+                pairs, a, b, comparison="p", evidence="x", rungs=bad
+            )
+
+    job = Job("rungs")
+    carves = {
+        r: job.step(_carve, name=f"windows_{r}", record=r, phase=p, ladder=five)
+        for r, p in (("a", 0.0), ("b", 1.0))
+    }
+    refs = comparison_recipe.wire_record_pair(
+        job, carves, name="p", evidence="x", tau_rule=RULE
+    )
+    every = comparison_recipe.wire_pair_figure(
+        job, carves, refs["pair"], name="p", evidence="x", thresholds=five
+    )
+    chosen = comparison_recipe.wire_pair_figure(
+        job, carves, refs["pair"], name="q", evidence="x", rungs=["6"], thresholds=five
+    )
+    assert "rungs" not in job.dag[every.node_id].kwargs
+    assert job.dag[chosen.node_id].kwargs["rungs"] == ["6"]
+    assert "rungs" not in job.dag[refs["table"].node_id].kwargs
+    with pytest.raises(ValueError, match="rungs must name distinct rungs"):
+        comparison_recipe.wire_pair_figure(
+            job,
+            carves,
+            refs["pair"],
+            name="r",
+            evidence="x",
+            rungs=["8"],
+            thresholds=five,
+        )
