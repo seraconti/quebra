@@ -219,6 +219,13 @@ default; the artifact records the value key, and the step's settings record both
   the sum of the within-segment spacings. The carve's in-spec fraction lies between them. They
   bound the fraction of time held by reads in spec; an excursion between two reads on the
   same side lies outside both.
+
+  The compliance survey (`analyzers/compliance_survey.py`, job
+  `jobs/composite/compliance_survey.py`) reports the same bounds for every ledger record, beside
+  the in-spec fraction they bound. It calls `in_spec_fraction_bounds` on the carve's read table,
+  at the `gap_mult` and `k` the carve recorded in its meta, and runs no tellability step, so a
+  ledger job's identity carries no tellability module. On a T2* record the two agree bit for
+  bit (`tests/test_compliance_survey.py`).
 - **rho_k** of the in-spec indicator, `k = 1` to 10, within segments: centred on `A`, scaled by
   `A (1 - A)`, averaged over the within-segment pairs at lag `k`. The array stops at the last
   lag that has a pair.

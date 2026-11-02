@@ -7,7 +7,7 @@ Every job declares a `JOB_ID` (the logical name `job.include` resolves) and a
 `JOB_FAMILY` (its category). Neither is its directory: a job can move without
 breaking any composite, and recategorising costs one string edit.
 
-24 jobs in 7 families.
+25 jobs in 8 families.
 
 ## check_ledger
 
@@ -23,6 +23,12 @@ breaking any composite, and recategorising costs one string edit.
 | `check_ledger_6d2s_q4` | `jobs/active/check_ledger_6d2s_q4.py` | `jobs/bench/results/size_table.csv` | — | — |
 | `check_ledger_6d2s_q5` | `jobs/active/check_ledger_6d2s_q5.py` | `jobs/bench/results/size_table.csv` | — | — |
 | `check_ledger_6d2s_q6` | `jobs/active/check_ledger_6d2s_q6.py` | `jobs/bench/results/size_table.csv` | — | — |
+
+## compliance
+
+| JOB_ID | file | datasets | includes | parameters |
+|---|---|---|---|---|
+| `compliance_survey` | `jobs/composite/compliance_survey.py` | — | `check_ledger_2x2_q1`<br>`check_ledger_2x2_q2`<br>`check_ledger_2x2_q3`<br>`check_ledger_2x2_q4`<br>`check_ledger_6d2s_q1`<br>`check_ledger_6d2s_q2`<br>`check_ledger_6d2s_q3`<br>`check_ledger_6d2s_q4`<br>`check_ledger_6d2s_q5`<br>`check_ledger_6d2s_q6` | `FLAG_TEXT="shaded in the paper's dataset table (high filtered share; the paper excluded >5% filtered datasets from its Fourier analysis)"`<br>`PREFIX='compliance_survey'`<br>`TABLE_SOURCE='Capannelli et al., Supplementary notes, Supplementary Fig. 10 (6D2S, p. 10) and Supplementary Fig. 11 (2x2, p. 11)'` |
 
 ## independence
 

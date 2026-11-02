@@ -455,6 +455,10 @@ LEGEND_TEXT = {"fontsize": 7}
 PAIR_CONNECTOR = {"color": "#BBBBBB", "linewidth": 1.2}
 LEADER_LINE = {"color": "#CCCCCC", "linewidth": 1.0}
 
+# The extent drawn through a bar: the lower and upper bounds of the value the bar shows.
+# Near-black and thin, so it reads over the bar's fill as well as beside it.
+BOUNDS_WHISKER = {"color": "#333333", "linewidth": 1.0}
+
 
 # Poster ink. A poster figure is read as ONE object from a distance, not as a panel in a
 # series, so it drops the per-qubit identity palette and carries a single ink per figure;

@@ -8,7 +8,7 @@ Oracles:
   never dropped;
 - a ledger job on two synthetic records, one sound and one the schema refuses, run by the
   runner into a temporary output folder: the sound record is scored, the other is persisted
-  as a `RecordFailure` with a ledger that says so.
+  as a `RecordFailure` with a ledger that says so, and the job's carve bundle holds both.
 """
 
 from __future__ import annotations
@@ -28,7 +28,12 @@ from quebra.core.dataset import Dataset
 from quebra.core.job import _load_dataset, _load_dataset_or_failure
 from quebra.core.runner import run_job
 from quebra.core.types import Norm, RecordFailure
-from quebra.ledger_recipe import CARVE_SUFFIX, LEDGER_DATA_SUFFIX, ledger_step
+from quebra.ledger_recipe import (
+    CARVE_SUFFIX,
+    CARVES_DATA_SUFFIX,
+    LEDGER_DATA_SUFFIX,
+    ledger_step,
+)
 from quebra.recipes import T2STAR_THRESHOLDS, _carve_stage
 from quebra.schemas.track912 import track912Schema
 
@@ -215,3 +220,7 @@ def test_a_ledger_job_scores_the_sound_record_and_records_the_broken_one(tmp_pat
     sound_ledger = artifact(f"probe_ok{LEDGER_DATA_SUFFIX}")
     assert (sound_ledger.rows["verdict"] != VERDICT_NOT_COMPUTED).any()
     assert artifact("probe_check_ledgers").labels == ("probe ok", "probe bad")
+    bundle = artifact(f"probe{CARVES_DATA_SUFFIX}")
+    assert bundle.records == ("probe_ok", "probe_bad")
+    assert isinstance(bundle.carves[0], WindowsResult)
+    assert bundle.carves[1] == broken

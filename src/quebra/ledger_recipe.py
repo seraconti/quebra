@@ -11,6 +11,8 @@ The device-wide survey (`jobs/composite/independence_survey.py`) includes the le
 and refs that bundle, once per job, through `included_ledger_set`. It neither carves nor
 scores, so every verdict it draws is the one the per-record ledger printed. One ref per job
 matters: a composite run without reuse runs an included job once for every distinct ref.
+The compliance survey (`jobs/composite/compliance_survey.py`) refs each job's carve bundle
+instead (`RecordCarves`, `{prefix}_carves`), once per job, through `included_carves`.
 
 A module of its own, not part of `quebra.recipes`, because of the identity closure
 (`quebra.core.closure`): whatever a module imports joins the closure of every step function
@@ -76,6 +78,8 @@ LEDGER_DATA_SUFFIX = "_check_ledger_data"
 # The materialize name of a record's carve, a `WindowsResult` or a `RecordFailure`. Other
 # jobs read the carve by this name; keep it stable.
 CARVE_SUFFIX = "_windows"
+# The materialize name of a ledger job's carve bundle is its prefix plus this.
+CARVES_DATA_SUFFIX = "_carves"
 
 TARGETS = ["static", "academic"]
 
@@ -91,6 +95,20 @@ class CheckLedgers(StaleArtifactGuard):
 
     labels: tuple[str, ...]
     ledgers: tuple[CheckLedger, ...]
+
+
+@dataclass
+class RecordCarves(StaleArtifactGuard):
+    """Every record carve of one ledger job, in the job's order, each under its run name.
+
+    The same carves the job persists one by one as `{record}_windows`, bundled so a
+    composite reading every record takes one ref per job.
+    """
+
+    records: tuple[str, ...]
+    carves: tuple[WindowsResult | RecordFailure, ...]
+    # The ladder the carves were cut on, so a reader of the bundle declares none of its own.
+    thresholds: tuple[tuple[str, float, bool], ...]
 
 
 def ledger_step(
@@ -162,6 +180,32 @@ def collect_ledgers(*ledgers: CheckLedger, labels: tuple[str, ...]) -> CheckLedg
                 f"label {label!r} is attached to the ledger of {ledger.dataset_id!r}"
             )
     return CheckLedgers(labels=tuple(labels), ledgers=tuple(ledgers))
+
+
+def collect_carves(
+    *carves: WindowsResult | RecordFailure,
+    records: tuple[str, ...],
+    thresholds: list[tuple[str, float, bool]],
+) -> RecordCarves:
+    """Bundle a job's carves under their run names, checked against each carve's own id,
+    with the ladder they were cut on."""
+    if len(records) != len(carves):
+        raise ValueError(f"{len(records)} run names for {len(carves)} carves")
+    for record, carve in zip(records, carves):
+        carved = (
+            carve.dataset_id
+            if isinstance(carve, RecordFailure)
+            else str(carve.meta["dataset_id"])
+        )
+        if carved != record:
+            raise ValueError(
+                f"run name {record!r} is attached to the carve of {carved!r}"
+            )
+    return RecordCarves(
+        records=tuple(records),
+        carves=tuple(carves),
+        thresholds=tuple((str(lb), float(v), bool(b)) for lb, v, b in thresholds),
+    )
 
 
 def survey_ledgers(
@@ -238,10 +282,10 @@ def configure_check_ledger_job(
 
     A record's prefix is its dataset's `extra["run_name"]`, which also becomes the ledger's
     `dataset_id`, so the label a row carries is derived from the record and not retyped.
-    `prefix` names the job-level sinks: `{prefix}_check_ledgers` and the
-    `{prefix}_independence_survey_*` grids and figures. No T2* panel: that belongs to the T2*
-    jobs. Each record's carve is persisted as `{record}_windows` (`CARVE_SUFFIX`), the name
-    the compliance survey and the thesis record figure read it by.
+    `prefix` names the job-level sinks: `{prefix}_check_ledgers`, the carve bundle
+    `{prefix}_carves` the compliance survey reads, and the `{prefix}_independence_survey_*`
+    grids and figures. No T2* panel: that belongs to the T2* jobs. Each record's carve is
+    also persisted on its own, as `{record}_windows` (`CARVE_SUFFIX`).
 
     The carve records a failure (`wire_t2star_carve(on_failure="record")`): a record whose
     content fails to load or carve is persisted as a `RecordFailure` under the same name,
@@ -250,6 +294,8 @@ def configure_check_ledger_job(
     bench = job.load_df(bench_size_table)
     ledgers: list[object] = []
     labels: list[str] = []
+    carves: list[object] = []
+    records_seen: list[str] = []
     for dataset in records:
         record = str(dataset.extra["run_name"])
         _, window_node = wire_t2star_carve(
@@ -260,6 +306,8 @@ def configure_check_ledger_job(
             on_failure="record",
         )
         job.materialize(window_node, name=f"{record}{CARVE_SUFFIX}")
+        carves.append(window_node)
+        records_seen.append(record)
         ledger = job.step(
             ledger_step,
             window_node,
@@ -290,6 +338,14 @@ def configure_check_ledger_job(
         labels=tuple(labels),
     )
     job.materialize(bundle, name=f"{prefix}_check_ledgers")
+    carve_bundle = job.step(
+        collect_carves,
+        *carves,  # type: ignore[arg-type]
+        name="record_carves",
+        records=tuple(records_seen),
+        thresholds=T2STAR_THRESHOLDS,
+    )
+    job.materialize(carve_bundle, name=f"{prefix}{CARVES_DATA_SUFFIX}")
     wire_independence_survey(
         job, [bundle], labels, prefix=f"{prefix}_independence_survey", alpha=alpha
     )
@@ -321,3 +377,46 @@ def included_ledger_set(included: Any) -> tuple[list[str], object]:
             f"{len(names)} sinks, not one"
         )
     return list(node.kwargs["labels"]), included.ref(names[0])
+
+
+def included_carves(included: Any) -> tuple[list[str], list[str], object]:
+    """The run names and devices of an included ledger job's records, and a ref to its
+    `RecordCarves` bundle.
+
+    Read off the included job's graph, so the compliance survey retypes no record list: the
+    run names are the bundle's own `records`, each device its record's dataset's. Raises
+    unless the job has exactly one bundle node and exactly one sink persisting it, as
+    `included_ledger_set` does.
+    """
+    job = included.job
+    nodes = [n for n in job.dag.values() if n.fn is collect_carves]
+    if len(nodes) != 1:
+        raise ValueError(
+            f"included job {included.alias!r} has {len(nodes)} `collect_carves` nodes, "
+            "not one; it is not a ledger job"
+        )
+    (node,) = nodes
+    names = [
+        sink.name
+        for sink in job.sinks
+        if getattr(sink, "node", None) is not None and sink.node.node_id == node.node_id
+    ]
+    if len(names) != 1:
+        raise ValueError(
+            f"included job {included.alias!r} persists its carve bundle under "
+            f"{len(names)} sinks, not one"
+        )
+    devices = []
+    for parent in node.inputs:
+        load = job.dag[parent.node_id]
+        while "dataset" not in load.kwargs:
+            (up,) = load.inputs
+            load = job.dag[up.node_id]
+        dataset = load.kwargs["dataset"]
+        if dataset.device is None:
+            raise ValueError(
+                f"included job {included.alias!r}: {dataset.path!r} declares no device, "
+                "so the survey cannot place it in a panel"
+            )
+        devices.append(str(dataset.device))
+    return list(node.kwargs["records"]), devices, included.ref(names[0])

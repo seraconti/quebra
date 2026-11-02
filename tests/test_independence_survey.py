@@ -41,6 +41,7 @@ from quebra.core.job import Job
 from quebra.core.reference import ArtifactRef
 from quebra.ledger_recipe import (
     CARVE_SUFFIX,
+    CARVES_DATA_SUFFIX,
     LEDGER_DATA_SUFFIX,
     LEDGER_KNOBS,
     collect_ledgers,
@@ -222,7 +223,8 @@ def test_c3_is_off_and_its_simulation_count_is_declared():
 
 def test_a_ledger_job_draws_and_writes_only_ledgers_and_their_survey():
     """No T2* panel: that belongs to the T2* jobs. What it writes is its ledgers, their
-    survey, and each record's carve (`CARVE_SUFFIX`), which the compliance survey reads."""
+    survey, each record's carve (`CARVE_SUFFIX`) and the bundle of those carves
+    (`CARVES_DATA_SUFFIX`), which the compliance survey reads."""
     allowed = {CheckLedgerPanel, IndependenceSurveyOverviewPlot, *SURVEY_PLOTS}
     for job_id, job in _ledger_jobs().items():
         for sink in job.sinks:
@@ -233,6 +235,7 @@ def test_a_ledger_job_draws_and_writes_only_ledgers_and_their_survey():
                     (
                         LEDGER_DATA_SUFFIX,
                         CARVE_SUFFIX,
+                        CARVES_DATA_SUFFIX,
                         "_check_ledgers",
                         "_independence_survey_grids",
                     )
