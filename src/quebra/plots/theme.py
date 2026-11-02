@@ -467,6 +467,36 @@ POSTER_INK_DISTRIBUTION = "#8c2231"
 # it names a value the figure is ABOUT, unlike ANNOTATION, which qualifies one.
 GUIDE_LABEL = {"fontsize": 7, "color": "#1A1A1A", "fontweight": "bold"}
 
+# The power spectrum S(f) of a record, the one series on its axes. Near-black and thin: it
+# belongs to the whole record, not to a qubit, a threshold or a state, so it takes none of
+# their hues, and the marks beside it are greys and one heavier segment.
+SPECTRUM_LINE = {"color": "#2E2E2E", "linewidth": 0.7}
+
+# What the spectrum's axes mark beside S(f): the band edge f_e (a frequency, dotted), the
+# edge level (the mean of S over the top tenth of the band, drawn over that stretch), the
+# noise floor (dashed), and the top decade G10 reads, shaded behind the series. The three
+# lines differ in orientation, weight and dash, so none needs a hue of its own.
+BAND_EDGE_LINE = {"color": "#595959", "linestyle": ":", "linewidth": 0.9}
+EDGE_LEVEL_LINE = {"color": "#1A1A1A", "linewidth": 2.0}
+NOISE_FLOOR_LINE = {"color": "#6B6B6B", "linestyle": "--", "linewidth": 0.9}
+TOP_DECADE_SHADE = {"color": "#D9D9D9", "alpha": 0.5}
+
+# Crossing placement (`tellability.crossing_counts`), one colour per kind of down-crossing:
+# CLEAN, its bracket runs from a confident in-spec read to a confident out-of-spec one with
+# one crossing between; MERGED, such a bracket holding more; UNBRACKETED, every other
+# down-crossing. Grey for the kind that places nothing. MERGED is kept off the gold of
+# `HIGHLIGHT_SHADE` and of the `inconclusive` verdict, which share a figure with it. CLEAN
+# shares the permutation calibration's blue; the two are never drawn in one figure.
+CROSSING_COLORS = {
+    "clean": "#2C6E8F",
+    "merged": "#D9822B",
+    "unbracketed": "#BBBBBB",
+}
+
+# The outline of a filled cell or key patch, so a near-white fill (the `no row` verdict)
+# still shows where it ends.
+CELL_EDGE = "#999999"
+
 
 # The text styles above are ABSOLUTE point sizes, tuned for one panel among several on a
 # page. The poster target draws a single figure at roughly three times that scale, where a
