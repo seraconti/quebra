@@ -46,6 +46,18 @@ The status shares partition the record because the rows are refused unless they 
 time order, disjoint and inside the record: the time per status and the time between rows
 then sum to the record length by construction.
 
+Two tables describe what surrounds the cycles, and classify nothing: they hold durations,
+counts and shares, and the reader bins them. `cycle_context` has one row per cycle,
+complete or censored: its stretch, its start and length, whether it opens its stretch, the
+first status that follows its calibration, the previous complete cycle of the same
+stretch, and the shares of `CONTEXT_STATUSES` inside it. `cycle_periods` cuts the
+**observed exposure**, the time inside segments with calibration time included, into
+`N_PERIODS` periods of near-equal exposure, and gives each its stretches, calibrations,
+cycles, calibrations per hour and status shares. Each cut sits at the calibration start or
+stretch boundary nearest an equal split, so no calibration, cycle or spell is split, and a
+period's exposure is off an equal share by at most the longest gap between neighbouring
+cut candidates.
+
 The **observed clock** (`whole_record_segment`) lays the complete cycles end to end in
 calendar order, starting at the end of the first calibration that opens one. Removed from it:
 offline spells, unobserved spans, calibration time, each segment's start (unknown age), and
@@ -168,6 +180,44 @@ STATUS_CALIBRATING = "calibrating"
 STATUS_OFFLINE = "offline"
 # Time no row covers, in the status shares. A row may not carry it as its status.
 NOT_LISTED = "not listed"
+# The other statuses the Quantum Inspire export declares (`schemas/qi_status_history`):
+# `cycle_context` shares out their time inside each cycle, and `cycle_periods` inside each
+# period, calibrating time with them.
+STATUS_EXECUTING = "executing"
+STATUS_IDLE = "idle"
+STATUS_BENCHMARKING = "benchmarking"
+CONTEXT_STATUSES = (STATUS_EXECUTING, STATUS_IDLE, STATUS_BENCHMARKING)
+PERIOD_STATUSES = (STATUS_CALIBRATING, *CONTEXT_STATUSES)
+# `status_at_start` of a cycle in which no other status follows its calibration.
+STATUS_NONE = "none"
+# How many periods of near-equal observed exposure `cycle_periods` cuts a record into.
+N_PERIODS = 4
+CONTEXT_COLUMNS = (
+    "cycle_index",
+    "stretch_id",
+    "stretch_length_s",
+    "t_start_rel_s",
+    "duration_s",
+    "censored",
+    "opens_stretch",
+    "status_at_start",
+    "prev_duration_s",
+    *(f"share_{status}" for status in CONTEXT_STATUSES),
+)
+# `share_other` is the rest of the exposure: any other status, and time no row covers.
+PERIOD_COLUMNS = (
+    "period",
+    "start_rel_s",
+    "end_rel_s",
+    "n_stretches",
+    "exposure_h",
+    "n_calibrations",
+    "n_complete_cycles",
+    "n_censored_cycles",
+    "calibrations_per_h",
+    *(f"share_{status}" for status in PERIOD_STATUSES),
+    "share_other",
+)
 
 # The `threshold_label` of the ledger rows on cycles: the row schema is the windows', and
 # cycles have no threshold, so the column names what was scored. The whole-record rows have
@@ -662,6 +712,175 @@ def status_shares(norm: Norm) -> StatusShares:
         fractions=tuple(s / length for s in seconds),
         record_length_s=length,
     )
+
+
+# ---------------------------------------------------------------------------
+# What surrounds the cycles: a table per cycle and one per period
+# ---------------------------------------------------------------------------
+
+
+def cycle_context(norm: Norm) -> pd.DataFrame:
+    """One row per cycle of a record of spells, complete and censored, in time order, with
+    `CONTEXT_COLUMNS` (module docstring).
+
+    `stretch_id` is the cycle's segment (`CycleTable.segment`) and `stretch_length_s` that
+    segment's length; `t_start_rel_s` is the cycle's start from the record start.
+    `opens_stretch` marks the cycle that starts at its stretch's first calibration.
+    `status_at_start` is the status of the first spell of positive length, other than
+    calibrating, that starts inside the cycle, `STATUS_NONE` if none does.
+    `prev_duration_s` is the previous cycle of the same stretch, always complete, and NaN
+    for a cycle that opens its stretch. Each share is that status's time inside the cycle
+    over the cycle's length; they sum to at most 1.
+    """
+    spells = spells_from_norm(norm)
+    table = cycles(norm)
+    segments, _ = _segments(spells)
+    segment_length = np.array([hi - lo for lo, hi, _rows in segments], dtype=float)
+    n = table.n_cycles
+    opens = np.ones(n, dtype=bool)
+    opens[1:] = table.segment[1:] != table.segment[:-1]
+    previous = np.full(n, np.nan)
+    follows = ~opens[1:] & table.event[:-1]
+    previous[1:][follows] = table.length_s[:-1][follows]
+    span = spells.end_unix_s - spells.start_unix_s
+    status_at_start: list[str] = []
+    shares: dict[str, list[float]] = {status: [] for status in CONTEXT_STATUSES}
+    for start, end, length in zip(table.start_unix_s, table.end_unix_s, table.length_s):
+        # Spells never straddle a cycle's ends (a calibration, an outage, a gap or the
+        # record end), so the spells inside it are those that start inside it.
+        first, last = np.searchsorted(spells.start_unix_s, [start, end], side="left")
+        inside = slice(int(first), int(last))
+        status = spells.status[inside]
+        following = (status != STATUS_CALIBRATING) & (span[inside] > 0.0)
+        status_at_start.append(
+            str(status[following][0]) if np.any(following) else STATUS_NONE
+        )
+        for name in CONTEXT_STATUSES:
+            shares[name].append(float(np.sum(span[inside][status == name])) / length)
+    return pd.DataFrame(
+        {
+            "cycle_index": np.arange(n),
+            "stretch_id": table.segment,
+            "stretch_length_s": segment_length[table.segment],
+            "t_start_rel_s": table.start_unix_s - spells.record_start_unix_s,
+            "duration_s": table.length_s,
+            "censored": ~table.event,
+            "opens_stretch": opens,
+            "status_at_start": np.asarray(status_at_start, dtype=object),
+            "prev_duration_s": previous,
+            **{f"share_{name}": np.asarray(shares[name]) for name in CONTEXT_STATUSES},
+        },
+        columns=list(CONTEXT_COLUMNS),
+    )
+
+
+def cycle_periods(norm: Norm, *, n_periods: int = N_PERIODS) -> pd.DataFrame:
+    """`n_periods` periods of near-equal observed exposure, in time order, one row each with
+    `PERIOD_COLUMNS` (module docstring).
+
+    The exposure clock runs only inside segments and counts calibration time. Cut k sits at
+    the cut candidate nearest k / `n_periods` of the exposure, the earlier on a tie: the
+    candidates are the calibration starts and the segment ends, so a calibration, a cycle
+    or a spell lies inside one period. A period may be empty when two cuts meet; its
+    rates and shares are NaN. `start_rel_s` and `end_rel_s` are the calendar times of its
+    first and last observed instants from the record start (equal when it is empty).
+    `n_stretches` counts the segments it overlaps; calibrations and cycles count in the
+    period they start in.
+    """
+    if n_periods < 1:
+        raise ValueError(f"n_periods must be at least 1; got {n_periods}")
+    spells = spells_from_norm(norm)
+    table = cycles(norm)
+    segments, _ = _segments(spells)
+    lo = np.array([seg[0] for seg in segments], dtype=float)
+    hi = np.array([seg[1] for seg in segments], dtype=float)
+    offset = np.concatenate([[0.0], np.cumsum(hi - lo)])
+    total = float(offset[-1])
+
+    def reading(time: np.ndarray, segment: np.ndarray) -> np.ndarray:
+        return offset[segment] + (time - lo[segment])
+
+    calibration_start: list[float] = []
+    for index, (_lo, _hi, calibrating) in enumerate(segments):
+        merged, _n = _merge(calibrating)
+        calibration_start += [
+            offset[index] + (start - lo[index]) for start, _e in merged
+        ]
+    calibrations = np.asarray(calibration_start, dtype=float)
+    candidates = np.unique(np.concatenate([offset, calibrations]))
+    bounds = [0.0]
+    for target in total * np.arange(1, n_periods) / n_periods:
+        right = int(np.searchsorted(candidates, target, side="left"))
+        right = min(right, len(candidates) - 1)
+        left = max(right - 1, 0)
+        nearer = (
+            right if candidates[right] - target < target - candidates[left] else left
+        )
+        bounds.append(float(candidates[nearer]))
+    bounds.append(total)
+    edges = np.asarray(bounds)
+
+    def period_of(readings: np.ndarray) -> np.ndarray:
+        return np.searchsorted(edges[1:-1], readings, side="right")
+
+    def counts(readings: np.ndarray) -> np.ndarray:
+        return np.bincount(period_of(readings), minlength=n_periods)
+
+    n_calibrations = counts(calibrations)
+    cycle_start = reading(table.start_unix_s, table.segment)
+    n_complete = counts(cycle_start[table.event])
+    n_censored = counts(cycle_start[~table.event])
+    # A spell of positive length that is not an outage lies inside one segment.
+    span = spells.end_unix_s - spells.start_unix_s
+    inside = (spells.status != STATUS_OFFLINE) & (span > 0.0)
+    spell_segment = np.searchsorted(lo, spells.start_unix_s[inside], side="right") - 1
+    spell_period = period_of(reading(spells.start_unix_s[inside], spell_segment))
+    status_time = {
+        name: np.bincount(
+            spell_period,
+            weights=np.where(spells.status[inside] == name, span[inside], 0.0),
+            minlength=n_periods,
+        )
+        for name in PERIOD_STATUSES
+    }
+
+    def calendar(value: float, *, end: bool) -> float:
+        if not len(segments):
+            return math.nan
+        side = "left" if end else "right"
+        index = int(
+            np.clip(np.searchsorted(offset, value, side=side) - 1, 0, len(lo) - 1)
+        )
+        return float(lo[index] + (value - offset[index])) - spells.record_start_unix_s
+
+    rows = []
+    for period in range(n_periods):
+        start, end = float(edges[period]), float(edges[period + 1])
+        exposure = end - start
+        # Rates and shares of an empty period are NaN.
+        per = exposure if exposure > 0.0 else math.nan
+        listed = sum(float(status_time[name][period]) for name in PERIOD_STATUSES)
+        first = calendar(start, end=False)
+        overlap = np.maximum(offset[:-1], start) < np.minimum(offset[1:], end)
+        rows.append(
+            {
+                "period": period,
+                "start_rel_s": first,
+                "end_rel_s": calendar(end, end=True) if exposure > 0.0 else first,
+                "n_stretches": int(np.count_nonzero(overlap)),
+                "exposure_h": exposure / 3600.0,
+                "n_calibrations": int(n_calibrations[period]),
+                "n_complete_cycles": int(n_complete[period]),
+                "n_censored_cycles": int(n_censored[period]),
+                "calibrations_per_h": int(n_calibrations[period]) * 3600.0 / per,
+                **{
+                    f"share_{name}": float(status_time[name][period]) / per
+                    for name in PERIOD_STATUSES
+                },
+                "share_other": (exposure - listed) / per,
+            }
+        )
+    return pd.DataFrame(rows, columns=list(PERIOD_COLUMNS))
 
 
 # ---------------------------------------------------------------------------

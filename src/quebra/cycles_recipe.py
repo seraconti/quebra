@@ -3,7 +3,9 @@
 Per job: load the status history (`schemas/qi_status_history`), turn its samples into
 spells, the spells into cycles and status shares, run the check battery on the cycles
 against the bench's size table, build `CyclesPanelData`, materialize it and draw
-`CalibrationCyclesPanel`. Every step is a function of `analyzers/cycles.py` called as it
+`CalibrationCyclesPanel`. The spells also give the two context tables, materialized and
+not drawn: one row per cycle (`cycle_context`) and one per period of observed exposure
+(`cycle_periods`). Every step is a function of `analyzers/cycles.py` called as it
 stands, so a node's identity is that module's code and the knobs on its label.
 
 A module of its own, not part of `quebra.recipes`, for the reason `ledger_recipe.py` gives:
@@ -15,8 +17,11 @@ from __future__ import annotations
 
 from quebra.analyzers.check_outcome import PERMUTATION_KEYS
 from quebra.analyzers.cycles import (
+    N_PERIODS,
     build_cycles_panel_data,
     cycle_checks,
+    cycle_context,
+    cycle_periods,
     cycles,
     spells_from_samples,
     status_shares,
@@ -62,8 +67,9 @@ def configure_qi_cycles_job(
     min_events_per_segment: int,
     conf_level: float,
 ) -> None:
-    """Wire one status history from load to figure. `prefix` names the two sinks:
-    `{prefix}_panel_data` (materialized) and the figure titled `{prefix}`."""
+    """Wire one status history from load to figure. `prefix` names the sinks:
+    `{prefix}_panel_data`, `{prefix}_cycle_context` and `{prefix}_cycle_periods`
+    (materialized) and the figure titled `{prefix}`."""
     samples = job.load(dataset)
     spells = job.step(spells_from_samples, samples, name="spells", spacing_s=spacing_s)
     table = job.step(cycles, spells, name="cycles")
@@ -94,4 +100,8 @@ def configure_qi_cycles_job(
     # Not `{prefix}`: that is the figure's title, and two sinks may not share a
     # provenance name.
     job.materialize(panel, name=f"{prefix}_panel_data")
+    context = job.step(cycle_context, spells, name="cycle_context")
+    periods = job.step(cycle_periods, spells, name="cycle_periods", n_periods=N_PERIODS)
+    job.materialize(context, name=f"{prefix}_cycle_context")
+    job.materialize(periods, name=f"{prefix}_cycle_periods")
     job.figure(CalibrationCyclesPanel, panel, targets=TARGETS, title=prefix)

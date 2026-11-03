@@ -336,6 +336,165 @@ def test_status_shares_match_a_hand_table() -> None:
     assert shares.fractions == pytest.approx((0.085, 0.040, 0.160, 0.715), rel=1e-12)
 
 
+# Three stretches with every status the context tables read. Stretch 0 (0 to 300 s, an outage
+# after it): calibrations open at its start, a benchmark and idle time fill its cycles, and
+# an executing cycle is cut by the outage. Stretch 1 (400 to 600 s, a gap after it): idle
+# time of unknown age, then one executing cycle, its last calibration running into the gap,
+# so it ends on a complete cycle. Stretch 2 (700 to 1000 s, the record end): 10 s no row
+# covers, two touching calibrations, and a censored cycle no status follows.
+_CONTEXT_ROWS = [
+    (0.0, 10.0, "calibrating"),
+    (10.0, 40.0, "idle"),
+    (40.0, 70.0, "executing"),
+    (70.0, 80.0, "calibrating"),
+    (80.0, 130.0, "benchmarking"),
+    (130.0, 150.0, "idle"),
+    (150.0, 160.0, "calibrating"),
+    (160.0, 300.0, "executing"),
+    (300.0, 400.0, "offline"),
+    (400.0, 450.0, "idle"),
+    (450.0, 460.0, "calibrating"),
+    (460.0, 560.0, "executing"),
+    (560.0, 600.0, "calibrating"),
+    (700.0, 710.0, "calibrating"),
+    (720.0, 800.0, "benchmarking"),
+    (800.0, 810.0, "calibrating"),
+    (810.0, 820.0, "calibrating"),
+    (820.0, 900.0, "idle"),
+    (900.0, 910.0, "calibrating"),
+]
+
+
+def _context_norm() -> Norm:
+    norm = _spell_norm(_CONTEXT_ROWS, length_s=1000.0)
+    norm["unobserved_start_unix_s"] = np.array([_T0 + 600.0])
+    norm["unobserved_end_unix_s"] = np.array([_T0 + 700.0])
+    return norm
+
+
+@pytest.mark.unit
+def test_cycle_context_matches_a_hand_table() -> None:
+    """Oracle: a hand table of the seven cycles. Stretch 1's unknown start is no cycle, and
+    its one cycle is complete, so the cycle after it, the first of stretch 2, has no
+    previous duration; each stretch's first cycle opens it; the 10 s no row covers is
+    skipped by the status at start and counted by no share; the last cycle has no status
+    after its calibration."""
+    context = cycles.cycle_context(_context_norm())
+    assert list(context.columns) == list(cycles.CONTEXT_COLUMNS)
+    assert len(context) == 7
+    assert context["cycle_index"].tolist() == list(range(7))
+    assert context["stretch_id"].tolist() == [0, 0, 0, 1, 2, 2, 2]
+    assert context["stretch_length_s"].tolist() == [300.0] * 3 + [200.0] + [300.0] * 3
+    assert context["t_start_rel_s"].tolist() == [
+        10.0,
+        80.0,
+        160.0,
+        460.0,
+        710.0,
+        820.0,
+        910.0,
+    ]
+    assert context["duration_s"].tolist() == [
+        60.0,
+        70.0,
+        140.0,
+        100.0,
+        90.0,
+        80.0,
+        90.0,
+    ]
+    assert context["censored"].tolist() == [
+        False,
+        False,
+        True,
+        False,
+        False,
+        False,
+        True,
+    ]
+    assert context["opens_stretch"].tolist() == [
+        True,
+        False,
+        False,
+        True,
+        True,
+        False,
+        False,
+    ]
+    assert context["status_at_start"].tolist() == [
+        "idle",
+        "benchmarking",
+        "executing",
+        "executing",
+        "benchmarking",
+        "idle",
+        cycles.STATUS_NONE,
+    ]
+    np.testing.assert_array_equal(
+        context["prev_duration_s"].to_numpy(),
+        [np.nan, 60.0, 70.0, np.nan, np.nan, 90.0, 80.0],
+    )
+    shares = context[[f"share_{s}" for s in cycles.CONTEXT_STATUSES]].to_numpy()
+    np.testing.assert_allclose(
+        shares,
+        [
+            [30 / 60, 30 / 60, 0.0],
+            [0.0, 20 / 70, 50 / 70],
+            [1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 80 / 90],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0],
+        ],
+        rtol=1e-12,
+    )
+    assert (shares.sum(axis=1) <= 1.0 + 1e-12).all()
+
+
+@pytest.mark.unit
+def test_cycle_periods_match_a_hand_table() -> None:
+    """Oracle: a hand table. The observed exposure is 300 + 200 + 300 = 800 s, so the equal
+    cuts are at 200, 400 and 600 s of it. The candidates are the stretch ends (0, 300, 500,
+    800) and the calibration starts (0, 70, 150, 350, 460, 500, 600, 700): the cuts go to
+    150, 350 and 600, and the periods hold 150, 200, 250 and 200 s, each within the longest
+    cycle (140 s) of 200. Every calibration, cycle and spell then lies in one period."""
+    periods = cycles.cycle_periods(_context_norm(), n_periods=4)
+    assert list(periods.columns) == list(cycles.PERIOD_COLUMNS)
+    assert periods["period"].tolist() == [0, 1, 2, 3]
+    exposure_s = periods["exposure_h"].to_numpy() * 3600.0
+    np.testing.assert_allclose(exposure_s, [150.0, 200.0, 250.0, 200.0], rtol=1e-12)
+    assert (np.abs(exposure_s - 800.0 / 4) <= 140.0).all()
+    assert periods["start_rel_s"].tolist() == [0.0, 150.0, 450.0, 800.0]
+    assert periods["end_rel_s"].tolist() == [150.0, 450.0, 800.0, 1000.0]
+    assert periods["n_stretches"].tolist() == [1, 2, 2, 1]
+    assert periods["n_calibrations"].tolist() == [2, 1, 3, 2]
+    assert periods["n_complete_cycles"].tolist() == [2, 0, 2, 1]
+    assert periods["n_censored_cycles"].tolist() == [0, 1, 0, 1]
+    np.testing.assert_allclose(
+        periods["calibrations_per_h"], [48.0, 18.0, 43.2, 36.0], rtol=1e-12
+    )
+    columns = [f"share_{s}" for s in cycles.PERIOD_STATUSES] + ["share_other"]
+    shares = periods[columns].to_numpy()
+    np.testing.assert_allclose(
+        shares,
+        [
+            # calibrating, executing, idle, benchmarking, other
+            [20 / 150, 30 / 150, 50 / 150, 50 / 150, 0.0],
+            [10 / 200, 140 / 200, 50 / 200, 0.0, 0.0],
+            [60 / 250, 100 / 250, 0.0, 80 / 250, 10 / 250],
+            [30 / 200, 0.0, 80 / 200, 0.0, 90 / 200],
+        ],
+        rtol=1e-12,
+        atol=1e-15,
+    )
+    np.testing.assert_allclose(shares.sum(axis=1), 1.0, rtol=1e-12)
+    whole = cycles.cycle_periods(_context_norm(), n_periods=1)
+    assert whole[
+        ["n_calibrations", "n_complete_cycles", "n_censored_cycles"]
+    ].values.tolist() == [[8, 5, 2]]
+    assert whole["exposure_h"].tolist() == [800.0 / 3600.0]
+
+
 @pytest.mark.unit
 def test_battery_segments_hand_table() -> None:
     """Oracle: a hand table. Segment 0: x = (70, 50), tau = 120 + 90 = 210. Segment 1:
