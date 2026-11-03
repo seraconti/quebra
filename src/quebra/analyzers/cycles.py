@@ -46,12 +46,35 @@ The status shares partition the record because the rows are refused unless they 
 time order, disjoint and inside the record: the time per status and the time between rows
 then sum to the record length by construction.
 
-`cycle_checks` runs the battery on those segments and scores each row with the ledger's own
-rule (`check_ledger.score_segments`), so a row on cycles means what a row on windows means.
-The rows' `threshold_label` column holds `CYCLES_LABEL`, since cycles have no threshold.
+The **observed clock** (`whole_record_segment`) lays the complete cycles end to end in
+calendar order, starting at the end of the first calibration that opens one. Removed from it:
+offline spells, unobserved spans, calibration time, each segment's start (unknown age), and
+each censored cycle but the last, which with the next segment's start makes the two
+observed halves of one cycle cut by an outage or a gap. The censored cycle of the last
+segment holding a calibration stays, as the truncation residual: observation of the cycle
+its last calibration opened stopped there, at an outage, a gap or the record end, and no
+later calibration closes it. The clock counts every complete cycle, including those in
+segments `battery_segments` drops as short or degenerate.
+
+`cycle_checks` scores the battery at two scopes, each row with the ledger's own rule
+(`check_ledger.score_segments`), so a row on cycles means what a row on windows means.
+`within stretches` runs it on `battery_segments`, permuting inside each segment: are the
+cycles exchangeable inside each uninterrupted stretch. `whole record` runs it on the
+observed clock as one segment (`whole_record_segment`), permuting across the whole record:
+are they exchangeable over the record. The rows' `threshold_label` column holds
+`CYCLES_LABEL` or `WHOLE_RECORD_LABEL`, since cycles have no threshold, and their `scope`
+column names the scope.
+
+The whole-record rows are a diagnostic, drawn with `WHOLE_RECORD_NOTE`. The observed clock
+keeps only the cycles that complete inside a stretch, so stretch length selects cycle
+length, and the joined sequence can show a trend at a constant rate (Validity
+assumptions). A rejection on them cannot be read as drift of the device. The MTBC
+interval and the band take their standing from the within-stretch rows.
+
 `build_cycles_panel_data` builds `CyclesPanelData`, the typed artifact a cycles figure
-draws: the curve, the MTBC with the check outcome attached, the verdict rows, the status
-shares in hours and every count; `panels/calibration_cycles.py` draws it.
+draws: the curve, the MTBC with the within-stretch check outcome attached, the verdict
+rows of both scopes, the status shares in hours and every count;
+`panels/calibration_cycles.py` draws it.
 
 Validity assumptions
 
@@ -74,6 +97,37 @@ Validity assumptions
   a segment that ends at an event in its failure-truncated form; the cycles reach the
   battery only through the shared segment path, so they take that form unchanged.
   Reference: `checks.result.validate_segment`, `check_ledger.score_segments`.
+- Assumption: the cycles are exchangeable across stretches as well as inside each, since
+  the MTBC interval and the band pool every cycle of the record.
+  Diagnostic: none that sets the standing. The within-stretch rows permute inside each
+  stretch only, and the whole-record rows are no test of it (next assumption).
+  Consequence of violation: under a drift between stretches the MTBC is the mean of a
+  mixture over the record and describes no one period of it, while the within-stretch
+  rows can pass.
+  Reference: Rigdon and Basu (2000), Sect. 3.1, Definition 31: a renewal process has iid
+  times between failures.
+- Assumption: the whole-record rows read the stretches as one process on the observed
+  clock, where time offline, unobserved or calibrating does not count and the cycle cut at
+  an outage or a gap is not a cycle. Under one constant rate those cycles are still not
+  exchangeable over the record when stretch lengths change along it: only a cycle shorter
+  than its stretch completes, so short stretches keep only short cycles, and a run of
+  short stretches reads as a change of rate. A rejection on these rows therefore cannot be
+  read as drift of the device.
+  Diagnostic: none on the panel; the within-stretch rows beside them answer only inside
+  each stretch.
+  Consequence of violation: SIMULATED with `cycle_checks`, one exponential rate (mean
+  cycle 60 s), calibrations of 1 s, each stretch opening with a calibration, an outage of
+  600 s between stretches, 199 permutations, 200 records per layout (generator seed 17,
+  each record's permutation seed its index, the rest as `cycles_recipe` sets it). Records
+  of 200 whose whole-record rows reject at 0.05, C1/C2/CvM then C5/C6, by stretch lengths
+  in mean cycles:
+  40 of 2, then 5 of 20: 164/168/172, 24/19;
+  16 of 5, then 6 of 20: 41/40/37, 4/6;
+  2 and 20 alternating, 12 stretches: 2/2/1, 13/12;
+  10 of 18: 8/8/8, 6/10.
+  Each check's within-stretch rows reject 3 to 14 records of 200 in every layout. Not
+  pinned by a shipped test.
+  Reference: no source located.
 """
 
 from __future__ import annotations
@@ -116,8 +170,16 @@ STATUS_OFFLINE = "offline"
 NOT_LISTED = "not listed"
 
 # The `threshold_label` of the ledger rows on cycles: the row schema is the windows', and
-# cycles have no threshold, so the column names what was scored.
+# cycles have no threshold, so the column names what was scored. The whole-record rows have
+# a label of their own, which also gives them their own permutation stream
+# (`check_ledger.stream_for` reads the label).
 CYCLES_LABEL = "cycles"
+WHOLE_RECORD_LABEL = "cycles, whole record"
+# The `scope` column of `CycleChecks.rows`.
+SCOPE_WITHIN = "within stretches"
+SCOPE_WHOLE_RECORD = "whole record"
+# What the whole-record rows are, wherever they are drawn (module docstring).
+WHOLE_RECORD_NOTE = "complete cycles joined; sensitive to the outage layout (see A.3)"
 
 # Carried on `CyclesPanelData.bench_note`: the rows match the bench's calendar cells, which
 # were measured on gaps between window births, not on cycles.
@@ -375,9 +437,11 @@ class CycleTable:
     `event` is True for a cycle ended by a calibration and False for one censored at an
     outage, at an unobserved span or at the record end. `segment` numbers the segment a cycle
     lies in, counting every segment of the record (stretches of positive length between
-    cuts), including those that hold no cycle; `n_segments` is their number. The last four
-    counts come with the record: offline rows of zero length dropped, unobserved spans, and
-    the duplicate sample rows the samples step dropped.
+    cuts), including those that hold no cycle; `n_segments` is their number.
+    `last_calibrated_segment` is the last segment holding a calibration, -1 if none does; a
+    segment whose one calibration ends at its end holds no cycle row. The last four counts
+    come with the record: offline rows of zero length dropped, unobserved spans, and the
+    duplicate sample rows the samples step dropped.
     """
 
     dataset_id: str
@@ -387,6 +451,7 @@ class CycleTable:
     event: np.ndarray
     segment: np.ndarray
     n_segments: int
+    last_calibrated_segment: int
     n_unobserved_birth_dropped: int
     n_calibrations_merged: int
     n_zero_outages_dropped: int
@@ -461,6 +526,7 @@ def cycles(norm: Norm) -> CycleTable:
     segment_of: list[int] = []
     n_dropped = 0
     n_merged = 0
+    last_calibrated = -1
     segments, n_zero_outages = _segments(spells)
     for index, (lo, hi, rows) in enumerate(segments):
         calibrations, merges = _merge(rows)
@@ -468,6 +534,7 @@ def cycles(norm: Norm) -> CycleTable:
         if not calibrations:
             n_dropped += 1
             continue
+        last_calibrated = index
         n_dropped += int(calibrations[0][0] > lo)
         for (_s0, e0), (s1, _e1) in zip(calibrations, calibrations[1:]):
             starts.append(e0)
@@ -490,6 +557,7 @@ def cycles(norm: Norm) -> CycleTable:
         event=np.asarray(events, dtype=bool),
         segment=np.asarray(segment_of, dtype=int),
         n_segments=len(segments),
+        last_calibrated_segment=last_calibrated,
         n_unobserved_birth_dropped=n_dropped,
         n_calibrations_merged=n_merged,
         n_zero_outages_dropped=n_zero_outages,
@@ -536,6 +604,18 @@ def battery_segments(
             Segment(x=x, tau=tau, n_censored_dropped=int(np.count_nonzero(~complete)))
         )
     return drop_unusable_segments(segments, min_events)
+
+
+def whole_record_segment(table: CycleTable) -> Segment:
+    """The observed clock of a record's cycles (module docstring) as one battery segment:
+    x the complete cycles in calendar order, tau their sum plus the residual, as
+    `battery_segments` builds each segment's tau. The residual is the censored cycle of the
+    last segment holding a calibration, 0 when that segment ends at a calibration."""
+    x = table.length_s[table.event]
+    residual = ~table.event & (table.segment == table.last_calibrated_segment)
+    residual_s = float(np.sum(table.length_s[residual]))
+    last = float(np.cumsum(x)[-1]) if len(x) else 0.0
+    return Segment(x=x, tau=last + residual_s, n_censored_dropped=int(residual_s > 0.0))
 
 
 @dataclass
@@ -591,23 +671,27 @@ def status_shares(norm: Norm) -> StatusShares:
 
 @dataclass
 class CycleChecks:
-    """The battery's rows on one record's cycles, and the grid they reshape into.
+    """The battery's rows on one record's cycles at both scopes, and their grids.
 
-    `rows` has the ledger's columns (`check_ledger.LEDGER_COLUMNS`), `threshold_label` set to
-    `CYCLES_LABEL` and `clock` to the calendar clock. `n_segments_dropped` counts the
-    segments holding a cycle but too few complete ones for the battery, and
-    `n_segments_degenerate` those whose complete cycles all have one length; the battery
-    reads the rest. `battery_note` is the reason the scoring gave when it wrote no row per
-    check (one `(all)` row instead), and empty otherwise. The scoring knobs are kept, so a
-    row can be read without the job.
+    `rows` has the ledger's columns (`check_ledger.LEDGER_COLUMNS`) and `scope`: the
+    within-stretch rows first, `threshold_label` `CYCLES_LABEL`, then the whole-record rows,
+    `WHOLE_RECORD_LABEL`; `clock` is the calendar clock. `outcome` and `battery_note` are
+    the within-stretch scope's, `outcome_whole_record` and `battery_note_whole_record` the
+    whole record's. `n_segments_dropped` counts the segments holding a cycle but too few
+    complete ones for the battery, and `n_segments_degenerate` those whose complete cycles
+    all have one length; the within-stretch scope reads the rest. A battery note is the
+    reason the scoring gave when it wrote no row per check (one `(all)` row instead), and
+    empty otherwise. The scoring knobs are kept, so a row can be read without the job.
     """
 
     dataset_id: str
     rows: pd.DataFrame
     outcome: CheckOutcome
+    outcome_whole_record: CheckOutcome
     n_segments_dropped: int
     n_segments_degenerate: int
     battery_note: str
+    battery_note_whole_record: str
     alpha: float
     min_events_pass: int
     tie_cutoff_distinct: int
@@ -630,7 +714,7 @@ def cycle_checks(
     seed: int,
     min_events_per_segment: int,
 ) -> CycleChecks:
-    """The check battery on the cycles, scored by the ledger's own rule.
+    """The check battery on the cycles at both scopes, scored by the ledger's own rule.
 
     The run-set must be permutation rows (`check_outcome.PERMUTATION_KEYS`), the rows the
     a2 record names as its diagnostic. It sets the battery's switches
@@ -647,49 +731,79 @@ def cycle_checks(
         )
     run, _display = resolve(run_set, run_set)
     flags = battery_flags(run)
-    segments, n_dropped, n_degenerate = battery_segments(table, min_events_per_segment)
     acceptance = bench_acceptance_at_n(bench_size_table, alpha=alpha)
-    grid = sorted({int(n) for n in acceptance["n_target"]})
-    rows = score_segments(
+    knobs = {
+        "n_used": table.n_cycles,
+        "clock": CLOCK_CALENDAR,
+        "dataset_id": table.dataset_id,
+        "acceptance": acceptance,
+        "grid": sorted({int(n) for n in acceptance["n_target"]}),
+        "alpha": alpha,
+        "min_events_pass": min_events_pass,
+        "tie_cutoff_distinct": tie_cutoff_distinct,
+        "lag_max": lag_max,
+        "n_permutations": n_permutations,
+        "seed": seed,
+        "min_events_per_segment": min_events_per_segment,
+        "include_tau_checks": flags["include_tau_checks"],
+        "include_c2_asymptotic": flags["include_c2_asymptotic"],
+        "include_c3": flags["include_c3"],
+        "c3_n_null_sim": c3.N_NULL_SIM,
+    }
+    segments, n_dropped, n_degenerate = battery_segments(table, min_events_per_segment)
+    within = score_segments(
         segments,
         n_dropped=n_dropped,
         n_degenerate=n_degenerate,
-        n_used=table.n_cycles,
         label=CYCLES_LABEL,
-        clock=CLOCK_CALENDAR,
-        dataset_id=table.dataset_id,
-        acceptance=acceptance,
-        grid=grid,
-        alpha=alpha,
-        min_events_pass=min_events_pass,
-        tie_cutoff_distinct=tie_cutoff_distinct,
-        lag_max=lag_max,
-        n_permutations=n_permutations,
-        seed=seed,
-        min_events_per_segment=min_events_per_segment,
-        include_tau_checks=flags["include_tau_checks"],
-        include_c2_asymptotic=flags["include_c2_asymptotic"],
-        include_c3=flags["include_c3"],
-        c3_n_null_sim=c3.N_NULL_SIM,
+        **knobs,  # type: ignore[arg-type]
     )
-    frame = pd.DataFrame(rows).reindex(columns=LEDGER_COLUMNS)
-    blank = frame[frame["check_id"] == "(all)"]
-    outcome = build_check_outcome(
-        frame,
-        threshold_label=CYCLES_LABEL,
-        run_set=run,
-        display_set=run,
-        datasets=(table.dataset_id,),
-        clocks=(CLOCK_CALENDAR,),
-        alpha=alpha,
+    whole, n_whole_short, n_whole_degenerate = drop_unusable_segments(
+        [whole_record_segment(table)], min_events_per_segment
     )
+    whole_record = score_segments(
+        whole,
+        n_dropped=n_whole_short,
+        n_degenerate=n_whole_degenerate,
+        label=WHOLE_RECORD_LABEL,
+        **knobs,  # type: ignore[arg-type]
+    )
+    frame = pd.DataFrame(
+        [{**row, "scope": SCOPE_WITHIN} for row in within]
+        + [{**row, "scope": SCOPE_WHOLE_RECORD} for row in whole_record]
+    ).reindex(columns=[*LEDGER_COLUMNS, "scope"])
+
+    def outcome_of(label: str, dataset_label: str) -> CheckOutcome:
+        return build_check_outcome(
+            frame,
+            threshold_label=label,
+            run_set=run,
+            display_set=run,
+            datasets=(table.dataset_id,),
+            dataset_labels=(dataset_label,),
+            clocks=(CLOCK_CALENDAR,),
+            alpha=alpha,
+        )
+
+    def note_of(label: str) -> str:
+        blank = frame[
+            (frame["threshold_label"] == label) & (frame["check_id"] == "(all)")
+        ]
+        return "; ".join(str(note) for note in blank["notes"])
+
     return CycleChecks(
         dataset_id=table.dataset_id,
         rows=frame,
-        outcome=outcome,
+        outcome=outcome_of(CYCLES_LABEL, table.dataset_id),
+        # The scope rides on the dataset label, so this attachment read alone says it is
+        # the whole record's.
+        outcome_whole_record=outcome_of(
+            WHOLE_RECORD_LABEL, f"{table.dataset_id}, {SCOPE_WHOLE_RECORD}"
+        ),
         n_segments_dropped=n_dropped,
         n_segments_degenerate=n_degenerate,
-        battery_note="; ".join(str(note) for note in blank["notes"]),
+        battery_note=note_of(CYCLES_LABEL),
+        battery_note_whole_record=note_of(WHOLE_RECORD_LABEL),
         alpha=alpha,
         min_events_pass=min_events_pass,
         tie_cutoff_distinct=tie_cutoff_distinct,
@@ -701,8 +815,15 @@ def cycle_checks(
 
 
 def attachment(checks: CycleChecks) -> CheckAttachment:
-    """The check outcome as the fields the cycles' MTBC and band carry, naming a2."""
+    """The check outcome as the fields the cycles' MTBC and band carry, naming a2: the
+    within-stretch scope's (module docstring)."""
     return check_attachment_of(checks.outcome, A2_RENEWAL_CYCLES_ID)
+
+
+def whole_record_attachment(checks: CycleChecks) -> CheckAttachment:
+    """The whole-record scope's check outcome, naming a2, drawn beside the standing as a
+    diagnostic."""
+    return check_attachment_of(checks.outcome_whole_record, A2_RENEWAL_CYCLES_ID)
 
 
 def check_summary(attached: CheckAttachment, n_segments_degenerate: int) -> str:
@@ -726,14 +847,18 @@ class CyclesPanelData(StaleArtifactGuard):
     """Everything a cycles figure draws, every number computed here.
 
     The curve and the MTBC are in minutes on the figure's axis (`mtbc_min` is point, lower,
-    upper). `checks` is the check outcome the band and the MTBC interval rest on, and
-    `check_summary` its one line, which also names the degenerate segments dropped, if
-    any. `verdict_rows` holds (check, p-value, verdict, note) for
-    each check the run-set asked for, on the calendar clock; `battery_note` is the reason
-    when the scoring wrote no row per check, so a column of absent cells says why. The
-    counts: cycles, censored cycles, residuals dropped, calibrations merged, segments,
-    segments the battery dropped as short and as degenerate, zero-length outages dropped,
-    unobserved spans, and duplicate sample rows dropped (identical, conflicting).
+    upper). `checks` is the check outcome the band and the MTBC interval rest on, the
+    within-stretch scope's, and `check_summary` its one line, which also names the
+    degenerate segments dropped, if any. `checks_whole_record` and
+    `check_summary_whole_record` are the whole-record scope's, a diagnostic
+    (`WHOLE_RECORD_NOTE`). `verdict_rows` (within stretches) and
+    `verdict_rows_whole_record` hold (check, p-value, verdict, note) for each check the
+    run-set asked for, on the calendar clock; `battery_note` and
+    `battery_note_whole_record` are the reason when the scoring wrote no row per check, so
+    a column of absent cells says why. The counts: cycles, censored cycles, residuals
+    dropped, calibrations merged, segments, segments the battery dropped as short and as
+    degenerate, zero-length outages dropped, unobserved spans, and duplicate sample rows
+    dropped (identical, conflicting).
     """
 
     dataset_id: str
@@ -743,9 +868,13 @@ class CyclesPanelData(StaleArtifactGuard):
     tau_min: float
     checks: CheckAttachment
     check_summary: str
+    checks_whole_record: CheckAttachment
+    check_summary_whole_record: str
     bench_note: str
     battery_note: str
+    battery_note_whole_record: str
     verdict_rows: tuple[tuple[str, float | None, str, str], ...]
+    verdict_rows_whole_record: tuple[tuple[str, float | None, str, str], ...]
     shares: StatusShares
     share_h: tuple[float, ...]
     n_cycles: int
@@ -775,16 +904,22 @@ def build_cycles_panel_data(
         raise ValueError(f"cycles, checks and shares describe different records: {ids}")
     event_table = cycle_event_table(table)
     attached = attachment(checks)
+    whole_record = whole_record_attachment(checks)
     summary = dataclasses.replace(
         mtbc(event_table, conf_level=conf_level), checks=attached
     )
     curve = curve_from_event_table(
         event_table, label=table.dataset_id, conf_level=conf_level
     )
-    verdict_rows = tuple(
-        (grid.label, grid.p_values[0][0], grid.verdicts[0][0], grid.notes[0][0])
-        for grid in checks.outcome.grids
-    )
+
+    def verdict_rows(
+        outcome: CheckOutcome,
+    ) -> tuple[tuple[str, float | None, str, str], ...]:
+        return tuple(
+            (grid.label, grid.p_values[0][0], grid.verdicts[0][0], grid.notes[0][0])
+            for grid in outcome.grids
+        )
+
     return CyclesPanelData(
         dataset_id=table.dataset_id,
         curve=curve,
@@ -797,9 +932,13 @@ def build_cycles_panel_data(
         tau_min=summary.tau_s / 60.0,
         checks=attached,
         check_summary=check_summary(attached, checks.n_segments_degenerate),
+        checks_whole_record=whole_record,
+        check_summary_whole_record=whole_record.summary(),
         bench_note=BENCH_TRANSFER_NOTE,
         battery_note=checks.battery_note,
-        verdict_rows=verdict_rows,
+        battery_note_whole_record=checks.battery_note_whole_record,
+        verdict_rows=verdict_rows(checks.outcome),
+        verdict_rows_whole_record=verdict_rows(checks.outcome_whole_record),
         shares=shares,
         share_h=tuple(seconds / 3600.0 for seconds in shares.seconds),
         n_cycles=table.n_cycles,

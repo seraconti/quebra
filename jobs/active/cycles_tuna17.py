@@ -1,9 +1,10 @@
 """Calibration cycles of the Quantum Inspire device Tuna-17, from its status history.
 
 Built by `quebra.cycles_recipe.configure_qi_cycles_job`: the status samples become spells,
-the spells cycles and status shares, the cycles get the check battery, and
-`CalibrationCyclesPanel` draws the survival, the MTBC, the check outcome and the shares. The
-rules (a cycle, a gap, a duplicate timestamp) are in `analyzers/cycles.py`.
+the spells cycles and status shares, the cycles get the check battery within each stretch
+and, as a diagnostic, over the whole record, and `CalibrationCyclesPanel` draws the
+survival, the MTBC, the check outcome and the shares. The rules (a cycle, a gap, a
+duplicate timestamp, the observed clock) are in `analyzers/cycles.py`.
 
 No `device` is declared on the Dataset: the schema reads the device from the file's `name`
 column and refuses a file that names more than one.

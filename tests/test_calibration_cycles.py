@@ -35,8 +35,15 @@ from matplotlib.text import Text
 
 import quebra.analyzers.checks.c6_exchangeability as c6
 from quebra.analyzers import cycles, mtbf
-from quebra.analyzers.check_ledger import VERDICT_ABSENT, VERDICT_NOT_COMPUTED
+from quebra.analyzers.check_ledger import (
+    VERDICT_ABSENT,
+    VERDICT_NOT_COMPUTED,
+    stream_for,
+)
 from quebra.analyzers.check_outcome import PERMUTATION_KEYS
+from quebra.analyzers.checks._permutation import block_permutations
+from quebra.analyzers.checks.battery import run_battery
+from quebra.analyzers.checks.result import Segment
 from quebra.analyzers.event_table import CYCLES, EventTable
 from quebra.analyzers.kaplan_meier import curve_from_event_table
 from quebra.core.types import Norm
@@ -392,6 +399,13 @@ def _bench_table() -> pd.DataFrame:
     )
 
 
+def _within(checks: cycles.CycleChecks) -> pd.DataFrame:
+    """The within-stretch rows, the scope these tests pin unless they name the other."""
+    return checks.rows[checks.rows["scope"] == cycles.SCOPE_WITHIN].reset_index(
+        drop=True
+    )
+
+
 def _checks(table: cycles.CycleTable) -> cycles.CycleChecks:
     return cycles.cycle_checks(
         table,
@@ -474,21 +488,30 @@ def test_cycles_panel_data_carries_the_counts_and_the_check_summary() -> None:
     checks = _checks(table)
     data = cycles.build_cycles_panel_data(table, checks, cycles.status_shares(norm))
     assert set(checks.rows["clock"]) == {"calendar"}
-    assert data.battery_note == ""
+    assert data.battery_note == data.battery_note_whole_record == ""
     assert data.checks.checks_unanswered == ()
-    for grid, (label, p_value, verdict, _note) in zip(
-        checks.outcome.grids, data.verdict_rows, strict=True
+    for outcome, verdict_rows, scope in (
+        (checks.outcome, data.verdict_rows, cycles.SCOPE_WITHIN),
+        (
+            checks.outcome_whole_record,
+            data.verdict_rows_whole_record,
+            cycles.SCOPE_WHOLE_RECORD,
+        ),
     ):
-        check_id, calibration, variant = grid.key
-        cell = checks.rows[
-            (checks.rows["check_id"] == check_id)
-            & (checks.rows["calibration"] == calibration)
-            & (checks.rows["variant"].fillna("") == variant)
-        ]
-        assert len(cell) == 1, grid.key
-        assert label == grid.label
-        assert verdict == cell["verdict"].iloc[0] != VERDICT_ABSENT
-        assert p_value == cell["p_value"].iloc[0]
+        for grid, (label, p_value, verdict, _note) in zip(
+            outcome.grids, verdict_rows, strict=True
+        ):
+            check_id, calibration, variant = grid.key
+            cell = checks.rows[
+                (checks.rows["scope"] == scope)
+                & (checks.rows["check_id"] == check_id)
+                & (checks.rows["calibration"] == calibration)
+                & (checks.rows["variant"].fillna("") == variant)
+            ]
+            assert len(cell) == 1, (scope, grid.key)
+            assert label == grid.label
+            assert verdict == cell["verdict"].iloc[0] != VERDICT_ABSENT
+            assert p_value == cell["p_value"].iloc[0]
     assert data.mtbc.rmst_s == pytest.approx(_r_hand("rmean")[0], rel=1e-9)
     data90 = cycles.build_cycles_panel_data(
         table, checks, cycles.status_shares(norm), conf_level=0.90
@@ -509,6 +532,7 @@ def test_cycles_panel_data_carries_the_counts_and_the_check_summary() -> None:
     assert data.checks == data.mtbc.checks
     assert data.check_summary == data.checks.summary()
     assert data.check_summary.startswith("5 checks asked")
+    assert data.check_summary_whole_record == data.checks_whole_record.summary()
     assert [row[0] for row in data.verdict_rows] == [
         grid.label for grid in checks.outcome.grids
     ]
@@ -530,8 +554,8 @@ def test_cycles_panel_data_carries_the_counts_and_the_check_summary() -> None:
 def test_cycles_panel_renders_from_hand_built_data() -> None:
     """Oracle: the artifact's own fields, read back off the drawn figure. Three axes; the
     MTBC interval is one span whose ends are the artifact's; one verdict cell per asked
-    check in its verdict's colour; one bar per status, as long as its hours; every count
-    in the survival axes and the check summary in the caption."""
+    check and scope in its verdict's colour, the scopes named; one bar per status, as long
+    as its hours; every count in the survival axes and the check summary in the caption."""
     norm = _spell_norm(_HAND_ROWS)
     table = cycles.cycles(norm)
     data = cycles.build_cycles_panel_data(
@@ -548,15 +572,20 @@ def test_cycles_panel_renders_from_hand_built_data() -> None:
             pytest.approx(upper),
         )
         assert [p.get_facecolor() for p in ax_checks.patches] == [
-            to_rgba(verdict_color(verdict)) for _l, _p, verdict, _n in data.verdict_rows
+            to_rgba(verdict_color(row[2]))
+            for pair in zip(data.verdict_rows, data.verdict_rows_whole_record)
+            for row in pair
         ]
+        headers = {t.get_text() for t in ax_checks.texts}
+        assert {cycles.SCOPE_WITHIN, cycles.SCOPE_WHOLE_RECORD} <= headers
         assert [p.get_width() for p in ax_shares.patches] == list(data.share_h)
         counts = "\n".join(t.get_text() for t in ax_km.texts)
         for line in (
             "cycles: 8 (3 censored)",
             "excluded, start unknown: 3",
             "calibrations merged: 1",
-            "segments: 3, too few cycles for the checks: 1, all cycles equal: 0",
+            "segments: 3, too few cycles for the checks: 1",
+            "segments with all cycles equal: 0",
             "zero-length outages dropped: 0",
             "gaps: 0",
             "duplicate timestamps dropped: 0 identical, 0 conflicting",
@@ -600,11 +629,13 @@ def test_cycles_panel_renders_from_hand_built_data() -> None:
         verdict_rows=(
             ("C9 invented", None, VERDICT_NOT_COMPUTED, "the reason: its detail; more"),
         ),
+        verdict_rows_whole_record=(("C9 invented", 0.5, "pass", ""),),
     )
     fig = CalibrationCyclesPanel("cycles").build_matplotlib(unanswered)
     try:
         drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
-        assert "C9 invented: the reason" in drawn and "its detail" not in drawn
+        assert "C9 invented (within stretches): the reason" in drawn
+        assert "its detail" not in drawn
     finally:
         plt.close(fig)
 
@@ -619,16 +650,24 @@ def test_a_record_with_nothing_to_score_still_gets_its_rows_and_says_why() -> No
     table = cycles.cycles(norm)
     assert table.event.tolist() == [True, False]
     checks = _checks(table)
-    assert checks.rows["verdict"].tolist() == [VERDICT_NOT_COMPUTED]
+    assert checks.rows["verdict"].tolist() == [VERDICT_NOT_COMPUTED] * 2
+    assert checks.rows["scope"].tolist() == [
+        cycles.SCOPE_WITHIN,
+        cycles.SCOPE_WHOLE_RECORD,
+    ]
     assert "no segment reached 2 events (1 dropped)" in checks.battery_note
+    assert "no segment reached 2 events (1 dropped)" in checks.battery_note_whole_record
     data = cycles.build_cycles_panel_data(table, checks, cycles.status_shares(norm))
     assert data.battery_note == checks.battery_note
+    assert data.battery_note_whole_record == checks.battery_note_whole_record
     assert len(data.checks.checks_unanswered) == len(PERMUTATION_KEYS) == 5
-    assert all(verdict == VERDICT_ABSENT for _l, _p, verdict, _n in data.verdict_rows)
+    for verdict_rows in (data.verdict_rows, data.verdict_rows_whole_record):
+        assert all(verdict == VERDICT_ABSENT for _l, _p, verdict, _n in verdict_rows)
     fig = CalibrationCyclesPanel("cycles").build_matplotlib(data)
     try:
         drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
-        assert checks.battery_note in drawn
+        assert f"within stretches: {checks.battery_note}" in drawn
+        assert f"whole record: {checks.battery_note_whole_record}" in drawn
     finally:
         plt.close(fig)
     with pytest.raises(ValueError, match="permutation rows only"):
@@ -683,11 +722,12 @@ def test_a_segment_whose_cycles_all_have_one_length_is_dropped_and_counted() -> 
     checks = _checks(table)
     assert (checks.n_segments_dropped, checks.n_segments_degenerate) == (0, 1)
     assert checks.battery_note == ""
-    assert set(checks.rows["n_segments"]) == {2}
-    assert checks.rows["p_value"].notna().all(), checks.rows[["check_id", "notes"]]
-    assert set(checks.rows["check_id"]) == {key[0] for key in PERMUTATION_KEYS}
+    within = _within(checks)
+    assert set(within["n_segments"]) == {2}
+    assert within["p_value"].notna().all(), within[["check_id", "notes"]]
+    assert set(within["check_id"]) == {key[0] for key in PERMUTATION_KEYS}
     assert (
-        checks.rows["notes"]
+        within["notes"]
         .str.contains("1 segment(s) with every duration identical dropped", regex=False)
         .all()
     )
@@ -698,8 +738,8 @@ def test_a_segment_whose_cycles_all_have_one_length_is_dropped_and_counted() -> 
     assert (unrecorded.n_segments_dropped, unrecorded.n_segments_degenerate) == (1, 0)
     key = ["check_id", "calibration", "variant"]
     pd.testing.assert_frame_equal(
-        checks.rows[[*key, "statistic", "p_value", "verdict"]],
-        unrecorded.rows[[*key, "statistic", "p_value", "verdict"]],
+        within[[*key, "statistic", "p_value", "verdict"]],
+        _within(unrecorded)[[*key, "statistic", "p_value", "verdict"]],
     )
     data = cycles.build_cycles_panel_data(table, checks, cycles.status_shares(norm))
     assert data.n_segments_degenerate == 1
@@ -710,9 +750,8 @@ def test_a_segment_whose_cycles_all_have_one_length_is_dropped_and_counted() -> 
     fig = CalibrationCyclesPanel("cycles").build_matplotlib(data)
     try:
         counts = "\n".join(t.get_text() for t in fig.axes[0].texts)
-        assert "segments: 3, too few cycles for the checks: 0, all cycles equal: 1" in (
-            counts
-        )
+        assert "segments: 3, too few cycles for the checks: 0" in counts
+        assert "segments with all cycles equal: 1" in counts
     finally:
         plt.close(fig)
 
@@ -730,7 +769,7 @@ def test_a_check_undefined_on_the_segments_left_is_not_computed_and_the_rest_ans
     table = cycles.cycles(norm)
     checks = _checks(table)
     assert checks.battery_note == ""
-    by_check = checks.rows.set_index("check_id")
+    by_check = _within(checks).set_index("check_id")
     for check in ("c5_rank_autocorr", "c6_exchangeability"):
         assert by_check.loc[check, "verdict"] == VERDICT_NOT_COMPUTED
         assert str(by_check.loc[check, "notes"]).startswith("a lag has no spread")
@@ -739,6 +778,139 @@ def test_a_check_undefined_on_the_segments_left_is_not_computed_and_the_rest_ans
         assert pd.notna(by_check.loc[check, "p_value"]), by_check.loc[check, "notes"]
     data = cycles.build_cycles_panel_data(table, checks, cycles.status_shares(norm))
     assert VERDICT_ABSENT not in {verdict for _l, _p, verdict, _n in data.verdict_rows}
+
+
+# Three stretches: three cycles and a 7 s tail cut by an outage; one cycle and a 3 s tail
+# cut by an unobserved span; a start of unknown age, four cycles and a 12 s tail at the
+# record end.
+_GAPPED_ROWS = [
+    (0.0, 1.0, "calibrating"),
+    (41.0, 42.0, "calibrating"),
+    (97.0, 98.0, "calibrating"),
+    (145.0, 146.0, "calibrating"),
+    (153.0, 173.0, "offline"),
+    (173.0, 174.0, "calibrating"),
+    (236.0, 237.0, "calibrating"),
+    (305.0, 306.0, "calibrating"),
+    (357.0, 358.0, "calibrating"),
+    (428.0, 429.0, "calibrating"),
+    (473.0, 474.0, "calibrating"),
+    (532.0, 533.0, "calibrating"),
+]
+_GAPPED_CYCLES = [40.0, 55.0, 47.0, 62.0, 51.0, 70.0, 44.0, 58.0]
+
+
+def _gapped_norm() -> Norm:
+    norm = _spell_norm(_GAPPED_ROWS, length_s=545.0)
+    norm["unobserved_start_unix_s"] = np.array([_T0 + 240.0])
+    norm["unobserved_end_unix_s"] = np.array([_T0 + 300.0])
+    return norm
+
+
+@pytest.mark.statistical
+def test_whole_record_rows_equal_one_battery_call_on_the_joined_cycles() -> None:
+    """Oracle: an independent battery call. The whole-record rows equal `run_battery` on
+    one segment: the hand record's eight complete cycles in calendar order (the outage, the
+    gap, calibration time, the unknown start and the two cut cycles removed), tau their sum
+    plus the 12 s censored cycle that ends the record, permuted across the whole record with
+    the stream the ledger derives for that label. The one-cycle middle stretch, short
+    within stretches, is in it."""
+    table = cycles.cycles(_gapped_norm())
+    assert table.length_s[table.event].tolist() == _GAPPED_CYCLES
+    checks = _checks(table)
+    assert checks.n_segments_dropped == 1, "premise: the middle stretch is short"
+    x = np.array(_GAPPED_CYCLES)
+    rng = np.random.default_rng(
+        [20261030, stream_for(cycles.WHOLE_RECORD_LABEL, "calendar")]
+    )
+    expected = run_battery(
+        [Segment(x=x, tau=float(np.cumsum(x)[-1]) + 12.0, n_censored_dropped=1)],
+        clock="calendar",
+        perm=block_permutations([len(x)], 999, rng),
+        max_lag=5,
+        include_tau_checks=True,
+        include_c2_asymptotic=False,
+        undefined_as_rows=True,
+    )
+    whole = checks.rows[checks.rows["scope"] == cycles.SCOPE_WHOLE_RECORD]
+    assert set(whole["threshold_label"]) == {cycles.WHOLE_RECORD_LABEL}
+    assert len(whole) == len(expected) == 5
+    for result in expected:
+        assert result.p_value is not None, result.notes
+        (row,) = whole[whole["check_id"] == result.check].itertuples()
+        assert (row.statistic, row.p_value) == (result.statistic, result.p_value)
+        assert (row.n_events, row.n_segments) == (8, 1)
+
+
+@pytest.mark.unit
+def test_the_residual_is_the_last_calibrated_stretchs_censored_cycle() -> None:
+    """Oracle: hand tables. The first stretch has cycles of 90 and 190 s and a 90 s tail cut
+    by an outage. When the last stretch's one calibration ends at the record end, it closes
+    no cycle and leaves no tail: the residual is 0 and tau is 280 s, the cut tail removed.
+    When the last stretch holds no calibration, the first stretch is the last calibrated
+    one, and its tail is the residual: tau is 370 s."""
+    head = [
+        (0.0, 10.0, "calibrating"),
+        (100.0, 110.0, "calibrating"),
+        (300.0, 310.0, "calibrating"),
+        (400.0, 500.0, "offline"),
+    ]
+    closed = cycles.whole_record_segment(
+        cycles.cycles(
+            _spell_norm([*head, (900.0, 1000.0, "calibrating")], length_s=1000.0)
+        )
+    )
+    assert closed.x.tolist() == [90.0, 190.0]
+    assert (closed.tau, closed.n_censored_dropped) == (280.0, 0)
+    open_end = cycles.whole_record_segment(
+        cycles.cycles(_spell_norm(head, length_s=1000.0))
+    )
+    assert open_end.x.tolist() == [90.0, 190.0]
+    assert (open_end.tau, open_end.n_censored_dropped) == (370.0, 1)
+
+
+@pytest.mark.statistical
+def test_a_drift_between_stretches_fails_only_the_whole_record_diagnostic() -> None:
+    """Oracle: a known truth. Six stretches of ten cycles, each a shuffle of ten distinct
+    lengths, the level 12 s higher each stretch: exchangeable inside each stretch, drifting
+    over the record. The within-stretch rows do not reject and the whole-record rows do; the
+    MTBC and the band carry the within-stretch outcome, the whole-record one rides beside
+    it under its own label, the table draws each scope in its own column with the
+    whole-record note, and the caption says which scope the MTBC rests on and what a
+    whole-record rejection does not mean."""
+    rng = np.random.default_rng(7)
+    stretches = [list(30.0 + 12.0 * k + rng.permutation(10) * 1.5) for k in range(6)]
+    rows, length = _segmented_rows(stretches)
+    norm = _spell_norm(rows, length_s=length)
+    table = cycles.cycles(norm)
+    checks = _checks(table)
+    whole = checks.rows[checks.rows["scope"] == cycles.SCOPE_WHOLE_RECORD]
+    assert (_within(checks)["verdict"] != "fail").all()
+    assert (whole["verdict"] == "fail").all(), whole[["check_id", "p_value"]]
+    data = cycles.build_cycles_panel_data(table, checks, cycles.status_shares(norm))
+    assert data.mtbc.checks == data.checks
+    assert "fail" not in {v for _l, _d, v in data.checks.check_verdicts}
+    assert {label for _l, label, _v in data.checks.check_verdicts} == {"hand"}
+    assert {v for _l, _d, v in data.checks_whole_record.check_verdicts} == {"fail"}
+    assert {label for _l, label, _v in data.checks_whole_record.check_verdicts} == {
+        "hand, whole record"
+    }
+    fig = CalibrationCyclesPanel("cycles").build_matplotlib(data)
+    try:
+        drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
+        assert f"whole record, a diagnostic: {cycles.WHOLE_RECORD_NOTE}" in drawn
+        assert "take their standing from those rows" in drawn
+        assert "cannot be read as drift of the device" in drawn
+        assert f"Check outcome: {data.check_summary} (within stretches)" in drawn
+        assert f"Whole record, a diagnostic: {data.check_summary_whole_record}" in drawn
+        # The scopes disagree here, so each column must draw its own scope.
+        assert [p.get_facecolor() for p in fig.axes[1].patches] == [
+            to_rgba(verdict_color(row[2]))
+            for pair in zip(data.verdict_rows, data.verdict_rows_whole_record)
+            for row in pair
+        ]
+    finally:
+        plt.close(fig)
 
 
 @pytest.mark.unit

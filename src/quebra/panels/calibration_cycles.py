@@ -10,14 +10,17 @@ Three axes:
   censored cycles as ticks, the MTBC as a line with its interval shaded behind it, and tau,
   the horizon the restricted mean runs to. The counts of what was dropped, merged and cut
   sit in this axes, as `docs/FIGURE_STANDARD.md` asks.
-- Top right: the check outcome on the cycles, one row per check the run-set asked for, the
-  verdict as the cell's colour (`theme.verdict_color`), the bench-transfer note under it,
-  and the reason when the battery scored nothing.
+- Top right: the check outcome on the cycles, one row per check the run-set asked for and
+  one column pair per scope (within stretches, whole record), the verdict as the cell's
+  colour (`theme.verdict_color`); under it the whole-record scope's note
+  (`analyzers/cycles.WHOLE_RECORD_NOTE`), the bench-transfer note, and the reason when a
+  scope scored nothing.
 - Bottom right: the hours per status, time no row covers drawn white and hatched as the
   other panels draw unobserved time.
 
-The caption carries the check outcome's one line (`CheckAttachment.summary`), so the band and
-the MTBC interval are never shown without it.
+The caption carries the check outcome's one line for both scopes, so the band and the MTBC
+interval are never shown without it, and says that their standing is the within-stretch
+scope's and that the whole-record rows are a diagnostic.
 """
 
 from __future__ import annotations
@@ -33,7 +36,13 @@ from quebra.analyzers.check_ledger import (
     VERDICT_INCONCLUSIVE,
     VERDICT_PASS,
 )
-from quebra.analyzers.cycles import NOT_LISTED, CyclesPanelData
+from quebra.analyzers.cycles import (
+    NOT_LISTED,
+    SCOPE_WHOLE_RECORD,
+    SCOPE_WITHIN,
+    WHOLE_RECORD_NOTE,
+    CyclesPanelData,
+)
 from quebra.analyzers.independence_survey import _fmt_p
 from quebra.plots import theme
 from quebra.plots.base import BasePlot
@@ -46,11 +55,13 @@ _X_MARGIN = 1.03
 MTBC_SPAN_GID = "mtbc_interval"
 # Verdicts that answer; any other cell's note says why it did not.
 ANSWERED = (VERDICT_PASS, VERDICT_FAIL, VERDICT_INCONCLUSIVE)
-# The check table's columns, in its own units (the axes run 0 to 4): the p-value's centre,
-# then the verdict cell's left edge and width. The label column starts at 0.
-_P_X = 2.4
-_CELL_X = 2.75
-_CELL_W = 1.25
+# The check table's columns, in its own units (the axes run 0 to 6.8): per scope, the
+# p-value's centre, then the verdict cell's left edge; one cell width. The label column
+# starts at 0.
+_P_X = (3.35, 5.25)
+_CELL_X = (3.65, 5.55)
+_CELL_W = 1.2
+_TABLE_W = 6.8
 
 
 class CalibrationCyclesPanel(BasePlot):
@@ -65,7 +76,9 @@ class CalibrationCyclesPanel(BasePlot):
         data = result
         with theme.style_context(style):
             fig = plt.figure(figsize=(13.0, 7.5), facecolor="white")
-            grid = fig.add_gridspec(2, 2, width_ratios=[1.6, 1.0], height_ratios=[1, 1])
+            grid = fig.add_gridspec(
+                2, 2, width_ratios=[1.15, 1.0], height_ratios=[1, 1]
+            )
             ax_km = fig.add_subplot(grid[:, 0])
             ax_checks = fig.add_subplot(grid[0, 1])
             ax_shares = fig.add_subplot(grid[1, 1])
@@ -81,7 +94,7 @@ class CalibrationCyclesPanel(BasePlot):
                 wrap=True,
                 **theme.scaled_text(theme.CAPTION, style),
             )
-            fig.tight_layout(rect=(0, 0.07, 1, 0.96))
+            fig.tight_layout(rect=(0, 0.08, 1, 0.96))
         return fig
 
     @staticmethod
@@ -169,57 +182,79 @@ class CalibrationCyclesPanel(BasePlot):
 
     @staticmethod
     def _draw_checks(ax: plt.Axes, data: CyclesPanelData, style: str) -> None:
-        rows = data.verdict_rows
+        rows = list(zip(data.verdict_rows, data.verdict_rows_whole_record, strict=True))
         n = len(rows)
         on_fill = theme.scaled_text(theme.ON_FILL_TEXT, style)
         label_text = theme.scaled_text(theme.LABEL_TEXT, style)
-        for i, (label, p_value, verdict, _note) in enumerate(rows):
+        for i, scoped in enumerate(rows):
             y = n - 1 - i
-            ax.text(0.0, y + 0.5, label, ha="left", va="center", **label_text)
-            ax.text(
-                _P_X, y + 0.5, _fmt_p(p_value), ha="center", va="center", **label_text
-            )
-            ax.add_patch(
-                plt.Rectangle(
-                    (_CELL_X, y),
-                    _CELL_W,
-                    1,
-                    facecolor=theme.verdict_color(verdict),
-                    edgecolor="white",
-                    linewidth=0.8,
+            ax.text(0.0, y + 0.5, scoped[0][0], ha="left", va="center", **label_text)
+            for (_label, p_value, verdict, _note), p_x, cell_x in zip(
+                scoped, _P_X, _CELL_X, strict=True
+            ):
+                ax.text(
+                    p_x,
+                    y + 0.5,
+                    _fmt_p(p_value),
+                    ha="center",
+                    va="center",
+                    **label_text,
                 )
-            )
-            text_color = (
-                "white" if verdict in (VERDICT_PASS, VERDICT_FAIL) else on_fill["color"]
-            )
-            ax.text(
-                _CELL_X + _CELL_W / 2,
-                y + 0.5,
-                verdict,
-                ha="center",
-                va="center",
-                **{**on_fill, "color": text_color},
-            )
+                ax.add_patch(
+                    plt.Rectangle(
+                        (cell_x, y),
+                        _CELL_W,
+                        1,
+                        facecolor=theme.verdict_color(verdict),
+                        edgecolor="white",
+                        linewidth=0.8,
+                    )
+                )
+                text_color = (
+                    "white"
+                    if verdict in (VERDICT_PASS, VERDICT_FAIL)
+                    else on_fill["color"]
+                )
+                ax.text(
+                    cell_x + _CELL_W / 2,
+                    y + 0.5,
+                    verdict,
+                    ha="center",
+                    va="center",
+                    **{**on_fill, "color": text_color},
+                )
         if not rows:
             ax.text(0.0, 0.5, "no check asked", ha="left", va="center", **label_text)
-        ax.text(_P_X, max(n, 1) + 0.25, "p", ha="center", va="bottom", **label_text)
-        ax.text(
-            _CELL_X + _CELL_W / 2,
-            max(n, 1) + 0.25,
-            "verdict",
-            ha="center",
-            va="bottom",
-            **label_text,
-        )
+        top = max(n, 1)
+        for scope, p_x, cell_x in zip(
+            (SCOPE_WITHIN, SCOPE_WHOLE_RECORD), _P_X, _CELL_X, strict=True
+        ):
+            ax.text(p_x, top + 0.2, "p", ha="center", va="bottom", **label_text)
+            ax.text(
+                cell_x + _CELL_W / 2,
+                top + 0.2,
+                "verdict",
+                ha="center",
+                va="bottom",
+                **label_text,
+            )
+            ax.text(
+                (p_x + cell_x + _CELL_W) / 2,
+                top + 0.75,
+                scope,
+                ha="center",
+                va="bottom",
+                **label_text,
+            )
         ax.set_xlabel(
             "\n".join(_check_notes(data)),
             wrap=True,
             **theme.scaled_text(theme.CAPTION, style),
         )
-        ax.set_xlim(0.0, 4.0)
-        ax.set_ylim(0.0, max(n, 1) + 1.0)
+        ax.set_xlim(0.0, _TABLE_W)
+        ax.set_ylim(0.0, top + 1.5)
         ax.set_title(
-            f"Check outcome on cycles ({data.checks.assumption_id}), calendar clock",
+            f"Check outcome on cycles ({data.checks.assumption_id})",
             loc="left",
         )
         ax.set_xticks([])
@@ -268,15 +303,29 @@ class CalibrationCyclesPanel(BasePlot):
 
 
 def _check_notes(data: CyclesPanelData) -> list[str]:
-    """Under the table: the bench-transfer note, then why the checks without an answer gave
-    none. When the battery scored nothing, its one reason covers every check; otherwise
-    each such check's note, to its first clause (the whole note is on the artifact)."""
-    notes = [data.bench_note]
-    if data.battery_note:
-        return [*notes, data.battery_note]
-    for label, _p_value, verdict, note in data.verdict_rows:
-        if verdict not in ANSWERED and note:
-            notes.append(f"{label}: {re.split(r'[:;]', note, maxsplit=1)[0]}")
+    """Under the table: what the whole-record rows are, the bench-transfer note, then,
+    scope by scope, why the checks without an answer gave none. When a scope's battery
+    scored nothing, its one reason covers every check; otherwise each such check's note, to
+    its first clause (the whole note is on the artifact)."""
+    notes = [
+        f"{SCOPE_WHOLE_RECORD}, a diagnostic: {WHOLE_RECORD_NOTE}",
+        data.bench_note,
+    ]
+    for scope, battery_note, rows in (
+        (SCOPE_WITHIN, data.battery_note, data.verdict_rows),
+        (
+            SCOPE_WHOLE_RECORD,
+            data.battery_note_whole_record,
+            data.verdict_rows_whole_record,
+        ),
+    ):
+        if battery_note:
+            notes.append(f"{scope}: {battery_note}")
+            continue
+        for label, _p_value, verdict, note in rows:
+            if verdict not in ANSWERED and note:
+                clause = re.split(r"[:;]", note, maxsplit=1)[0]
+                notes.append(f"{label} ({scope}): {clause}")
     return notes
 
 
@@ -288,7 +337,8 @@ def _counts(data: CyclesPanelData) -> str:
             f"excluded, start unknown: {data.n_unobserved_birth_dropped}",
             f"calibrations merged: {data.n_calibrations_merged}",
             f"segments: {data.n_segments}, too few cycles for the checks: "
-            f"{data.n_segments_dropped}, all cycles equal: {data.n_segments_degenerate}",
+            f"{data.n_segments_dropped}",
+            f"segments with all cycles equal: {data.n_segments_degenerate}",
             f"zero-length outages dropped: {data.n_zero_outages_dropped}",
             f"gaps: {data.n_unobserved_spans}",
             "duplicate timestamps dropped: "
@@ -299,7 +349,8 @@ def _counts(data: CyclesPanelData) -> str:
 
 
 def _caption(data: CyclesPanelData) -> str:
-    """What is drawn and what is excluded, then the check outcome's one line."""
+    """What is drawn and what is excluded, which scope the band and the MTBC interval rest
+    on and what the other is, then each scope's check outcome line."""
     return " ".join(
         [
             f"Kaplan-Meier survival of the calibration cycles of {data.dataset_id}, with its "
@@ -310,6 +361,15 @@ def _caption(data: CyclesPanelData) -> str:
             "interval.",
             f"Excluded: {data.n_unobserved_birth_dropped} stretches whose start is unknown "
             "(after the record start, an outage or a gap).",
-            f"Check outcome: {data.check_summary}",
+            "The checks run within each stretch, and the band and the MTBC interval take "
+            "their standing from those rows; no row that sets it tests a drift between "
+            "stretches.",
+            f"The whole-record rows are a diagnostic, {WHOLE_RECORD_NOTE}: only a cycle "
+            "shorter than its stretch completes, so a run of short stretches reads as a "
+            "change of rate, and a rejection on these rows cannot be read as drift of "
+            "the device.",
+            f"Check outcome: {data.check_summary} ({SCOPE_WITHIN}).",
+            f"{SCOPE_WHOLE_RECORD.capitalize()}, a diagnostic: "
+            f"{data.check_summary_whole_record}.",
         ]
     )
