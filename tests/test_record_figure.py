@@ -350,6 +350,35 @@ def test_each_figure_job_takes_one_ref_loads_only_data_and_draws_the_listed_reco
 
 
 @pytest.mark.unit
+def test_each_block_is_handed_its_own_records_fit_windows_and_carve_kwargs(monkeypatch):
+    """Oracle: the job graphs. Every `RecordNodes` a block receives names the fit and
+    windows nodes its own record's carve wired (`t2star_<record>`, `windows_<record>`, the
+    latter the input the cross-check holds), and carries the carve kwargs of that record's
+    windows node in the included ledger job."""
+    import quebra.record_figure_recipe as recipe
+
+    seen = []
+    monkeypatch.setattr(recipe, "BLOCKS", (lambda job, nodes: seen.append(nodes),))
+    job = _import_job(FIGURE_JOBS[0])
+    ledger_job = job.includes[0].job
+    assert seen, "premise: the job wires at least one record"
+    for nodes in seen:
+        assert nodes.fit.node_id == f"t2star_{nodes.record}"
+        assert nodes.windows.node_id == f"windows_{nodes.record}"
+        checked = job.dag[nodes.carve.node_id]
+        assert checked.inputs[0].node_id == nodes.windows.node_id
+        (ledger_windows,) = [
+            n
+            for n in ledger_job.dag.values()
+            if n.kwargs.get("stage") == "windows"
+            and n.kwargs.get("record") == nodes.record
+        ]
+        assert dict(nodes.carve_kwargs) == {
+            key: ledger_windows.kwargs[key] for key in recipe.CARVE_KWARGS
+        }
+
+
+@pytest.mark.unit
 def test_a_listed_record_its_ledger_job_does_not_hold_raises() -> None:
     """Oracle: the ledger job's own records. A table row of this qubit the job does not
     hold is a wiring error."""

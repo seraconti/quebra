@@ -24,7 +24,7 @@ what a module imports joins the identity closure of every step function it defin
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -59,13 +59,22 @@ CARVE_KWARGS = ("gap_mult", "k", "use_uncertainty", "thresholds")
 class RecordNodes:
     """What every block of one record is wired from: the record's run name, its carve held
     to its ledger, its ledger, the run-set the ledger ran, and its flag text (empty unless
-    the paper's tables shade it)."""
+    the paper's tables shade it).
+
+    `fit` and `windows` are the carve's own fit and windows nodes, and `carve_kwargs` the
+    kwargs it was carved with. A step that must trace to observed reads alone, as
+    `tests/test_windows_not_interpolated.py` holds a tellability step to, is wired on these:
+    `carve` descends from the ledger bundle too. The cross-check still stands behind it,
+    since the runner computes every node before any sink."""
 
     record: str
     carve: object
     ledger: object
     run_set: tuple[RowKey, ...]
     flag: str
+    fit: object
+    windows: object
+    carve_kwargs: Mapping[str, Any]
 
 
 def ledger_of(ledgers: CheckLedgers, *, record: str) -> CheckLedger:
@@ -192,7 +201,7 @@ def configure_record_figure_job(
     for record, held in records.items():
         if record not in listed:
             continue
-        _, windows = wire_t2star_carve(
+        fit, windows = wire_t2star_carve(
             job,
             dataset=held.dataset,
             node_suffix=f"_{record}",
@@ -207,6 +216,9 @@ def configure_record_figure_job(
             ledger=ledger,
             run_set=run_set,
             flag=flag_text if record in shaded else "",
+            fit=fit,
+            windows=windows,
+            carve_kwargs=held.carve_kwargs,
         )
         for block in BLOCKS:
             block(job, nodes)
