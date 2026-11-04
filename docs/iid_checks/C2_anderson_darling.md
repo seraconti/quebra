@@ -41,12 +41,19 @@ seed, and holds the shipped size to a coarse band around them; it is too wide to
 oversize itself. The population divisor gives 0.0659 and 0.0533 on the same draws, because
 C2 carries `1/gamma_hat^2` and so moves by `N/(N-1)`.
 
-**`tau == T_N` makes it singular.** Its `i = N - 1` summand, `ln((tau - T_{N-1})/(tau - T_N))`, is `+inf` when the last
-event lands exactly on the truncation time. That is failure censoring, a different sampling
-scheme from the time censoring the equation is derived for, so the check declines it. On the
-side clock of a carved record this is the common case, not a corner one: ~73% of
-synthetic replicates on the in-spec bag, and every threshold above 3 µs on the real 0704 record (measured on
-the 1 to 10 µs ladder, commit aff894e; the 3.5 and 4.5 µs rungs are not measured).
+**A segment that ends at an event.** On all `N` events, the `i = N - 1` summand,
+`ln((tau - T_{N-1})/(tau - T_N))`, is `+inf` when the last event lands exactly on the
+truncation time. That is failure truncation, a different sampling scheme from the time
+censoring the equation is derived for. C2 then reads the first `n - 1` event times with
+`tau = T_n` (`checks/result.events_read`), where every term is finite since `tau - T_{n-1}`
+is the last gap; `gamma_hat` stays on all `n` gaps. Given `T_n` under a constant rate those
+`n - 1` times are uniform order statistics (Rigdon and Basu 2000, Sect. 4.3), so at
+`gamma_hat = 1` this is the classical A^2 of `n - 1` uniforms. On the side clock of a
+carved record the case is common, not a corner one: ~73% of synthetic replicates on the
+in-spec bag, and every threshold above 3 µs on the real 0704 record (measured on the 1 to
+10 µs ladder, commit aff894e; the 3.5 and 4.5 µs rungs are not measured). The bench measured
+C2 only on time-truncated segments, and the ledger row says its bench cell was measured
+without the `n - 1` form.
 
 Float summation order matters here. `np.sum` is pairwise and `np.cumsum[-1]` is sequential;
 they disagree by ulps in either direction on 23% of random vectors. A guard written against

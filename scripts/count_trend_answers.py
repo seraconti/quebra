@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Count, from check-ledger artifacts on disk, where C1 and C2 gave no answer and where the
-trend group is CvM alone. Read-only: it opens the artifacts and writes nothing.
+"""Count, from check-ledger artifacts on disk, where C1 and C2 answer, where neither does and
+where the trend group is CvM alone. Read-only: it opens the artifacts and writes nothing.
 
     python scripts/count_trend_answers.py <ledger run folder> [<ledger run folder> ...]
 
@@ -62,7 +62,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{len(ledgers)} ledgers from {len(args.folders)} folders\n")
         print("Cells where neither C1 nor C2 answered, by bag, clock and message:")
         print(counts.no_answer.to_string(index=False))
-        print("\nThe trend group, per bag and clock:")
+        print(
+            "\nThe trend group, per bag and clock (C1 and C2 both answer, at least one "
+            "answers, any of the three, CvM alone):"
+        )
         print(
             counts.cvm_alone.to_string(index=False, float_format=lambda v: f"{v:.4f}")
         )

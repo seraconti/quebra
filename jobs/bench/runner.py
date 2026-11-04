@@ -271,11 +271,10 @@ def run_cell(cell: Cell, cell_index: int) -> list[dict[str, object]]:
         except (ValueError, KeyError) as exc:
             note_failure(exc)
             # Something in the battery is undefined on this record. The retry drops C1
-            # and C2 and keeps C5, C6 and CvM by permutation, which stay defined when tau
-            # is singular (`tau == T_N`). It does not rescue a record whose `gamma_hat` is
-            # zero, a segment whose durations are all one quantum: CvM's statistic divides
-            # by `gamma_hat` too, so the retry raises and the replicate counts as failed
-            # for every row. Each row's own `n_used` is the denominator, so the surviving
+            # and C2 and keeps C5, C6 and CvM by permutation. It does not rescue a record
+            # whose `gamma_hat` is zero, a segment whose durations are all one quantum:
+            # CvM's statistic divides by `gamma_hat` too, so the retry raises and the
+            # replicate counts as failed for every row. Each row's own `n_used` is the denominator, so the surviving
             # rows stay unbiased.
             if not cell.include_tau_checks:
                 n_failed += 1

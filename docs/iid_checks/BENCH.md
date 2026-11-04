@@ -26,8 +26,10 @@ The factors (`jobs/bench/grid.py`): event count `N_GRID` = 20, 35, 50, 75, 100, 
 700, 1000; Weibull shape 0.75 and 1.5; quantised or continuous durations (Arm A); target
 censoring 0, 0.03 and 0.25 (Arms A and D, through `arms.n_segments_for_censoring`); `rho`
 0.05-0.5 (Arms C and E); `b` 0.7, 0.85, 1.2, 1.5 (Arm D). Arms B and C are carved on two
-clocks, and their in-spec cells run only the rows that stay defined when `tau == T_N`: C5,
-C6 and CvM by permutation (`grid._carved_clocks`, `checks/battery.py:run_battery`).
+clocks, and their in-spec cells run C5, C6 and CvM by permutation only
+(`grid._carved_clocks`). They were measured when a segment ending at an event
+(`tau == T_N`) left C2 undefined and CvM read all `n` events there. C1, C2 and CvM now read
+such a segment's first `n - 1` events, a form no committed cell measured.
 `grid.size_cells` and `grid.power_cells` give 216 and 288 cells.
 
 `grid.serial_cells` gives 87 more, written to their own table, `serial_table.csv`, which

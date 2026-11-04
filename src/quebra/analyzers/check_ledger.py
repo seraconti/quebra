@@ -23,12 +23,21 @@ bag. That holds at the median only. At a rung where a fraction p of reads is in 
 out-of-spec bag has the law of the in-spec bag at 1 - p, which no cell measured either: the
 cells transfer to both bags as far as they transfer to one, an open question for both. The
 shared stream means the bags' p-values share their draws wherever their segment sizes
-match, so they are not independent. On the side clock of a carved record, time on the side
-stops accruing the moment the record ends on the other side, so `tau == T_N` - measured at
-~73% of synthetic replicates on the in-spec bag. Kvaloy and Lindqvist's eq (7) (Technometrics 2020, p. 104) is
-singular there, so C1's and C2's rows read `not computed` with the reason. The ledger carries
-no asymptotic row, whose limiting null would also assume a `tau` chosen independently of the
-events. CvM by permutation and the rank checks (which never touch `tau`) still run there.
+match, so they are not independent.
+
+**Segments that end at an event.** On the side clock of a carved record, time on the side
+stops accruing the moment the record ends on the other side, so `tau == T_N` (measured at
+~73% of synthetic replicates on the in-spec bag). The same holds where the final window is
+one read long, and on every calibration-cycles segment that ends with a complete cycle.
+That is failure truncation: given `T_n`, under a constant rate the first `n - 1` event times
+are uniform order statistics on `(0, T_n)`, so C1, C2 and CvM read them with `tau = T_n`
+(Rigdon and Basu 2000, Sect. 4.3; `Segment.ends_at_event`). On all `N` events Kvaloy and
+Lindqvist's eq (7) (Technometrics 2020, p. 104) would also be singular there. Their rows
+count, judge and look up the bench by the events read, and say how many segments ended at an
+event. No bench cell measured the `n - 1` form: C1's and C2's cells are all time truncated,
+and CvM's side-clock cells include the carved arms' (B and C), which read all `n` events
+where a segment ended at an event. The rank checks never touch `tau` and read every event.
+The ledger carries no asymptotic row.
 
 **What the provenance record cannot hold.** Its schema is closed, so what R produced the
 C3 p-values is discovered at runtime and lives on the materialized artifact, not in the
@@ -52,7 +61,10 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+import quebra.analyzers.checks.c1_lewis_robinson as c1
+import quebra.analyzers.checks.c2_anderson_darling as c2
 import quebra.analyzers.checks.c3_serial_copula as c3
+import quebra.analyzers.checks.cvm_cramer_von_mises as cvm
 from quebra.analyzers.calibration_summary import (
     bench_acceptance_at_n,
     nearest_bracketing_n,
@@ -67,7 +79,6 @@ from quebra.analyzers.checks.battery import (
 )
 from quebra.analyzers.checks.result import (
     BENCH_CLOCK,
-    CALIB_PERMUTATION,
     CALIB_R_COPULA,
     CLOCKS,
     CheckResult,
@@ -109,6 +120,11 @@ VERDICTS = (
 # gamma_hat zero, which raises rather than misleads), so the tie rule does not apply to
 # them.
 TIE_SENSITIVE_CHECKS = ("c3_serial_copula", "c5_rank_autocorr", "c6_exchangeability")
+
+# The checks that read event times against a segment's `tau`, so read only the first n - 1
+# events of a segment that ends at one (`Segment.ends_at_event`). Their rows count, judge
+# and look up the bench by the events they read.
+EVENT_TIME_CHECKS = (c1.CHECK_NAME, c2.CHECK_NAME, cvm.CHECK_NAME)
 
 # The side of a row whose durations are no bag's windows (calibration cycles).
 NO_SIDE = ""
@@ -594,8 +610,13 @@ def score_segments(
     segments the caller dropped through `battery.drop_unusable_segments`, as short and as
     degenerate, and `n_used` is what the `n_windows_used` column records. A nonzero
     `n_degenerate` is named in every row's notes. A check undefined on the segments that
-    remain reads `not computed` with its reason, and the others still answer. With no
-    segment left it returns one `not computed` row with its reason and never raises.
+    remain reads `not computed` with its own reason, and the others still answer, C1 and C2
+    included. With no segment left it returns one `not computed` row with its reason and
+    never raises.
+
+    C1, C2 and CvM read `n - 1` events of a segment that ends at an event
+    (`EVENT_TIME_CHECKS`): their rows' `n_events`, event floor and bench n count the events
+    read, and their notes say how many segments ended at an event.
     """
     if not segments:
         note = (
@@ -615,13 +636,13 @@ def score_segments(
     durations = np.concatenate([s.x for s in segments])
     n_distinct, tie_fraction = _tie_stats(durations)
     n_events = int(len(durations))
-    bench_n = nearest_bracketing_n(grid, n_events)
+    n_read = int(sum(s.n_events_read for s in segments))
+    n_at_event = sum(s.ends_at_event for s in segments)
 
     stream = stream_for(label, BENCH_CLOCK[clock])
     rng = np.random.default_rng([seed, stream])
     perm = block_permutations([s.n_events for s in segments], n_permutations, rng)
 
-    battery_note = ""
     try:
         results = run_battery(
             segments,
@@ -638,30 +659,6 @@ def score_segments(
                 label, side, clock, dataset_id, f"battery failed: {exc}"[:200], n_used
             )
         ]
-    tau_checks = ("c1_lewis_robinson", "c2_anderson_darling")
-    refused = [r for r in results if r.check in tau_checks and UNDEFINED in r.extra]
-    if refused:
-        # Either of C1 and C2 undefined drops both, with the first one's reason (usually
-        # tau == T_N on the side clock): a mathematical refusal, so it overrides a
-        # run-set that asked for those rows. Say so with their own rows: without them the
-        # reader sees a ladder where the trend checks simply vanish at the loose thresholds
-        # and cannot tell whether they were attempted, declined, or forgotten. A ledger runs
-        # the permutation rows only, so those are the rows it accounts for.
-        battery_note = f"C1/C2 undefined here: {refused[0].extra[UNDEFINED]}"[:180]
-        results = [r for r in results if r.check not in tau_checks]
-        for dropped in tau_checks:
-            results.append(
-                CheckResult(
-                    check=dropped,
-                    statistic=float("nan"),
-                    p_value=None,
-                    calibration=CALIB_PERMUTATION,
-                    clock=clock,
-                    n_events=int(sum(s.n_events for s in segments)),
-                    n_segments=len(segments),
-                    notes=battery_note,
-                )
-            )
 
     # C3 is out-of-process and shares nothing with the permutation set, so it is called
     # separately. With R absent it returns p_value=None and the row reads `not computed`.
@@ -703,6 +700,9 @@ def score_segments(
         for token in result.notes.split():
             if token.startswith("variant="):
                 variant = token.split("=", 1)[1]
+        reads_n_minus_1 = result.check in EVENT_TIME_CHECKS
+        n_row = n_read if reads_n_minus_1 else n_events
+        bench_n = nearest_bracketing_n(grid, n_row)
         match = acceptance[
             (acceptance["check"] == result.check)
             & (acceptance["calibration"] == result.calibration)
@@ -723,19 +723,27 @@ def score_segments(
         verdict, reason = _verdict(
             result,
             alpha=alpha,
-            n_events=n_events,
+            n_events=n_row,
             min_events_pass=min_events_pass,
             n_distinct=n_distinct,
             tie_cutoff=tie_cutoff_distinct,
             bench_accepted=accepted,
         )
-        # The battery note explains why C1/C2 were dropped, so it belongs on THEIR rows.
-        # Appending it to every row put "C1/C2 undefined here: tau ..." on a C3 row, which
-        # is a different check with a different reason.
-        relevant = battery_note if result.check.startswith(("c1_", "c2_")) else ""
         if UNDEFINED in result.extra:
             reason = str(result.extra[UNDEFINED])
-        notes = "; ".join(part for part in (reason, relevant, degenerate_note) if part)
+        # Only these rows read n - 1, so only they say so; the bench clause only where a
+        # cell was read.
+        at_event_note = ""
+        if reads_n_minus_1 and n_at_event:
+            at_event_note = (
+                f"{n_at_event} of {len(segments)} segment(s) end at an event: first n - 1 "
+                "events read"
+            )
+            if cell:
+                at_event_note += "; the bench cell was measured without the n - 1 form"
+        notes = "; ".join(
+            part for part in (reason, at_event_note, degenerate_note) if part
+        )
         out.append(
             {
                 "dataset_id": dataset_id,
@@ -748,7 +756,7 @@ def score_segments(
                 "statistic": float(result.statistic),
                 "p_value": result.p_value,
                 "verdict": verdict,
-                "n_events": n_events,
+                "n_events": n_row,
                 "n_windows_used": int(n_used),
                 "n_censored_dropped": int(result.n_censored_dropped),
                 "n_segments": int(result.n_segments),

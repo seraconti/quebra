@@ -33,6 +33,7 @@ Tags:
 | LEH2003 | B. H. Lindqvist, G. Elvebakk and K. Heggland, "The trend-renewal process for statistical analysis of repairable systems", *Technometrics* 45:31-44, 2003. | UNVERIFIED: from KL2020's reference list |
 | KKG1989 | U. Kumar, B. Klefsjö and S. Granholm, "Reliability investigation for a fleet of load haul dump machines in a Swedish mine", *RESS* 26:341-361, 1989. | PDF, MEASURED (p. 341). KL2020's reference list (p. 115) and KLcode's `example_LHDdata.R` print volume 24. |
 | KK1992 | U. Kumar and B. Klefsjö, "Reliability analysis of hydraulic systems of LHD machines using the power law process model", *RESS* 35:217-224, 1992. | PDF, MEASURED. Its Appendix, p. 224, prints the hydraulic gaps. |
+| RB2000 | S. E. Rigdon and A. P. Basu, *Statistical Methods for the Reliability of Repairable Systems*, Wiley, 2000. | transcribed from the book by the repository owner; the locators are not confirmed by a second reading here (NOT RE-CHECKED) |
 | LCC2012 | J. F. Lawless, C. Çiğşar and R. J. Cook, "Testing for monotone trend in recurrent event processes", *Technometrics* 54:147-158, 2012. | UNVERIFIED: from the KLcode header and KL2020's reference list (p. 115) |
 
 ## 2. KL2020 against KLv1: the locator map
@@ -284,3 +285,25 @@ recomputation by more than half a unit in its last printed digit.
 Prose figures the script does not recompute: the `adinf` p 0.0796 in section 3, the eq (10)
 and eq (11) values 0.0140, 0.0129 and 0.0065 in section 4.1, and the agreement tolerances
 1e-14 (section 3) and 1e-11 (section 5.1).
+
+## 8. Failure truncation: RB2000
+
+A record observed until its last failure is failure truncated: observation stops at the
+event, not at a time chosen apart from the events. RB2000 Sect. 4.3 gives the Laplace
+statistic for that case, which reads the first `n - 1` failure times on `(0, t_n)`. C1, C2
+and CvM take the same conditioning for a segment that ends at an event
+(`checks/result.Segment.ends_at_event`).
+
+Data: RB2000 Table 4.1, p. 88, system 3, twelve failure times, failure truncated at the
+twelfth, `t_n = 227` (`tests/fixtures/rigdon_basu.py`).
+
+| quantity | printed | recomputed | locator |
+|---|---|---|---|
+| sum of the first 11 failure times | 1734 | 1734 | Example 4.8, pp. 110-111 |
+| Laplace statistic L | 2.23 | 2.2339 | Example 4.8, pp. 110-111 |
+| P | 0.0257 | 0.0257 from the printed L; 0.0255 from the unrounded L | Example 4.8, pp. 110-111 |
+
+`L = (1734/11 - 227/2) / (227 / sqrt(12 * 11))`. Recomputed by
+`tests/test_checks_published_values.py::test_c1_on_a_failure_truncated_record_reproduces_rigdon_and_basus_laplace`
+as C1 times `gamma_hat` (sample form), with C1 reading the first 11 event times against
+`tau = t_12`. `scripts/verify_gold_standard.py` does not recompute this section.

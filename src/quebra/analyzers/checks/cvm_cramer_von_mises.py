@@ -50,13 +50,31 @@ CvM, against 0.0051 for C1 and 0.0058 for C2: margins smaller than the Monte Car
 a twelve-cell mean, about 0.0014, so this aggregate does not rank the three. Single cells and
 the envelope's worst cells do differ.
 
-Its PERMUTATION row runs even when `include_tau_checks` is False, which is the reason it was
-promoted: `tau == T_N` on the in-spec clock of a carved record silences C1 and C2, and this
-integrand carries no `1/(s(1-s))` weight. Its ASYMPTOTIC row runs only in the bench
-(`include_asymptotic`), and there only when `include_tau_checks` is True and the record has
-one segment (`run` raises on more than one), because a limiting null still needs a truncation time chosen independently of the
-events. This module never refuses `tau == T_N`; the battery caller's `include_tau_checks`
-decides whether that case reaches this row.
+Its PERMUTATION row runs even when `include_tau_checks` is False. Its ASYMPTOTIC row runs
+only in the bench (`include_asymptotic`), and there only when `include_tau_checks` is True and
+the record has one segment (`run` raises on more than one).
+
+**A segment that ends at an event** (`tau == T_N`, `Segment.ends_at_event`) contributes its
+first `n - 1` event times with `tau = T_n`, the same conditioning C1 and C2 take: given `T_n`
+under a constant rate they are uniform order statistics on `(0, T_n)` (Rigdon and Basu
+2000, Sect. 4.3), so at `gamma_hat = 1` this is the classical W^2 of those `n - 1` uniforms.
+Reading all `n` would put `u_N = 1` on every such segment. `gamma_hat` stays on all `n`
+gaps.
+
+Validity assumptions
+
+- Assumption: a segment that ends at an event stopped there by a rule that depends on its
+  gaps only through their number and sum: a read gap or the record's end on the side
+  clock, a birth reaching the stop on the calendar clock, the record's end for calibration
+  cycles. Given `T_n`, its first `n - 1` event times are then what is read, and a
+  permutation of all `n` gaps leaves `T_n` and `gamma_hat` unchanged, so the permutation
+  p-value stays exact under iid gaps.
+  Diagnostic: none from the data; the stopping rules are those of
+  `_multiprocess.segments_from_windows` and `cycles.battery_segments`.
+  Consequence of violation: a stop that depends on the order of the gaps makes the
+  reshuffled records the wrong reference set, and the p-value loses its stated size.
+  Reference: Rigdon and Basu (2000), Statistical Methods for the Reliability of Repairable
+  Systems, Sect. 4.3, the failure-truncated case.
 """
 
 from __future__ import annotations
@@ -86,6 +104,7 @@ from quebra.analyzers.checks.result import (
     CheckResult,
     Segment,
     concatenated_gaps,
+    events_read,
     segment_sizes,
     validate_segment,
 )
@@ -192,10 +211,9 @@ def statistic(
 ) -> float:
     """Summed unweighted over segments, exactly as C2's multi-process form is.
 
-    `require_strict_tau=False`: unlike eq (7), this integrand has no `1/(s(1-s))` weight,
-    so nothing here is singular when the last event lands on the truncation time. That is
-    this project's reason to carry CvM at m > 1: it survives records C2 declines. The paper's
-    reason is level properties (Section 6, p. 106).
+    A segment that ends at an event contributes its first `n - 1` event times
+    (`events_read`), as in C1 and C2; `gamma_hat` reads all `n` gaps. The paper's reason to
+    carry CvM at m > 1 is level properties (Section 6, p. 106).
     """
     if not segments:
         raise ValueError("CvM needs at least one segment")
@@ -203,7 +221,8 @@ def statistic(
     for segment in segments:
         validate_segment(segment, require_strict_tau=False)
         x = np.asarray(segment.x, dtype=float)
-        total += _cvm(x, segment.tau, gamma_hat(x, segment.tau, gamma_estimator))
+        read = events_read(x, segment.ends_at_event)
+        total += _cvm(read, segment.tau, gamma_hat(x, segment.tau, gamma_estimator))
     return total
 
 
@@ -220,7 +239,8 @@ def statistic_batch(
     for segment, (lo, hi) in zip(segments, perm.blocks()):
         block = permuted[:, lo:hi]
         gamma = gamma_hat_batch(block, segment.tau, gamma_estimator)
-        total += _cvm_batch(block, segment.tau, gamma)
+        read = events_read(block, segment.ends_at_event)
+        total += _cvm_batch(read, segment.tau, gamma)
     return total
 
 
@@ -270,7 +290,7 @@ def run(
         p_value=p_value,
         calibration=calibration,
         clock=clock,
-        n_events=int(sum(len(s.x) for s in segments)),
+        n_events=int(sum(s.n_events_read for s in segments)),
         n_segments=len(segments),
         n_censored_dropped=int(sum(s.n_censored_dropped for s in segments)),
         notes=notes,

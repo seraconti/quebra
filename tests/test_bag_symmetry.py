@@ -96,6 +96,17 @@ def test_a_records_bags_are_its_mirrors_bags_swapped(big_values_good):
     assert set(zip(answered["side"], answered["clock"])) == {
         (side, clock) for side in SIDES for clock in CLOCKS
     }
+    # C1 and C2 answer on both bags and both clocks too, with every side-clock segment that
+    # ends at an event read through its first n - 1 events.
+    trend = answered[
+        answered["check_id"].isin(["c1_lewis_robinson", "c2_anderson_darling"])
+    ]
+    assert set(zip(trend["side"], trend["clock"], trend["check_id"])) == {
+        (side, clock, check)
+        for side in SIDES
+        for clock in CLOCKS
+        for check in ("c1_lewis_robinson", "c2_anderson_darling")
+    }
     # And the bags differ from each other, so the swap is a real exchange.
     assert not _bag(record_rows, SIDE_IN_SPEC).equals(
         _bag(record_rows, SIDE_OUT_OF_SPEC)

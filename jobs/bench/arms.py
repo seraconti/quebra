@@ -33,8 +33,8 @@ partial gap. This is what time censoring means, and two earlier constructions fa
 it, both caught by measurement:
 
 - `tau = sum(x)` over exactly `n` gaps makes the `i = N-1` summand of Kvaloy & Lindqvist's
-  eq (7), `ln((tau - T_{N-1})/(tau - T_N))`, `+inf`,
-  so the briefed "n durations right-censored at tau" would have failed every replicate.
+  eq (7) on all `N` events, `ln((tau - T_{N-1})/(tau - T_N))`, `+inf`, so the briefed "n
+  durations right-censored at tau" would have failed every replicate of that form.
 - Drawing `n + 1` gaps and setting `tau = sum` of all of them fixes that but breaks eq
   (10): the residual is then a COMPLETE gap rather than a partial one, so `mu = tau/N`
   overstates the mean, `sigma^2 = (1/N)[sum(x^2) + residual^2] - mu^2` goes NEGATIVE, and
@@ -316,8 +316,8 @@ def _carved_segments(
     read - not `[0, t_last]`. That distinction is the difference between a truncation time
     chosen in advance and one read off the data: ending at the last read makes `tau` an
     event-determined boundary, and when the final window is a single read it collapses to
-    `tau == T_N`, where eq (7) is singular. Measured: that hits 25% of Arm B
-    replicates on the calendar clock.
+    `tau == T_N`, where eq (7) on all `N` events is singular. Measured: that hits 25% of
+    Arm B replicates on the calendar clock.
     """
     n_reads = len(values)
     t = np.arange(n_reads, dtype=float) * READ_DT_S

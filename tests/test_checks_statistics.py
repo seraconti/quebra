@@ -71,6 +71,7 @@ from quebra.analyzers.checks.result import (
     CLOCK_CALENDAR,
     CLOCK_SIDE,
     Segment,
+    validate_segment,
 )
 
 
@@ -207,11 +208,80 @@ def test_the_divisor_scales_each_statistic_by_its_own_power(module, power):
     assert shipped / population == pytest.approx(((n - 1) / n) ** power, rel=1e-12)
 
 
-@pytest.mark.unit
-def test_c2_refuses_a_segment_whose_last_event_lands_on_tau():
-    x = np.array([1.0, 2.0, 3.0])
-    with pytest.raises(ValueError, match="failure censoring"):
-        c2.statistic([Segment(x=x, tau=float(x.sum()))])
+@pytest.mark.statistical
+@pytest.mark.parametrize("n", [3, 12, 60])
+def test_c2_reads_a_segment_ending_at_its_last_event_through_the_first_n_minus_1(n):
+    """Oracle: Anderson and Darling (1954), `_classical_ad`, on the n - 1 event times read
+    on (0, T_n) (Rigdon and Basu 2000, Sect. 4.3, the failure-truncated case), over the
+    squared sample coefficient of variation of all n gaps. Eq (7) on all n events is +inf
+    there, and `validate_segment`'s strict option still refuses that form."""
+    x = np.random.default_rng(n).exponential(size=n)
+    segment = Segment(x=x, tau=float(np.cumsum(x)[-1]))
+    assert segment.ends_at_event and segment.n_events_read == n - 1
+    sample_cv = float(np.std(x, ddof=1) / np.mean(x))
+    assert c2.statistic([segment]) == pytest.approx(
+        _classical_ad(x[:-1], segment.tau) / sample_cv**2, rel=1e-10
+    )
+    with pytest.raises(ValueError, match="failure truncation"):
+        validate_segment(segment, require_strict_tau=True)
+
+
+@pytest.mark.statistical
+def test_a_two_gap_segment_ending_at_its_last_event_reads_one_event():
+    """Oracle: closed forms at one event read, u = x_1 / (x_1 + x_2): C1 =
+    sqrt(12) (u - 1/2) / gamma, C2 = (-1 - ln u - ln(1 - u)) / gamma^2 and CvM =
+    (1/12 + (u - 1/2)^2) / gamma^2, gamma the sample coefficient of variation of both gaps.
+    One event read is enough, so the shared drop rule keeps the segment."""
+    x = np.array([1.0, 3.0])
+    segment = Segment(x=x, tau=4.0)
+    u = 0.25
+    gamma = float(np.std(x, ddof=1) / np.mean(x))
+    assert c1.statistic([segment]) == pytest.approx(
+        np.sqrt(12.0) * (u - 0.5) / gamma, rel=1e-12
+    )
+    assert c2.statistic([segment]) == pytest.approx(
+        (-1.0 - np.log(u) - np.log(1.0 - u)) / gamma**2, rel=1e-12
+    )
+    assert cvm.statistic([segment]) == pytest.approx(
+        (1.0 / 12.0 + (u - 0.5) ** 2) / gamma**2, rel=1e-12
+    )
+    kept, n_short, n_degenerate = drop_unusable_segments([segment], 2)
+    assert len(kept) == 1 and kept[0] is segment and (n_short, n_degenerate) == (0, 0)
+
+
+@pytest.mark.statistical
+def test_a_time_truncated_and_an_event_ended_segment_each_contribute_their_own_form():
+    """Oracle: each statistic's multi-segment form assembled from per-segment oracles. The
+    time-truncated segment reads all its events against its tau; the one that ends at its
+    last event reads the first n - 1 against T_n. C1 is the journal's eq (16) written as
+    sqrt(12) / sqrt(sum_k N_k / gamma_k^2) * sum_j (sum_i T_ij / tau_j - N_j / 2) / gamma_j^2
+    (module docstring); C2 sums `_classical_ad` and CvM sums scipy's W^2, each over
+    gamma_j^2."""
+    from scipy.stats import cramervonmises
+
+    rng = np.random.default_rng(41)
+    timed = exponential_segment(30, rng)
+    g = rng.exponential(size=25)
+    ended = Segment(x=g, tau=float(np.cumsum(g)[-1]))
+    assert not timed.ends_at_event and ended.ends_at_event
+    parts = []
+    for seg, read in ((timed, timed.x), (ended, ended.x[:-1])):
+        gamma = float(np.std(seg.x, ddof=1) / np.mean(seg.x))
+        parts.append((read, seg.tau, gamma))
+    lr = (
+        np.sqrt(12.0)
+        / np.sqrt(sum(len(r) / gm**2 for r, _, gm in parts))
+        * sum((np.cumsum(r).sum() / tau - len(r) / 2.0) / gm**2 for r, tau, gm in parts)
+    )
+    ad = sum(_classical_ad(r, tau) / gm**2 for r, tau, gm in parts)
+    w2 = sum(
+        float(cramervonmises(np.cumsum(r) / tau, "uniform").statistic) / gm**2
+        for r, tau, gm in parts
+    )
+    segments = [timed, ended]
+    assert c1.statistic(segments) == pytest.approx(lr, rel=1e-10)
+    assert c2.statistic(segments) == pytest.approx(ad, rel=1e-10)
+    assert cvm.statistic(segments) == pytest.approx(w2, rel=1e-10)
 
 
 @pytest.mark.unit
@@ -697,11 +767,8 @@ def test_battery_drops_only_the_tau_checks_when_asked():
             [segment], perm=perm, include_tau_checks=False, include_asymptotic=True
         )
     ]
-    # C5, C6 and CvM-by-permutation survive; C1, C2 and CvM-ASYMPTOTIC do not.
-    # CvM is the one entitled to this case: its
-    # statistic has no `1/(s(1-s))` weight so it stays finite when `tau == T_N`. Its
-    # asymptotic row is still dropped here, because a limiting null needs a truncation
-    # time chosen independently of the events and this one is not.
+    # C5, C6 and CvM-by-permutation survive; C1, C2 and CvM-ASYMPTOTIC do not: the three
+    # asymptotic rows go with the tau checks.
     assert all(key[0].startswith(("c5", "c6", "cvm")) for key in keys)
     assert ("cvm_cramer_von_mises", CALIB_PERMUTATION, "") in keys
     assert ("cvm_cramer_von_mises", CALIB_ASYMPTOTIC, "") not in keys
@@ -751,6 +818,39 @@ def test_statistic_batch_reproduces_the_statistic_under_the_identity_permutation
         scalar = module.statistic(segments)
         assert np.allclose(batch, scalar, rtol=0, atol=1e-12), (
             f"{module.CHECK_NAME}: identity-permuted batch {batch[0]} != {scalar}"
+        )
+
+
+@pytest.mark.statistical
+def test_each_permuted_row_reads_its_first_n_minus_1_events_against_the_fixed_t_n():
+    """Oracle: the scalar statistic on each permuted record, rebuilt as segments. A
+    permutation reshuffles all n gaps of a segment that ends at its last event; every row
+    keeps the observed tau = T_n (the sum of the gaps) and gamma_hat (a function of their
+    multiset), and reads its own first n - 1 event times. That is why the permutation
+    p-value stays exact."""
+    rng = np.random.default_rng(57)
+    timed = exponential_segment(20, rng)
+    g = rng.exponential(size=15)
+    ended = Segment(x=g, tau=float(np.cumsum(g)[-1]))
+    segments = [timed, ended]
+    perm = block_permutations(
+        [s.n_events for s in segments], 25, np.random.default_rng(5)
+    )
+    rows = perm.apply(np.concatenate([s.x for s in segments]))
+    for module in (c1, c2, cvm):
+        batch = module.statistic_batch(segments, perm)
+        for i, row in enumerate(rows):
+            rebuilt = [
+                Segment(x=row[lo:hi], tau=s.tau)
+                for s, (lo, hi) in zip(segments, perm.blocks())
+            ]
+            assert batch[i] == pytest.approx(module.statistic(rebuilt), rel=1e-10), (
+                module.CHECK_NAME,
+                i,
+            )
+    for s, (lo, hi) in zip(segments, perm.blocks()):
+        assert np.allclose(
+            gamma_hat_batch(rows[:, lo:hi], s.tau), gamma_hat(s.x, s.tau), rtol=1e-12
         )
 
 
@@ -1051,8 +1151,26 @@ def test_an_observation_end_at_the_last_read_does_not_clear_the_degeneracy():
     assert slack == pytest.approx(DT_S), (
         f"one read interval past the last read must give exactly that much slack; got {slack}"
     )
-    # And the statistic C2 refused above is now computable.
+    # And C2 reads every event there, against a truncation time past the last one.
+    assert not one_interval_past[-1].ends_at_event
     assert np.isfinite(c2.statistic(one_interval_past))
+
+
+@pytest.mark.unit
+def test_a_segment_ending_in_a_zero_duration_window_ends_at_an_event_on_both_clocks():
+    """Oracle: arithmetic. A final window one read long has zero duration and is censored
+    at `scan_end`, so observation stops at T_N: on the side clock its duration adds nothing
+    to tau, and on the calendar clock no observation end is passed. `Segment.ends_at_event`
+    holds, and C1, C2 and CvM read the first n - 1 events, the valid conditioning there."""
+    frame, _ = _carve_unit_series(_record_ending_on_one_in_spec_read())
+    assert frame.iloc[-1]["duration_s"] == 0.0, "premise: a zero-duration final window"
+    for clock in (CLOCK_SIDE, CLOCK_CALENDAR):
+        segments, _ = segments_from_windows(frame, clock=clock, min_events=2)
+        final = segments[-1]
+        assert final.ends_at_event, clock
+        assert final.n_events_read == final.n_events - 1, clock
+        for module in (c1, c2, cvm):
+            assert np.isfinite(module.statistic([final])), (clock, module.CHECK_NAME)
 
 
 @pytest.mark.unit

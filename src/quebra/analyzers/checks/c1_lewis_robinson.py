@@ -47,6 +47,29 @@ not merely asymptotically: `tau_j`, `N_j` and `gamma_hat_j`, hence both weightin
 invariant to reordering gaps within a segment, so the only thing a permutation moves is
 `sum_i T_ij`. That makes the asymptotic-vs-permutation gap in the bench a clean measurement
 of asymptotic error rather than a comparison of two approximations.
+
+**A segment that ends at an event** (`tau == T_N`, `Segment.ends_at_event`) contributes its
+first `n_j - 1` event times with `tau_j = T_{n_j}` and `N_j = n_j - 1`, in both weightings;
+`gamma_hat_j` stays on all `n_j` gaps, which are all complete. At m = 1 and `gamma_hat = 1`
+this is the failure-truncated Laplace statistic
+`sqrt(12 (n-1)) (mean(T_1 .. T_{n-1}) - T_n / 2) / T_n` (Rigdon and Basu 2000, Statistical
+Methods for the Reliability of Repairable Systems, Sect. 4.3 and Example 4.8, pp. 110-111;
+no equation number located; `tests/test_checks_published_values.py` reproduces its
+L = 2.23).
+
+Validity assumptions
+
+- Assumption: a segment that ends at an event stopped there by a rule that depends on its
+  gaps only through their number and sum: a read gap or the record's end on the side
+  clock, a birth reaching the stop on the calendar clock, the record's end for calibration
+  cycles. Given `T_n`, its first `n - 1` event times are then what is read, and a
+  permutation of all `n` gaps leaves `T_n`, `N_j` and `gamma_hat_j` unchanged, so the
+  permutation p-value stays exact under iid gaps.
+  Diagnostic: none from the data; the stopping rules are those of
+  `_multiprocess.segments_from_windows` and `cycles.battery_segments`.
+  Consequence of violation: a stop that depends on the order of the gaps makes the
+  reshuffled records the wrong reference set, and the p-value loses its stated size.
+  Reference: Rigdon and Basu (2000), Sect. 4.3, the failure-truncated case.
 """
 
 from __future__ import annotations
@@ -66,6 +89,7 @@ from quebra.analyzers.checks.result import (
     CheckResult,
     Segment,
     concatenated_gaps,
+    events_read,
     segment_sizes,
     validate_segment,
 )
@@ -113,7 +137,11 @@ def statistic(
     gamma_estimator: str = GAMMA_DEFAULT,
     weights: str = WEIGHTS_DEFAULT,
 ) -> float:
-    """Eq (13) with the `weights` form of eq (16). Raises via `validate_segment`."""
+    """Eq (13) with the `weights` form of eq (16). Raises via `validate_segment`.
+
+    A segment that ends at an event contributes its first `n - 1` event times
+    (`events_read`); `gamma_hat` reads all `n` gaps.
+    """
     if not segments:
         raise ValueError("C1 needs at least one segment")
     numerator = 0.0
@@ -123,8 +151,9 @@ def statistic(
         x = np.asarray(segment.x, dtype=float)
         gamma = gamma_hat(x, segment.tau, gamma_estimator)
         c = _coefficient(gamma, segment.tau, weights)
-        numerator += c * _numerator_term(x, segment.tau)
-        denominator += c**2 * gamma**2 * segment.tau**2 * len(x)
+        read = events_read(x, segment.ends_at_event)
+        numerator += c * _numerator_term(read, segment.tau)
+        denominator += c**2 * gamma**2 * segment.tau**2 * len(read)
     if denominator <= 0.0:
         raise ValueError("C1 denominator is not positive; every segment is degenerate")
     return _SQRT12 * numerator / float(np.sqrt(denominator))
@@ -152,8 +181,11 @@ def statistic_batch(
         block = permuted[:, lo:hi]
         gamma = gamma_hat_batch(block, segment.tau, gamma_estimator)
         c = _coefficient(gamma, segment.tau, weights)
-        numerator += c * _numerator_term_batch(block, segment.tau)
-        denominator += c**2 * gamma**2 * segment.tau**2 * (hi - lo)
+        # Each row reads its first n - 1 event times against the observed `tau`, which is
+        # the sum of the block's gaps and so the same on every row.
+        read = events_read(block, segment.ends_at_event)
+        numerator += c * _numerator_term_batch(read, segment.tau)
+        denominator += c**2 * gamma**2 * segment.tau**2 * read.shape[1]
     return _SQRT12 * numerator / np.sqrt(denominator)
 
 
@@ -170,7 +202,7 @@ def run(
     weights: str = WEIGHTS_DEFAULT,
 ) -> CheckResult:
     observed = statistic(segments, gamma_estimator=gamma_estimator, weights=weights)
-    n_events = int(sum(len(s.x) for s in segments))
+    n_events = int(sum(s.n_events_read for s in segments))
     n_censored = int(sum(s.n_censored_dropped for s in segments))
     notes = f"gamma={gamma_estimator}"
     # The weighting only exists for m > 1; at m = 1 both forms are eq (4).

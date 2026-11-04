@@ -383,9 +383,11 @@ class TrendGroupCounts:
     ledger truncates notes and prints numbers at varying widths, so the clause, not the
     whole note, is what groups the cells that failed for one reason.
 
-    `cvm_alone`: per bag and clock, `n_cells`, `n_trend_answered` (any of the three answered),
-    `n_cvm_alone` (CvM answered, C1 and C2 did not), and the share of CvM-alone cells among
-    the answered cells and among all cells. A share is NaN when its denominator is 0.
+    `cvm_alone`: per bag and clock, `n_cells`, `n_c1_and_c2` (C1 and C2 both answered),
+    `n_c1_or_c2` (at least one of them answered), `n_trend_answered` (any of the three
+    answered), `n_cvm_alone` (CvM answered, C1 and C2 did not), and the share of CvM-alone
+    cells among the answered cells and among all cells. A share is NaN when its denominator
+    is 0. C1 and C2 can answer apart: each reads `not computed` for its own reason.
     """
 
     no_answer: pd.DataFrame
@@ -450,6 +452,8 @@ def trend_group_counts(ledgers: Sequence[object]) -> TrendGroupCounts:
                 "clock": clock,
                 "no_c1_c2": not c1 and not c2,
                 "message": _message(source["notes"].iloc[0]) if len(source) else "",
+                "c1_and_c2": c1 and c2,
+                "c1_or_c2": c1 or c2,
                 "trend_answered": c1 or c2 or cvm,
                 "cvm_alone": cvm and not c1 and not c2,
             }
@@ -464,6 +468,8 @@ def trend_group_counts(ledgers: Sequence[object]) -> TrendGroupCounts:
     )
     per_clock = table.groupby(["side", "clock"], sort=True).agg(
         n_cells=("clock", "size"),
+        n_c1_and_c2=("c1_and_c2", "sum"),
+        n_c1_or_c2=("c1_or_c2", "sum"),
         n_trend_answered=("trend_answered", "sum"),
         n_cvm_alone=("cvm_alone", "sum"),
     )

@@ -44,6 +44,29 @@ eq (16) analogue to borrow: eq (14)'s optimal weights are derived for the trend
 statistic's normal limit, and the AD statistics being summed are not even asymptotically
 normal, which is the paper's point. An unweighted sum makes no distributional claim and
 the permutation calibration handles whatever distribution it has.
+
+**A segment that ends at an event** (`tau == T_N`, `Segment.ends_at_event`) is failure
+truncated, where eq (7) on all `N` events is `+inf`. It contributes eq (7) on its first
+`n - 1` event times with `tau = T_n`; every log term is then finite, since
+`tau - T_{n-1}` is the last gap. `gamma_hat` stays on all `n` gaps. Given `T_n` under a
+constant rate the `n - 1` times are uniform order statistics on `(0, T_n)` (Rigdon and
+Basu 2000, Sect. 4.3), so at `gamma_hat = 1` this is the classical A^2 of those `n - 1`
+uniforms.
+
+Validity assumptions
+
+- Assumption: a segment that ends at an event stopped there by a rule that depends on its
+  gaps only through their number and sum: a read gap or the record's end on the side
+  clock, a birth reaching the stop on the calendar clock, the record's end for calibration
+  cycles. Given `T_n`, its first `n - 1` event times are then what is read, and a
+  permutation of all `n` gaps leaves `T_n` and `gamma_hat` unchanged, so the permutation
+  p-value stays exact under iid gaps.
+  Diagnostic: none from the data; the stopping rules are those of
+  `_multiprocess.segments_from_windows` and `cycles.battery_segments`.
+  Consequence of violation: a stop that depends on the order of the gaps makes the
+  reshuffled records the wrong reference set, and the p-value loses its stated size.
+  Reference: Rigdon and Basu (2000), Statistical Methods for the Reliability of Repairable
+  Systems, Sect. 4.3, the failure-truncated case.
 """
 
 from __future__ import annotations
@@ -70,6 +93,7 @@ from quebra.analyzers.checks.result import (
     Segment,
     TAU_MARGIN,
     concatenated_gaps,
+    events_read,
     segment_sizes,
     validate_segment,
 )
@@ -103,8 +127,7 @@ def ad_limiting_cdf(z: float | np.ndarray) -> np.ndarray:
         n_bad = int((~np.isfinite(z)).sum())
         raise ValueError(
             f"{n_bad} of {z.size} Anderson-Darling statistics are not finite. This is a "
-            "singular eq (7) - typically tau within float noise of T_N - and must be "
-            "refused upstream, not turned into a p-value."
+            "singular eq (7) and must be refused upstream, not turned into a p-value."
         )
     if np.any(z <= 0.0):
         raise ValueError("the Anderson-Darling statistic is positive; got z <= 0")
@@ -179,17 +202,19 @@ def statistic(
 ) -> float:
     """Eq (7), summed unweighted over segments.
 
-    `require_strict_tau=True`: eq (7)'s `ln((tau - T_{N-1})/(tau - T_N))` term, with
-    `T_0 = 0`, is `+inf` when the last event lands exactly on the truncation time. That is failure censoring, a different
-    sampling scheme, and `validate_segment` explains the distinction where it raises.
+    Eq (7)'s `ln((tau - T_{N-1})/(tau - T_N))` term, with `T_0 = 0`, is `+inf` when the last
+    event lands exactly on the truncation time. Such a segment is failure truncated and
+    contributes eq (7) on its first `n - 1` event times (`events_read`), where the term is
+    finite; `gamma_hat` reads all `n` gaps.
     """
     if not segments:
         raise ValueError("C2 needs at least one segment")
     total = 0.0
     for segment in segments:
-        validate_segment(segment, require_strict_tau=True)
+        validate_segment(segment, require_strict_tau=False)
         x = np.asarray(segment.x, dtype=float)
-        total += _eq7(x, segment.tau, gamma_hat(x, segment.tau, gamma_estimator))
+        read = events_read(x, segment.ends_at_event)
+        total += _eq7(read, segment.tau, gamma_hat(x, segment.tau, gamma_estimator))
     return total
 
 
@@ -210,7 +235,8 @@ def statistic_batch(
     for segment, (lo, hi) in zip(segments, perm.blocks()):
         block = permuted[:, lo:hi]
         gamma = gamma_hat_batch(block, segment.tau, gamma_estimator)
-        total += _eq7_batch(block, segment.tau, gamma)
+        read = events_read(block, segment.ends_at_event)
+        total += _eq7_batch(read, segment.tau, gamma)
     return total
 
 
@@ -226,7 +252,7 @@ def run(
     permuted: np.ndarray | None = None,
 ) -> CheckResult:
     observed = statistic(segments, gamma_estimator=gamma_estimator)
-    n_events = int(sum(len(s.x) for s in segments))
+    n_events = int(sum(s.n_events_read for s in segments))
     n_censored = int(sum(s.n_censored_dropped for s in segments))
     notes = f"gamma={gamma_estimator}"
 

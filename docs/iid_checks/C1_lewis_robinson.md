@@ -37,6 +37,26 @@ dividing by the estimated coefficient of variation removes the renewal distribut
 dispersion. That is the whole difference between Lewis-Robinson and the plain Laplace test
 (Section 3.1, p. 103).
 
+## A segment that ends at an event
+
+When a segment's `tau` equals its last event time `T_N` (`checks/result.Segment.ends_at_event`),
+observation stopped at an event: failure truncation, not time truncation. C1 then reads the
+first `n - 1` event times with `tau = T_n` and `N = n - 1`, in either weighting;
+`gamma_hat` stays on all `n` gaps, which are all complete. At `m = 1` and `gamma_hat = 1`
+this is the failure-truncated Laplace statistic of Rigdon and Basu, *Statistical Methods for
+the Reliability of Repairable Systems*, Wiley (2000), Sect. 4.3 (no equation number
+located):
+
+```
+L = sqrt(12 (n-1)) * ( mean(T_1 .. T_{n-1}) - T_n/2 ) / T_n
+```
+
+`tests/test_checks_published_values.py` reproduces their Example 4.8 (pp. 110-111), `L = 2.23`
+on system 3 of Table 4.1 (p. 88). The permutation reshuffles all `n` gaps, which leaves
+`T_n` and `gamma_hat` unchanged, so its p-value stays exact under iid gaps. The bench
+measured C1 only on time-truncated segments, and the ledger row says its bench cell was
+measured without the `n - 1` form.
+
 ## Where it lives
 
 `analyzers/checks/c1_lewis_robinson.py`. One formula covers both weightings and every `m`;

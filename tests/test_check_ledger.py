@@ -283,8 +283,8 @@ def test_ledger_refuses_a_partial_artifact():
 def _varied_carve() -> pd.DataFrame:
     """A carve with ten distinct durations, above the tie cutoff of five.
 
-    On the in-spec clock `tau == T_N`, so C1 and C2 are singular there and read `not
-    computed`. Tests asserting completeness must name that exclusion rather than pin a count.
+    On the side clock its segments end at an event (`tau == T_N`), so C1, C2 and CvM read
+    their first n - 1 events there.
 
     A metric that alternates on a fixed period gives one repeated duration, and the battery
     declines a constant rank vector, so a fixture built that way would report a blank row
@@ -394,9 +394,8 @@ def test_with_no_rscript_the_r_fields_read_absent_and_every_row_is_still_built(
     ]
     built = set(zip(in_spec["check_id"], in_spec["calibration"], in_spec["variant"]))
     expected = set(battery.ROW_KEYS) | {(c3.CHECK_NAME, CALIB_R_COPULA, "")}
-    # The in-spec clock re-emits every battery row, C1's and C2's as `not computed` rows
-    # when `tau == T_N`, and C3's. Asserting the SET rather than a count is what makes a
-    # dropped row name itself instead of moving a number.
+    # The side clock emits every battery row and C3's. Asserting the SET rather than a
+    # count is what makes a dropped row name itself instead of moving a number.
     assert built == expected, (
         f"R absence changed which rows the in-spec cell carries: {built ^ expected}"
     )
@@ -729,9 +728,9 @@ def test_a_segment_of_identical_durations_is_dropped_and_the_others_answer():
     """Oracle: a carve built so that the middle of three stretches, split by read gaps,
     alternates on a fixed period: every in-spec window in it lasts three reads and every
     gap between its births five, so its durations are identical on both clocks. The ledger
-    drops that one segment, names it in every row's notes, and C5, C6 and CvM answer on the
-    other two (C1 and C2 also answer on the calendar clock, where tau clears T_N), with the
-    rows the same carve gives without the middle stretch: same segments, same permutations.
+    drops that one segment, names it in every row's notes, and every check answers on the
+    other two, with the rows the same carve gives without the middle stretch: same
+    segments, same permutations.
     """
     import quebra.analyzers.check_ledger as ledger_module
 
@@ -788,12 +787,159 @@ def test_a_segment_of_identical_durations_is_dropped_and_the_others_answer():
             )
             .all()
         ), clock
-        answering = ["c5_rank_autocorr", "c6_exchangeability", "cvm_cramer_von_mises"]
-        if clock == "calendar":
-            answering += ["c1_lewis_robinson", "c2_anderson_darling"]
+        answering = [key[0] for key in battery.ROW_KEYS]
         answered = cell[cell["check_id"].isin(answering)]
         assert len(answered) == len(answering), clock
         assert answered["p_value"].notna().all(), answered[["check_id", "notes"]]
+
+
+def test_cycle_shaped_segments_ending_at_an_event_answer_and_count_what_they_read():
+    """Oracle: the failure-truncation rule (Rigdon and Basu 2000, Sect. 4.3) on the scoring
+    half the cycles path calls (`cycles.cycle_checks` -> `score_segments`). The segments are shaped as
+    `cycles.battery_segments` builds them: tau is the cumulative sum of the complete cycles,
+    plus a censored tail only where one exists. Two of three end at an event, so C1, C2
+    and CvM answer, their rows count 43 - 2 = 41 events, look the bench up and judge the
+    floor by that, and say how many segments ended at an event; C5 and C6 count all 43."""
+    from quebra.analyzers.calibration_summary import (
+        bench_acceptance_at_n,
+        nearest_bracketing_n,
+    )
+    from quebra.analyzers.check_ledger import EVENT_TIME_CHECKS, score_segments
+    from quebra.analyzers.checks.result import Segment
+
+    rng = np.random.default_rng(11)
+    segments = []
+    for size, tail in ((14, 0.0), (17, 0.0), (12, 2.5)):
+        x = rng.weibull(1.5, size=size) * 10.0
+        tau = float(np.cumsum(x)[-1]) + tail
+        segments.append(Segment(x=x, tau=tau, n_censored_dropped=int(tail > 0)))
+    assert [s.ends_at_event for s in segments] == [True, True, False]
+    acceptance = bench_acceptance_at_n(_bench_table(), alpha=0.05)
+    grid = sorted({int(n) for n in acceptance["n_target"]})
+    rows = pd.DataFrame(
+        score_segments(
+            segments,
+            n_dropped=0,
+            n_degenerate=0,
+            n_used=46,
+            label="cycles",
+            clock=CLOCK_CALENDAR,
+            dataset_id="unit",
+            acceptance=acceptance,
+            grid=grid,
+            alpha=0.05,
+            min_events_pass=35,
+            tie_cutoff_distinct=5,
+            lag_max=5,
+            n_permutations=99,
+            seed=0,
+            min_events_per_segment=2,
+            include_tau_checks=True,
+            include_c2_asymptotic=False,
+            include_c3=False,
+            c3_n_null_sim=10,
+        )
+    ).set_index("check_id")
+    for check in EVENT_TIME_CHECKS:
+        row = rows.loc[check]
+        assert row["verdict"] != VERDICT_NOT_COMPUTED, (check, row["notes"])
+        assert row["n_events"] == 41, check
+        assert row["bench_n_target"] == nearest_bracketing_n(grid, 41), check
+        assert (
+            "2 of 3 segment(s) end at an event: first n - 1 events read"
+            in (row["notes"])
+        ), check
+    for check in ("c5_rank_autocorr", "c6_exchangeability"):
+        assert rows.loc[check, "n_events"] == 43, check
+        assert "end at an event" not in rows.loc[check, "notes"], check
+
+
+def test_an_event_ended_row_meets_the_floor_and_reads_the_bench_by_the_events_it_read():
+    """Oracle: the verdict rule at the 35-event floor, on the events read. One segment of 35
+    gaps that ends at an event reads 34, so C1, C2 and CvM do not reach the floor and a
+    non-rejection reads `inconclusive` for it. With CvM's bench cells taken out, C1's and
+    C2's notes say their cell was measured without the n - 1 form and CvM's says nothing of
+    a cell it did not read."""
+    from quebra.analyzers.calibration_summary import bench_acceptance_at_n
+    from quebra.analyzers.check_ledger import EVENT_TIME_CHECKS, score_segments
+    from quebra.analyzers.checks import cvm_cramer_von_mises as cvm
+    from quebra.analyzers.checks.result import Segment
+
+    x = np.random.default_rng(5).exponential(10.0, size=35)
+    segment = Segment(x=x, tau=float(np.cumsum(x)[-1]))
+    assert segment.ends_at_event and segment.n_events_read == 34
+    acceptance = bench_acceptance_at_n(_bench_table(), alpha=0.05)
+    grid = sorted({int(n) for n in acceptance["n_target"]})
+    rows = pd.DataFrame(
+        score_segments(
+            [segment],
+            n_dropped=0,
+            n_degenerate=0,
+            n_used=35,
+            label="3 µs",
+            clock=CLOCK_SIDE,
+            dataset_id="unit",
+            acceptance=acceptance[acceptance["check"] != cvm.CHECK_NAME],
+            grid=grid,
+            alpha=0.05,
+            min_events_pass=35,
+            tie_cutoff_distinct=5,
+            lag_max=5,
+            n_permutations=99,
+            seed=0,
+            min_events_per_segment=2,
+            include_tau_checks=True,
+            include_c2_asymptotic=False,
+            include_c3=False,
+            c3_n_null_sim=10,
+        )
+    ).set_index("check_id")
+    clause = "the bench cell was measured without the n - 1 form"
+    for check in EVENT_TIME_CHECKS:
+        row = rows.loc[check]
+        assert row["p_value"] > 0.05, f"premise: {check} does not reject"
+        assert row["n_events"] == 34, check
+        assert row["verdict"] == VERDICT_INCONCLUSIVE, (check, row["notes"])
+        assert "n_events 34 < 35" in row["notes"], (check, row["notes"])
+        assert (clause in row["notes"]) == (check != cvm.CHECK_NAME), (
+            check,
+            row["notes"],
+        )
+    assert "no bench cell" in rows.loc[cvm.CHECK_NAME, "notes"]
+
+
+def test_c1_keeps_its_answer_when_c2_cannot_give_one(monkeypatch):
+    """Oracle: the issue's rule ("the retry no longer drops C1"). With C2 forced to raise,
+    its row reads `not computed` with its own reason in every cell of both bags and clocks,
+    and C1 and every other check still answer."""
+    import quebra.analyzers.check_ledger as ledger_module
+    import quebra.analyzers.checks.c2_anderson_darling as c2
+
+    def refuse(*_args, **_kwargs):
+        raise ValueError("forced C2 refusal")
+
+    monkeypatch.setattr(c2, "statistic", refuse)
+    rows = ledger_module.run(
+        ledger_module.make_inputs_from_windows(
+            _varied_result(),
+            _bench_table(),
+            thresholds=[("3 µs", 3.0, True)],
+            alpha=0.05,
+            min_events_pass=35,
+            tie_cutoff_distinct=5,
+            lag_max=5,
+            n_permutations=19,
+            seed=7,
+        )
+    ).rows
+    assert len(rows.groupby(["side", "clock"])) == 4, "premise: both bags, both clocks"
+    for (side, clock), cell in rows.groupby(["side", "clock"]):
+        by_check = cell.set_index("check_id")
+        c2_row = by_check.loc["c2_anderson_darling"]
+        assert c2_row["verdict"] == VERDICT_NOT_COMPUTED, (side, clock)
+        assert "forced C2 refusal" in c2_row["notes"], (side, clock)
+        others = by_check.drop(index="c2_anderson_darling")
+        assert others["p_value"].notna().all(), (side, clock, others["notes"].to_dict())
 
 
 def test_the_p_value_ladder_draws_cvm_from_its_permutation_row():

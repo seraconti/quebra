@@ -53,9 +53,12 @@ statistics are sums weighted by `tau_j` with a simulated null (Section 8.2, Tabl
 `m > 1` route here is an UNWEIGHTED sum with a permutation null. The paper does not propose
 the unweighted sum; it suggests a permutation null only in general terms (Section 9, p. 113).
 
-It also survives a case C2 cannot. On the side clock of a carved record `tau == T_N`, which
-makes eq (7) singular and silences C1 and C2; CvM's integrand carries no `1/(s(1-s))` weight,
-so its statistic stays finite there.
+On a segment that ends at an event (`tau == T_N`, common on the side clock of a carved
+record) it reads the first `n - 1` event times with `tau = T_n`, the conditioning C1 and C2
+take (Rigdon and Basu 2000, Sect. 4.3); reading all `n` would put the last event at
+`u = 1`. No bench cell measured this form: CvM's side-clock cells include the carved arms'
+(B and C), which read all `n` events where a segment ended at an event, and the rest are time
+truncated. The ledger row says its bench cell was measured without the `n - 1` form.
 
 ## Its rows
 

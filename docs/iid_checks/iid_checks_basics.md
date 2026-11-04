@@ -71,14 +71,21 @@ is the open question it already was. The two bags also draw from one permutation
 their p-values share draws wherever their segment sizes match and are not independent.
 
 Both are reported. Reporting one alone would hide that the answer depends on the choice,
-and on the real record they DO disagree: at 4 µs the calendar clock passes every check
-while the in-spec bag's side clock cannot compute C1 or C2 at all (measured on the
-in-spec bag, on the 1 to 10 µs ladder).
+and the two can disagree on one record.
 
-That last point is structural, not a bug. On the side clock, time stops accruing the
-moment the record ends on the other side, so `tau == T_N` and eq (7) (Kvaloy and Lindqvist 2020, p. 104) is `+inf`: its
-summand `ln((tau - T_{N-1})/(tau - T_N))` has a zero denominator. Measured on synthetic iid reads: ~73% of replicates. Those rows read `not computed`
-with the reason attached.
+On the side clock, time stops accruing the moment the record ends on the other side, so
+the segment ends at an event: `tau == T_N` (measured on synthetic iid reads: ~73% of
+replicates). Eq (7) (Kvaloy and Lindqvist 2020, p. 104) is `+inf` on all `N` events there.
+C1, C2 and CvM read the first `n - 1` event times with `tau = T_n`, the failure-truncated
+case (Rigdon and Basu 2000, Sect. 4.3): given `T_n`, under a constant rate they are uniform
+order statistics. The permutation reshuffles all `n` gaps, which leaves `T_n` and
+`gamma_hat` unchanged, so its p-value stays exact under iid gaps, provided the stop depends
+on the gaps only through their number and sum, as a read gap or the record's end does. The
+same holds on the calendar clock when the final window is one read long, and for calibration
+cycles that end with a complete cycle. Their rows count the `n - 1` events they read and say
+that their bench cell was measured without that form: C1's and C2's cells are all time
+truncated, and CvM's side-clock cells include the carved arms' (B and C), which read all `n`
+events where a segment ended at an event.
 
 ## Segments, because a read gap is not an interval
 

@@ -284,11 +284,11 @@ def segments_from_windows(
     `observation_end_s` is when watching STOPPED, and it applies to the final segment
     only (interior segments stop at the read gap that ends them, which is already in the
     table). It matters more than it looks: without it the final segment's `tau` is taken
-    from the last window's death, which is an EVENT-DETERMINED boundary, and eq (7)
-    requires a truncation time chosen independently of the events. Left at None, a record
-    whose last window is a single read gets `tau == T_N` and C2 correctly refuses it -
-    measured at 25% of replicates on an iid read series, so this is the common case, not
-    a corner one.
+    from the last window's death, an EVENT-DETERMINED boundary. Left at None, a record
+    whose last window is a single read gets `tau == T_N` (measured at 25% of replicates on
+    an iid read series, so the common case, not a corner one), and C1, C2 and CvM read
+    that segment as failure truncated, through its first n - 1 events
+    (`Segment.ends_at_event`).
 
     `gap_spans_s` is `WindowsResult.diagnostics["gap_spans_s"]` and does two jobs. It
     splits segments the birth taxonomy cannot see (see `_segment_starts`), and it supplies

@@ -136,8 +136,8 @@ def missing_rows(
 ) -> tuple[RowKey, ...]:
     """Rows the run-set asked for that produced nothing at all.
 
-    A row can vanish legitimately at runtime: C1's and C2's permutation rows are dropped
-    when `tau` is singular. The caller renders these as `not computed`
+    A row can vanish legitimately at runtime: a cell with no segment left to score writes one
+    `(all)` row in place of the checks' rows. The caller renders these as `not computed`
     with the reason, because a row that was asked for and answered nothing must not look the
     same as a row that was never asked for.
     """

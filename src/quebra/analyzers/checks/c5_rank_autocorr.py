@@ -107,7 +107,7 @@ def run(
     for segment in segments:
         # No strict-tau demand: C5 never touches tau. It is a test of the ORDER of the
         # observed durations, so a segment whose last event lands on the truncation time
-        # is perfectly testable here even though C2 declines it.
+        # is read here like any other, every event included.
         validate_segment(segment, require_strict_tau=False)
 
     sizes = segment_sizes(segments)

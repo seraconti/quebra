@@ -107,25 +107,19 @@ def test_statistic_batch_reproduces_the_statistic_under_the_identity(sizes):
     )
 
 
-def test_it_survives_a_record_that_c2_declines():
-    """CvM is well posed on a record that C2 declines.
-
-    This is not the source paper's reason for preferring CvM at m > 1. Kvaloy and Lindqvist
-    (Technometrics 2020, Section 4.2, p. 106) give level properties: the normal
-    approximation works "less well for the Anderson-Darling test due to the very skew
-    distribution".
-
-    The AD integrand carries a `1/(s(1-s))` weight, so the `i = N-1` term of eq (7),
-    `ln((tau - T_{N-1})/(tau - T_N))`, is `+inf` when the last event lands on the
-    truncation time. CvM's integrand has no such weight, so the same
-    record is perfectly well posed for it. On the in-spec clock of a carved record that
-    case is the common one, not a corner.
-    """
-    g = np.random.default_rng(5).exponential(size=20)
+@pytest.mark.parametrize("n, seed", [(3, 1), (20, 5), (36, 7)])
+def test_a_segment_ending_at_its_last_event_reads_the_first_n_minus_1(n, seed):
+    """Oracle: scipy's W^2 of the n - 1 event times read on (0, T_n) (Rigdon and Basu 2000,
+    Sect. 4.3, the failure-truncated case), over the squared sample coefficient of
+    variation of all n gaps. Reading all n would put the last event at u = 1. C2 takes the
+    same conditioning, so it is finite on the same segment."""
+    g = np.random.default_rng(seed).exponential(size=n)
     tight = Segment(x=g, tau=float(np.cumsum(g)[-1]))
-    with pytest.raises(ValueError):
-        c2.statistic([tight])
-    assert np.isfinite(cvm.statistic([tight]))
+    assert tight.ends_at_event
+    sample_cv = float(np.std(g, ddof=1) / np.mean(g))
+    theirs = float(cramervonmises(np.cumsum(g[:-1]) / tight.tau, "uniform").statistic)
+    assert cvm.statistic([tight]) == pytest.approx(theirs / sample_cv**2, rel=1e-10)
+    assert np.isfinite(c2.statistic([tight]))
 
 
 def test_it_detects_a_strong_trend():

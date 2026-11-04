@@ -16,6 +16,11 @@ is in preprint arXiv:1802.08339v1 only (its Section 6.2). Three records, all in
 - the small bowel motility record, m = 19: arXiv v1 Section 6.2, pp. 15-17, with the data
   from Aalen and Husebye (1991) Table I.
 
+One more record, from another source, pins the failure-truncated case (a segment that ends
+at its last event, `Segment.ends_at_event`): Rigdon and Basu (2000), Statistical Methods
+for the Reliability of Repairable Systems, Table 4.1 (p. 88) system 3 and Example 4.8
+(pp. 110-111), in `tests/fixtures/rigdon_basu.py`.
+
 **What is a direct pin and what is a composition.** `gamma_hat`, `gamma_tilde` and `LR`
 are returned by shipped functions. `mu_hat`, `sigma_tilde` and the Laplace statistic are
 not exposed by the API and are reconstructed here from shipped outputs:
@@ -54,6 +59,8 @@ from quebra.analyzers.checks._multiprocess import (
     gamma_hat,
 )
 from quebra.analyzers.checks.result import Segment, validate_segment
+from tests.fixtures.rigdon_basu import FAILURE_TIMES as RB_TIMES
+from tests.fixtures.rigdon_basu import PUBLISHED as RB_PUBLISHED
 from tests.fixtures.load_haul_dump import (
     HYDRAULIC_PUBLISHED,
     PUBLISHED,
@@ -99,6 +106,32 @@ def test_gamma_hat_sample_form_reproduces_table_2():
     """Oracle: Table 2 row 1 (p. 112), gamma_hat = 0.888, sample divisor. Direct pin."""
     assert gamma_hat(X, TAU_H, GAMMA_COMPLETE_SAMPLE) == pytest.approx(
         PUBLISHED["gamma_hat"], abs=0.0005
+    )
+
+
+def test_c1_on_a_failure_truncated_record_reproduces_rigdon_and_basus_laplace():
+    """Oracle: Rigdon and Basu (2000), Example 4.8 (pp. 110-111) on Table 4.1 (p. 88)
+    system 3, failure truncated at its twelfth failure: L = 2.23, P = 0.0257.
+
+    A composition, like the Laplace value above: L = LR * gamma_hat, with gamma_hat the
+    sample coefficient of variation of the twelve gaps computed here. C1 reads the first 11
+    event times against tau = t_12; the book's hand form is pinned to 1e-12 and its printed
+    two decimals exactly. Its P is the two-sided normal tail of the PRINTED L (the unrounded
+    L gives 0.0255), checked as a transcription of the example."""
+    assert RB_TIMES[:-1].sum() == RB_PUBLISHED["sum_first_n_minus_1"]
+    assert RB_TIMES[-1] == RB_PUBLISHED["t_n"] and len(RB_TIMES) == RB_PUBLISHED["n"]
+    gaps = np.diff(np.concatenate([[0.0], RB_TIMES]))
+    segment = Segment(x=gaps, tau=float(RB_TIMES[-1]))
+    assert segment.ends_at_event, "premise: the record stops at its last failure"
+
+    sample_cv = float(np.std(gaps, ddof=1) / np.mean(gaps))
+    laplace = c1.statistic([segment], gamma_estimator=GAMMA_COMPLETE_SAMPLE) * sample_cv
+    hand = (1734.0 / 11.0 - 227.0 / 2.0) / (227.0 / np.sqrt(12.0 * 11.0))
+    assert laplace == pytest.approx(hand, rel=1e-12)
+    assert round(laplace, 2) == RB_PUBLISHED["laplace"]
+    assert (
+        round(2.0 * stats.norm.sf(RB_PUBLISHED["laplace"]), 4)
+        == (RB_PUBLISHED["p_value"])
     )
 
 

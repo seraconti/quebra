@@ -162,8 +162,8 @@ def measure_asymptotic_size(
     The null simulated here has to be the one the theory assumes: the truncation time is
     chosen without reference to the events, which `checks/result` states as a requirement.
     Nothing downstream can check it for you: `checks/result.validate_segment` refuses a
-    tau below `T_N` and, under `require_strict_tau` (C2), one within `TAU_MARGIN` of it,
-    and an event-derived `T_N(1 + 1/n)` passes both.
+    tau below `T_N` and, under `require_strict_tau`, one within `TAU_MARGIN` of it, and an
+    event-derived `T_N(1 + 1/n)` passes both.
 
     Deriving tau from the draw as `g.sum() + g.mean()` gives exactly that, so `T_N/tau` is
     pinned at `n/(n+1)` where the null has it Beta(n, 1), and the count is fixed where it
@@ -297,7 +297,11 @@ def load_haul_dump_record(
     cannot outlive it. `tau_h` is compared with `last_event_time` under `TAU_MARGIN`, as every
     guard on a segment is, so summation order cannot decide whether a gap is censored.
     """
-    from quebra.analyzers.checks.result import TAU_MARGIN, last_event_time
+    from quebra.analyzers.checks.result import (
+        TAU_MARGIN,
+        at_last_event,
+        last_event_time,
+    )
 
     x = gaps_df["gap_h"].to_numpy(dtype=float)
     tau_h = _published_lookup(published_df)["tau_h"]
@@ -306,7 +310,7 @@ def load_haul_dump_record(
         raise ValueError(
             f"the complete gaps end at {t_n:.10g} h, past the censoring time {tau_h:.10g} h"
         )
-    return len(x), tau_h, int(tau_h > t_n * (1.0 + TAU_MARGIN))
+    return len(x), tau_h, int(not at_last_event(tau_h, t_n))
 
 
 def build_published_comparisons(

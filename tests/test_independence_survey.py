@@ -592,6 +592,8 @@ def _trend_ledgers():
     a = _trend_cell("A", CLOCK_SIDE, False, False, True)
     a += [asymptotic_answer] + _trend_cell("A", "calendar", True, True, True)
     b = [no_windows] + _trend_cell("B", "calendar", False, False, False, value="7")
+    # Written twice, as ledgers before the n - 1 form wrote C1's and C2's reason.
+    b[1]["notes"] = f"{b[1]['notes']}; {b[1]['notes']}"
     c = _trend_cell("C", CLOCK_SIDE, False, True, True)
     return [
         CheckLedger(rows=pd.DataFrame(rows), dataset_id=record)
@@ -601,10 +603,10 @@ def _trend_ledgers():
 
 def test_the_trend_group_counts_equal_a_hand_table():
     """Oracle: the hand table of `_trend_ledgers`, all on the in-spec bag. A side clock: C1
-    and C2 silent, CvM answers, and an asymptotic C1 answer that must not count. B side
-    clock has no windows; B calendar has nothing at all. C side clock: C1 silent, C2
-    answers. Numbers in a message
-    read `#`, the digits of `C1/C2` and `T_N` do not."""
+    and C2 silent, CvM answers, and an asymptotic C1 answer that must not count. A calendar:
+    all three answer. B side clock has no windows; B calendar has nothing at all, its note
+    written twice. C side clock: C1 silent, C2 answers. Numbers in a message read `#`, the
+    digits of `C1/C2` and `T_N` do not, and a note written twice reads once."""
     counts = trend_group_counts(_trend_ledgers())
     undefined = "C1/C2 undefined here: tau # equals T_N #"
     in_spec = SIDE_IN_SPEC
@@ -626,6 +628,9 @@ def test_the_trend_group_counts_equal_a_hand_table():
     assert per_clock.loc[
         CLOCK_SIDE, ["n_cells", "n_trend_answered", "n_cvm_alone"]
     ].tolist() == [3, 2, 1]
+    # Both C1 and C2 answer only in A calendar; at least one also in C side.
+    assert per_clock.loc["calendar", ["n_c1_and_c2", "n_c1_or_c2"]].tolist() == [1, 1]
+    assert per_clock.loc[CLOCK_SIDE, ["n_c1_and_c2", "n_c1_or_c2"]].tolist() == [0, 1]
     assert per_clock.loc["calendar", "share_of_all"] == 0.0
     assert per_clock.loc[CLOCK_SIDE, "share_of_answered"] == 0.5
     assert per_clock.loc[CLOCK_SIDE, "share_of_all"] == pytest.approx(1.0 / 3.0)
@@ -648,9 +653,12 @@ def test_the_trend_count_refuses_a_cell_where_c1_and_c2_were_never_asked():
 
 
 def test_one_reason_is_one_message_however_the_ledger_prints_its_numbers():
-    """Oracle: the ledger itself. One carve at five time scales fails C1 and C2 on the
-    in-spec bag's side clock for one reason, `tau == T_N`; the ledger prints its numbers at different
-    widths, cuts the note and writes it twice, and the count still reads one message."""
+    """Oracle: the ledger itself. One carve at five time scales, scored with five event
+    floors none of its segments reaches, leaves C1 and C2 without an answer on the in-spec
+    bag's side clock for one reason; the ledger prints that reason with different numbers,
+    and the count still reads one message."""
+    import dataclasses
+
     from quebra.analyzers import check_ledger, windows
 
     bench = pd.read_csv(
@@ -668,6 +676,7 @@ def test_one_reason_is_one_message_however_the_ledger_prints_its_numbers():
     series = np.asarray(values, dtype=float)
     ladder = [("3 µs", 3.0, True)]
     ledgers = []
+    floors = (500, 750, 1000, 2500, 40000)
     for i, scale in enumerate((1.0, 7.3, 61.7, 1234.5, 98765.4)):
         carved = windows.run(
             windows.WindowsInputs(
@@ -677,31 +686,28 @@ def test_one_reason_is_one_message_however_the_ledger_prints_its_numbers():
                 dataset_id=f"s{i}",
             )
         )
+        inputs = check_ledger.make_inputs_from_windows(
+            carved,
+            bench,
+            thresholds=ladder,
+            alpha=0.05,
+            min_events_pass=35,
+            tie_cutoff_distinct=5,
+            lag_max=5,
+            n_permutations=19,
+            seed=7,
+        )
         ledgers.append(
             check_ledger.run(
-                check_ledger.make_inputs_from_windows(
-                    carved,
-                    bench,
-                    thresholds=ladder,
-                    alpha=0.05,
-                    min_events_pass=35,
-                    tie_cutoff_distinct=5,
-                    lag_max=5,
-                    n_permutations=19,
-                    seed=7,
-                )
+                dataclasses.replace(inputs, min_events_per_segment=floors[i])
             )
         )
     raw = set()
     for ledger in ledgers:
         rows = ledger.rows
-        c1 = rows[
-            (rows["side"] == SIDE_IN_SPEC)
-            & (rows["clock"] == CLOCK_SIDE)
-            & (rows["check_id"] == "c1_lewis_robinson")
-            & (rows["calibration"] == "permutation")
-        ]
-        raw.add(str(c1["notes"].iloc[0]))
+        cell = rows[(rows["side"] == SIDE_IN_SPEC) & (rows["clock"] == CLOCK_SIDE)]
+        assert list(cell["check_id"]) == ["(all)"], "premise: no segment left to score"
+        raw.add(str(cell["notes"].iloc[0]))
     assert len(raw) == len(ledgers), "premise: the raw notes differ in their numbers"
     counts = trend_group_counts(ledgers)
     in_spec = counts.no_answer[
@@ -709,11 +715,44 @@ def test_one_reason_is_one_message_however_the_ledger_prints_its_numbers():
         & (counts.no_answer["clock"] == CLOCK_SIDE)
     ]
     assert in_spec["n_cells"].tolist() == [len(ledgers)], in_spec.to_dict("records")
-    assert (
-        in_spec["message"]
-        .iloc[0]
-        .startswith("C1/C2 undefined here: tau (#) does not clear T_N (#)")
+    assert in_spec["message"].iloc[0] == "no segment reached # events (# dropped)"
+
+
+def test_a_note_cut_at_two_widths_reads_as_its_first_clause():
+    """Oracle: a hand table of two `(all)` rows of a battery failure, each cut at a fixed
+    width the way the ledger cuts `battery failed: ...`. The numbers have different widths,
+    so the cut lands at different words of the second clause; the count reads one message,
+    the first clause with its numbers as `#`."""
+    from quebra.analyzers.check_ledger import CheckLedger
+
+    reason = (
+        "battery failed: {n} of {b} Anderson-Darling statistics are not finite. This is a "
+        "singular eq (7) and must be refused upstream, not turned into a p-value."
     )
+    ledgers = []
+    for record, n, b, width in (("X", 3, 100, 120), ("Y", 1234, 99999, 100)):
+        row = {
+            "dataset_id": record,
+            "threshold_label": "3 µs",
+            "side": SIDE_IN_SPEC,
+            "clock": CLOCK_SIDE,
+            "check_id": "(all)",
+            "calibration": "",
+            "variant": "",
+            "verdict": VERDICT_NOT_COMPUTED,
+            "notes": reason.format(n=n, b=b)[:width],
+        }
+        ledgers.append(CheckLedger(rows=pd.DataFrame([row]), dataset_id=record))
+    tails = {ledger.rows["notes"].iloc[0].split(". ", 1)[1] for ledger in ledgers}
+    assert len(tails) == 2, "premise: the cut lands at different words"
+    assert trend_group_counts(ledgers).no_answer.to_dict("records") == [
+        {
+            "side": SIDE_IN_SPEC,
+            "clock": CLOCK_SIDE,
+            "message": "battery failed: # of # Anderson-Darling statistics are not finite",
+            "n_cells": 2,
+        }
+    ]
 
 
 def test_no_survey_figure_names_c3():

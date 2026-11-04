@@ -109,8 +109,8 @@ class Cell:
     rho: float | None = None
     b: float | None = None
     delta: float | None = None
-    # False on the in-spec clock of a carved arm, where tau is not well posed - see
-    # `analyzers.checks.battery.run_battery`.
+    # False on the in-spec clock of a carved arm, as the committed tables were measured;
+    # see `_carved_clocks`.
     include_tau_checks: bool = True
     n_replicates: int = N_REPLICATES_SIZE
 
@@ -149,11 +149,11 @@ def _carved_clocks(arm: str, kind: str, n: int, **kwargs) -> list[Cell]:
     """One cell per clock for a carved arm.
 
     The calendar clock gets the full battery; the in-spec clock gets the rank checks and CvM
-    by permutation, the rows that stay defined when `tau == T_N`.
-    That asymmetry is not a preference - on the in-spec clock of a carved record, time
-    stops accumulating when the record ends out of spec, so `tau == T_N` on ~73% of
-    replicates and C2 is genuinely undefined there. Reporting C1/C2 from the surviving
-    replicates would report a size conditioned on how the record happened to end.
+    by permutation. On the in-spec clock of a carved record, time stops accumulating when
+    the record ends out of spec, so `tau == T_N` on ~73% of replicates. The committed tables
+    were measured when that left C2 undefined and CvM read all n events there. C1, C2 and
+    CvM now read such a segment's first n - 1 events (`checks.result.events_read`), so the
+    tau checks are defined on every replicate, but no committed cell measured that form.
     """
     reps = N_REPLICATES_SIZE if kind == KIND_SIZE else N_REPLICATES_POWER
     return [

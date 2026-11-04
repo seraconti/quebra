@@ -36,9 +36,9 @@ them with `include_asymptotic=True`. They take no permutation set and draw no ra
 so leaving them out changes no other row.
 
 By default nothing is caught. A degenerate record - every duration tied, a zero-length
-window, a segment whose last event lands exactly on its truncation time - raises out of
-here, and the BENCH decides what to do with it, counting the failure into a `n_failed`
-column. Swallowing it at this level would turn a degenerate cell into a reported size.
+window - raises out of here, and the BENCH decides what to do with it, counting the
+failure into a `n_failed` column. Swallowing it at this level would turn a degenerate cell
+into a reported size.
 
 The ledger asks for `undefined_as_rows=True` instead: a check that raises on these segments
 returns a result with no p-value and the reason in `extra[UNDEFINED]`, and every other check
@@ -103,13 +103,9 @@ BENCH_ROW_KEYS = (
     ("c2_anderson_darling", CALIB_PERMUTATION, ""),
     ("c5_rank_autocorr", CALIB_PERMUTATION, c5.VARIANT_STUDENTIZED),
     ("c6_exchangeability", CALIB_PERMUTATION, ""),
-    # CvM is another functional of the same Brownian bridge as
-    # C1 and C2, and it is here for a reason the other two cannot cover: eq (7) carries a
-    # `1/(s(1-s))` weight, so C2 is singular when the last event lands on the truncation
-    # time, and on the IN-SPEC clock of a carved record that is the common case - measured,
-    # 311 of 340 survey cells have no C1/C2 answer for exactly that reason. CvM's integrand
-    # has no such weight and is finite there. It is also the source paper's own choice
-    # for m > 1, which is the gapped case (Kvaloy & Lindqvist 2020, Section 6, p. 106).
+    # CvM is another functional of the same Brownian bridge as C1 and C2, and the source
+    # paper's own choice for m > 1, which is the gapped case (Kvaloy & Lindqvist 2020,
+    # Section 6, p. 106).
     ("cvm_cramer_von_mises", CALIB_PERMUTATION, ""),
     C5_RAW_KEY,
 )
@@ -225,14 +221,10 @@ def run_battery(
 
     `include_tau_checks=False` drops C1's and C2's permutation rows, and the three
     asymptotic rows when they were asked for, leaving C5, C6 and CvM by permutation, plus
-    C5's unstudentized row with `include_c5_raw`. It is for records where
-    `tau` is not well posed - specifically the IN-SPEC clock of a carved series, where
-    in-spec time stops accumulating the moment the record ends out of spec, so `tau == T_N`
-    and eq (7) is singular. Measured on an iid read series that is 73% of replicates, and
-    the event triggering it depends on the data, so running C1/C2 on the surviving 27% would
-    report a size conditioned on how the record happened to end. C5 and C6 never touch `tau`
-    and stay valid there, which is why they are kept rather than the whole clock being
-    dropped.
+    C5's unstudentized row with `include_c5_raw`. A run-set without C1 and C2 sets it
+    (`check_outcome.battery_flags`), and the bench sets it on the side clock of its carved
+    arms. A segment that ends at an event (`tau == T_N`) does not need it: C1, C2 and CvM
+    read that segment's first n - 1 events (`result.events_read`).
     """
     if not segments:
         raise ValueError("the battery needs at least one segment")
@@ -322,11 +314,8 @@ def run_battery(
                 ),
             )
         # CvM's ASYMPTOTIC row runs inside this `include_tau_checks` branch with C1's and
-        # C2's, and like C2's only for a single segment. Its STATISTIC is finite when
-        # `tau == T_N` - there is no `1/(s(1-s))` weight to blow up - but its limiting null
-        # still assumes a truncation time chosen INDEPENDENTLY of the events, and an
-        # event-determined `tau` breaks the tied-down bridge for CvM exactly as it does for
-        # the other two. Only the permutation row below is entitled to that case.
+        # C2's, and like C2's only for a single segment: the three asymptotic rows go
+        # together, so a bench cell that ran without the tau checks has none of them.
         if include_asymptotic and len(segments) == 1:
             add(
                 ASYMPTOTIC_KEYS[2],
@@ -358,11 +347,8 @@ def run_battery(
         (c6.CHECK_NAME, CALIB_PERMUTATION, ""),
         lambda ready: c6.run(segments, clock=clock, autocorr=ready),
     )
-    # CvM by PERMUTATION runs always, including when the tau checks are off. That is the
-    # point of promoting it: on the in-spec clock of a carved record `tau == T_N` silences
-    # C1 and C2 - measured, 311 of 340 survey cells - and the permutation calibration
-    # conditions on the observed data, so it is entitled to that case while their
-    # asymptotic routes are not.
+    # CvM by PERMUTATION runs always, including when the tau checks are off, so a run
+    # without C1 and C2 still carries one row of the trend group.
     add(
         (cvm.CHECK_NAME, CALIB_PERMUTATION, ""),
         lambda: cvm.run(

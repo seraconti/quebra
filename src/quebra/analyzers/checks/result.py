@@ -13,10 +13,13 @@ Two structural facts drive the design:
   has an incomplete gap at every gap, so it is m independent time-censored processes and
   needs the multi-process extension (eqs 13-16). A gap-free record is the m = 1 case of
   the same code, so there is no separate single-process path to keep in sync.
-- **Time censoring is not event censoring.** `tau` is a TRUNCATION time, chosen (or
-  imposed by a gap) without reference to the events. The trailing censored window's
-  duration is not an event; it is the residual `tau - T_N`. Feeding it in as an event
-  would treat "we stopped watching" as "it failed".
+- **Time censoring is not event censoring.** `tau` is where observation stopped. When it
+  is a TRUNCATION time, chosen (or imposed by a gap) without reference to the events, the
+  trailing censored window's duration is not an event; it is the residual `tau - T_N`.
+  Feeding it in as an event would treat "we stopped watching" as "it failed". When
+  observation stopped at an event, `tau == T_N` and the segment is failure truncated
+  (`Segment.ends_at_event`): C1, C2 and CvM read its first `n - 1` event times
+  (`events_read`).
 
 All times are SI seconds. Nothing here prints - the bench calls these hundreds of
 thousands of times.
@@ -49,7 +52,8 @@ CALIB_ASYMPTOTIC = "asymptotic"
 CALIB_PERMUTATION = "permutation"
 CALIB_R_COPULA = "r_copula"
 
-# How far `tau` must clear `T_N` in relative terms before eq (7) is considered well posed.
+# How far `tau` must clear `T_N` in relative terms before eq (7) on all `N` events is
+# considered well posed. Within it, a segment ends at its last event (`at_last_event`).
 #
 # This exists because `np.sum(x)` and `np.cumsum(x)[-1]` are DIFFERENT numbers: numpy's sum
 # is pairwise, cumsum is sequential, and they disagree by ulps. `validate_segment` would
@@ -82,14 +86,35 @@ def last_event_time(x: np.ndarray) -> float:
     return float(np.cumsum(np.asarray(x, dtype=float))[-1])
 
 
+def at_last_event(tau: float, t_n: float) -> bool:
+    """True when `tau` is the last event time `t_n` within `TAU_MARGIN`: observation stopped
+    at an event (failure truncation), not at a time chosen apart from the events.
+
+    The one test of it. `validate_segment`, `Segment.ends_at_event` and the published-record
+    tier (`instrument_validation`) all read this inequality, so they cannot disagree.
+    """
+    return bool(tau <= t_n * (1.0 + TAU_MARGIN))
+
+
+def events_read(x: np.ndarray, at_event: bool) -> np.ndarray:
+    """The gaps whose running sums are the event times C1, C2 and CvM read.
+
+    Every gap of a time-truncated segment; every gap but the last of one that ends at an
+    event, whose end `T_n` is then the truncation time. Works on one segment's gaps or on a
+    `(B, n)` block of permuted rows. Only the event times shrink: validation, `gamma_hat`
+    and the permutation blocks keep all `n` gaps, which are all complete either way.
+    """
+    return x[..., :-1] if at_event else x
+
+
 @dataclass(frozen=True)
 class Segment:
-    """One time-censored renewal process: complete gaps `x` observed over `[0, tau]`.
+    """One renewal process: complete gaps `x` observed over `[0, tau]`.
 
     `x` are the COMPLETE inter-event gaps in observation order, so `T = cumsum(x)` are
     the event times and `tau - T[-1]` is the incomplete trailing gap. `tau >= sum(x)`
-    always; `tau > sum(x)` strictly whenever the segment ended by truncation rather than
-    by an event landing exactly on the boundary.
+    always; `tau > sum(x)` strictly when the segment is time truncated, and `tau == T_N`
+    within `TAU_MARGIN` when observation stopped at its last event (`ends_at_event`).
     """
 
     x: np.ndarray
@@ -111,6 +136,24 @@ class Segment:
     def residual(self) -> float:
         """The incomplete trailing gap, `tau - T_N`. Uses `last_event_time`, not `sum`."""
         return float(self.tau - last_event_time(self.x))
+
+    @property
+    def ends_at_event(self) -> bool:
+        """The segment stopped at its last event: `tau == T_N` within `TAU_MARGIN`.
+
+        C1, C2 and CvM then read its first `n - 1` event times on `(0, T_n)`, with
+        `tau = T_n` (`events_read`): given `T_n`, under a constant rate those are uniform
+        order statistics (Rigdon and Basu 2000, Statistical Methods for the Reliability of
+        Repairable Systems, Sect. 4.3, the failure-truncated case). A segment ends this way
+        when the record leaves the bag's side, when a cycles segment ends with a complete
+        cycle, and when the final window is one read long (zero duration), censored or not.
+        """
+        return at_last_event(self.tau, last_event_time(self.x))
+
+    @property
+    def n_events_read(self) -> int:
+        """The events C1, C2 and CvM read: `n - 1` when the segment ends at an event."""
+        return self.n_events - 1 if self.ends_at_event else self.n_events
 
 
 @dataclass(frozen=True)
@@ -141,10 +184,12 @@ def validate_segment(
     permutation can put any gap first; a `tau` below `T_N` makes
     `ln(tau - T_i)` complex; a negative gap flows onto a survival curve as a lifetime.
 
-    `require_strict_tau` is C2's extra demand. Eq (7) contains `ln((tau - T_{N-1})/(tau - T_N))` (with `T_0 = 0`),
-    which is `+inf` at `tau == T_N` - verified numerically, not assumed. That case is
-    failure (type II) censoring, not the time censoring the equation is derived for, so
-    C2 declines it while C1 (eq 4, no such term) accepts it.
+    `require_strict_tau` refuses a segment that ends at an event (`at_last_event`). Eq (7)
+    on all `N` events contains `ln((tau - T_{N-1})/(tau - T_N))` (with `T_0 = 0`), which is
+    `+inf` at `tau == T_N` - verified numerically, not assumed. That case is failure (type
+    II) truncation, not the time censoring the equation is derived for. No check asks for
+    it: C1, C2 and CvM read such a segment's first `N - 1` events (`events_read`), where
+    the term is finite.
     """
     x = np.asarray(segment.x, dtype=float)
     if x.ndim != 1:
@@ -183,14 +228,14 @@ def validate_segment(
             f"more than the {TAU_MARGIN:.0e} relative margin. tau is a truncation time "
             "and must cover every event it censors."
         )
-    if require_strict_tau and segment.tau <= total * (1.0 + TAU_MARGIN):
+    if require_strict_tau and at_last_event(segment.tau, total):
         raise ValueError(
             f"tau ({segment.tau:.6g}) does not clear T_N ({total:.6g}) by the required "
             f"relative margin {TAU_MARGIN:.1e}, so the trailing gap is empty or within "
             "float noise of it. Eq (7) contains ln((tau - T_{N-1})/(tau - T_N)), which is +inf at "
-            "equality: this is failure censoring, not the time censoring the statistic "
-            "is derived for. Use the calendar clock, or extend tau to the real end of "
-            "observation."
+            "equality: this is failure truncation, not the time censoring the statistic "
+            "is derived for. Read the first N - 1 events with tau = T_N instead "
+            "(`events_read`)."
         )
 
 
