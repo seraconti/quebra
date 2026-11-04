@@ -23,7 +23,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Patch
 
-from quebra.analyzers.check_ledger import CheckLedger, VERDICTS
+from quebra.analyzers.check_ledger import (
+    CALIB_MIN_P,
+    GROUP_CALIBRATION_NOTE,
+    CheckLedger,
+    VERDICTS,
+)
 from quebra.analyzers.checks.result import CLOCK_CALENDAR, CLOCK_SIDE
 from quebra.panels._check_ledger_render import (
     CHECK_SHORT,
@@ -83,7 +88,9 @@ class CheckLedgerPanel(BasePlot):
                 f"Check ledger - {result.dataset_id}, {BAG_LABELS[sides[0]]}, "
                 f"alpha {result.alpha:g}, B = {result.n_permutations}, seed {result.seed}"
             )
-            fig.tight_layout(rect=(0, 0, 1, 0.97))
+            if set(result.rows["calibration"]) & {CALIB_MIN_P}:
+                fig.text(0.01, 0.005, GROUP_CALIBRATION_NOTE, ha="left", va="bottom")
+            fig.tight_layout(rect=(0, 0.02, 1, 0.97))
             return fig
 
     def build_plotly(self, result: CheckLedger):
@@ -111,7 +118,10 @@ class CheckLedgerPanel(BasePlot):
             for column_index, cell in enumerate(row):
                 if cell is None:
                     continue
-                verdict, p_value, bench_ok = cell
+                verdict, p_value, bench_ok, calibration = cell
+                # A group row reads no bench cell by construction (`check_ledger.GROUPS`),
+                # so its cell is never hatched as miscalibrated.
+                unbenched = bench_ok is not True and calibration != CALIB_MIN_P
                 ax.add_patch(
                     plt.Rectangle(
                         (column_index, row_index),
@@ -129,7 +139,7 @@ class CheckLedgerPanel(BasePlot):
                         # bench has no cell for this check at all, which is a weaker
                         # footing than `False`, not a stronger one. Hatching only `False`
                         # drew an unbenched cell identically to a calibrated one.
-                        hatch=None if bench_ok is True else MISCALIBRATED_HATCH,
+                        hatch=MISCALIBRATED_HATCH if unbenched else None,
                     )
                 )
                 ax.text(
@@ -142,6 +152,18 @@ class CheckLedgerPanel(BasePlot):
                 )
         ax.set_title(f"{clock} clock", loc="left")
         if clock == CLOCK_SIDE:
+            # The group entry only where group rows are drawn, as the figure's note.
+            group_entry = (
+                [
+                    Patch(
+                        facecolor="white",
+                        edgecolor="black",
+                        label="trend group, dependence group: no bench cell (permutation)",
+                    )
+                ]
+                if CALIB_MIN_P in set(result.rows["calibration"])
+                else []
+            )
             ax.legend(
                 handles=[
                     Patch(facecolor=verdict_color(v), edgecolor="white", label=v)
@@ -152,9 +174,10 @@ class CheckLedgerPanel(BasePlot):
                         facecolor="white",
                         edgecolor="black",
                         hatch=MISCALIBRATED_HATCH,
-                        label="bench: miscalibrated at this n, or no bench cell",
-                    )
-                ],
+                        label="check: bench miscalibrated at this n, or no bench cell",
+                    ),
+                ]
+                + group_entry,
                 loc="upper left",
                 bbox_to_anchor=(1.01, 1.0),
                 frameon=False,

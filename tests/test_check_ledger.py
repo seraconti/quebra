@@ -240,10 +240,16 @@ def test_a_ledger_holds_each_bag_clock_and_check_once_at_every_threshold():
     assert set(cells.index.droplevel("check_id")) == expected
     assert "(all)" not in set(rows["check_id"]), "premise: every cell was scored"
     # Both bags read the bench, on both clocks: the side clock's cells are keyed `in_spec`.
-    benched = rows.groupby(["side", "clock"])["bench_size_cell"].apply(
-        lambda cells: bool((cells != "").all())
+    # A group row reads none: its size rests on the permutation argument.
+    groups = rows["check_id"].isin(ledger_module.GROUPS)
+    benched = (
+        rows[~groups]
+        .groupby(["side", "clock"])["bench_size_cell"]
+        .apply(lambda cells: bool((cells != "").all()))
     )
     assert benched.all(), benched
+    assert groups.sum() == 2 * len(expected)
+    assert (rows.loc[groups, "bench_size_cell"] == "").all()
 
     failed = ledger_module.run(
         ledger_module.CheckLedgerInputs(
@@ -393,9 +399,13 @@ def test_with_no_rscript_the_r_fields_read_absent_and_every_row_is_still_built(
         (ledger.rows["side"] == SIDE_IN_SPEC) & (ledger.rows["clock"] == CLOCK_SIDE)
     ]
     built = set(zip(in_spec["check_id"], in_spec["calibration"], in_spec["variant"]))
-    expected = set(battery.ROW_KEYS) | {(c3.CHECK_NAME, CALIB_R_COPULA, "")}
-    # The side clock emits every battery row and C3's. Asserting the SET rather than a
-    # count is what makes a dropped row name itself instead of moving a number.
+    expected = (
+        set(battery.ROW_KEYS)
+        | {(c3.CHECK_NAME, CALIB_R_COPULA, "")}
+        | set(ledger_module.GROUP_KEYS)
+    )
+    # The side clock emits every battery row, C3's and the two group rows. Asserting the SET
+    # rather than a count is what makes a dropped row name itself instead of moving a number.
     assert built == expected, (
         f"R absence changed which rows the in-spec cell carries: {built ^ expected}"
     )
@@ -569,7 +579,11 @@ def test_an_unusable_r_is_recorded_on_the_ledger_and_does_not_stop_it(
         (ledger.rows["side"] == SIDE_IN_SPEC) & (ledger.rows["clock"] == CLOCK_SIDE)
     ]
     built = set(zip(in_spec["check_id"], in_spec["calibration"], in_spec["variant"]))
-    expected = set(battery.ROW_KEYS) | {(c3.CHECK_NAME, CALIB_R_COPULA, "")}
+    expected = (
+        set(battery.ROW_KEYS)
+        | {(c3.CHECK_NAME, CALIB_R_COPULA, "")}
+        | set(ledger_module.GROUP_KEYS)
+    )
     assert built == expected, (
         f"an unusable R changed which rows the in-spec cell carries: {built ^ expected}"
     )
@@ -911,7 +925,8 @@ def test_an_event_ended_row_meets_the_floor_and_reads_the_bench_by_the_events_it
 def test_c1_keeps_its_answer_when_c2_cannot_give_one(monkeypatch):
     """Oracle: the issue's rule ("the retry no longer drops C1"). With C2 forced to raise,
     its row reads `not computed` with its own reason in every cell of both bags and clocks,
-    and C1 and every other check still answer."""
+    and C1 and every other check still answer. A plain raise is no refusal of the record, so
+    the trend group reads `not computed` naming C2, and the dependence group answers."""
     import quebra.analyzers.check_ledger as ledger_module
     import quebra.analyzers.checks.c2_anderson_darling as c2
 
@@ -938,8 +953,13 @@ def test_c1_keeps_its_answer_when_c2_cannot_give_one(monkeypatch):
         c2_row = by_check.loc["c2_anderson_darling"]
         assert c2_row["verdict"] == VERDICT_NOT_COMPUTED, (side, clock)
         assert "forced C2 refusal" in c2_row["notes"], (side, clock)
-        others = by_check.drop(index="c2_anderson_darling")
+        others = by_check.drop(index=["c2_anderson_darling", *ledger_module.GROUPS])
         assert others["p_value"].notna().all(), (side, clock, others["notes"].to_dict())
+        trend = by_check.loc[ledger_module.GROUP_TREND]
+        assert trend["verdict"] == VERDICT_NOT_COMPUTED, (side, clock)
+        assert "C2 has no answer" in trend["notes"], (side, clock)
+        dependence = by_check.loc[ledger_module.GROUP_DEPENDENCE]
+        assert pd.notna(dependence["p_value"]), (side, clock, dependence["notes"])
 
 
 def test_the_p_value_ladder_draws_cvm_from_its_permutation_row():

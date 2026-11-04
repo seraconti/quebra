@@ -11,10 +11,22 @@ three to hold:
     tie_fraction        the durations are not so tied that a rank test is meaningless
 
 If any fails, the verdict is NOT `pass`. That is the entire point of the ledger: a
-non-rejection must never print as a pass on a p-value alone.
+non-rejection must never print as a pass on a p-value alone. A group row (below) is the one
+exception to the bench condition.
+
+**Group rows.** A window ledger also carries two rows per (threshold, side, clock) that are
+no single check: `trend_group` over C1, C2 and CvM and `dependence_group` over C5 and C6, each
+the single-step min-P (`min_p`) of its members that answered, on their shared permutation
+draws. A member left out is named with its reason, and only a refusal of the record
+(`checks.result.CheckRefused`) may leave one out: any other failure leaves the group `not
+computed`, since a member set that could change with the shuffle would void the size. The
+group's size rests on the permutation argument, exact under exchangeability, so it reads no
+bench cell; it keeps the event floor, and the dependence group the tie rule of its members.
+The trend group counts the events its members read, `n - 1` on a segment that ends at one.
+Calibration cycles score through `score_segments` without them.
 
 **Which bag, which clock.** Both bags, the in-spec and the out-of-spec windows, on both
-clocks: a row is one (threshold, side, clock, check). The bags are scored by one rule
+clocks: a row is one (threshold, side, clock, check or group). The bags are scored by one rule
 (`_multiprocess.segments_from_windows`), draw their permutations from one stream per
 threshold and clock (`stream_for`), and read one bench cell: the bench calibrated the side
 clock on arms that either carry no side or threshold a symmetric series at its median, and
@@ -73,8 +85,11 @@ from quebra.analyzers.checks._multiprocess import segments_from_windows
 from quebra.analyzers.checks._permutation import block_permutations
 from quebra.analyzers.checks._rank_serial import MAX_LAG_CAP
 from quebra.analyzers.checks.battery import (
+    REFUSED,
+    ROW_KEYS,
     UNDEFINED,
     drop_unusable_segments,
+    row_key,
     run_battery,
 )
 from quebra.analyzers.checks.result import (
@@ -85,6 +100,7 @@ from quebra.analyzers.checks.result import (
     Segment,
 )
 from quebra.analyzers.event_table import SIDES
+from quebra.analyzers.min_p import min_p
 from quebra.core._artifact_guard import StaleArtifactGuard
 
 VERDICT_PASS = "pass"
@@ -126,6 +142,44 @@ TIE_SENSITIVE_CHECKS = ("c3_serial_copula", "c5_rank_autocorr", "c6_exchangeabil
 # and look up the bench by the events they read.
 EVENT_TIME_CHECKS = (c1.CHECK_NAME, c2.CHECK_NAME, cvm.CHECK_NAME)
 
+# The two groups a window ledger calibrates by min-P, each the permutation rows of the checks
+# that test one null (module docstring). A group row is keyed like a check row.
+GROUP_TREND = "trend_group"
+GROUP_DEPENDENCE = "dependence_group"
+CALIB_MIN_P = "min_p"
+_PERMUTATION_ROW = {key[0]: key for key in ROW_KEYS}
+GROUPS: dict[str, tuple[tuple[str, str, str], ...]] = {
+    GROUP_TREND: tuple(
+        _PERMUTATION_ROW[check]
+        for check in (
+            "c1_lewis_robinson",
+            "c2_anderson_darling",
+            "cvm_cramer_von_mises",
+        )
+    ),
+    GROUP_DEPENDENCE: tuple(
+        _PERMUTATION_ROW[check] for check in ("c5_rank_autocorr", "c6_exchangeability")
+    ),
+}
+# The checks `include_tau_checks=False` leaves out, which a group then reads `not asked`.
+_TAU_CHECKS = ("c1_lewis_robinson", "c2_anderson_darling")
+# How a member reads in a group row's notes.
+MEMBER_SHORT = {
+    "c1_lewis_robinson": "C1",
+    "c2_anderson_darling": "C2",
+    "cvm_cramer_von_mises": "CvM",
+    "c5_rank_autocorr": "C5",
+    "c6_exchangeability": "C6",
+}
+GROUP_KEYS = tuple((group, CALIB_MIN_P, "") for group in GROUPS)
+# Members whose p reads |statistic| (`_permutation.two_sided_p_value`): min-P ranks them so.
+TWO_SIDED_MEMBERS = frozenset({"c1_lewis_robinson"})
+# What every figure that draws a group row says of its calibration.
+GROUP_CALIBRATION_NOTE = (
+    "group rows: size from the permutation argument, exact under exchangeability; no "
+    "bench cell is used."
+)
+
 # The side of a row whose durations are no bag's windows (calibration cycles).
 NO_SIDE = ""
 
@@ -157,7 +211,8 @@ LEDGER_COLUMNS = [
 
 @dataclass
 class CheckLedger(StaleArtifactGuard):
-    """One row per (threshold, side, clock, check, calibration), plus the settings that made it.
+    """One row per (threshold, side, clock, check or group, calibration), plus the settings
+    that made it.
 
     The settings are ON the artifact rather than only in the job file because a ledger read
     six months from now has to be interpretable without opening the job that produced it -
@@ -570,6 +625,7 @@ def _rows_for(
         include_c2_asymptotic=inputs.include_c2_asymptotic,
         include_c3=inputs.include_c3,
         c3_n_null_sim=inputs.c3_n_null_sim,
+        groups=True,
     )
 
 
@@ -596,6 +652,7 @@ def score_segments(
     include_c3: bool,
     c3_n_null_sim: int,
     side: str = NO_SIDE,
+    groups: bool = False,
 ) -> list[dict[str, object]]:
     """Ledger rows for durations already cut into segments, on one label, side and clock.
 
@@ -617,6 +674,9 @@ def score_segments(
     C1, C2 and CvM read `n - 1` events of a segment that ends at an event
     (`EVENT_TIME_CHECKS`): their rows' `n_events`, event floor and bench n count the events
     read, and their notes say how many segments ended at an event.
+
+    `groups=True` appends the two group rows (`group_rows`): the window ledgers ask for
+    them, and calibration cycles do not.
     """
     if not segments:
         note = (
@@ -694,6 +754,13 @@ def score_segments(
                 )
             )
 
+    # What a row that reads `n - 1` events says of it (`EVENT_TIME_CHECKS`).
+    read_note = (
+        f"{n_at_event} of {len(segments)} segment(s) end at an event: first n - 1 events "
+        "read"
+        if n_at_event
+        else ""
+    )
     out: list[dict[str, object]] = []
     for result in results:
         variant = ""
@@ -733,14 +800,9 @@ def score_segments(
             reason = str(result.extra[UNDEFINED])
         # Only these rows read n - 1, so only they say so; the bench clause only where a
         # cell was read.
-        at_event_note = ""
-        if reads_n_minus_1 and n_at_event:
-            at_event_note = (
-                f"{n_at_event} of {len(segments)} segment(s) end at an event: first n - 1 "
-                "events read"
-            )
-            if cell:
-                at_event_note += "; the bench cell was measured without the n - 1 form"
+        at_event_note = read_note if reads_n_minus_1 else ""
+        if at_event_note and cell:
+            at_event_note += "; the bench cell was measured without the n - 1 form"
         notes = "; ".join(
             part for part in (reason, at_event_note, degenerate_note) if part
         )
@@ -770,4 +832,219 @@ def score_segments(
                 "notes": notes,
             }
         )
+    if groups:
+        out.extend(
+            group_rows(
+                results,
+                dataset_id=dataset_id,
+                label=label,
+                side=side,
+                clock=clock,
+                alpha=alpha,
+                n_events=n_events,
+                n_read=n_read,
+                read_note=read_note,
+                n_used=n_used,
+                min_events_pass=min_events_pass,
+                n_distinct=n_distinct,
+                tie_fraction=tie_fraction,
+                tie_cutoff=tie_cutoff_distinct,
+                include_tau_checks=include_tau_checks,
+                n_segments=len(segments),
+                n_censored_dropped=int(sum(s.n_censored_dropped for s in segments)),
+                degenerate_note=degenerate_note,
+            )
+        )
     return out
+
+
+def _first_clause(text: str, limit: int = 90) -> str:
+    """A reason cut to its first clause, so the member names lead a group row's notes."""
+    for end in (". ", "; "):
+        if end in text:
+            text = text.split(end, 1)[0]
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _group_verdict(
+    p_value: float | None,
+    reason: str,
+    *,
+    alpha: float,
+    n_events: int,
+    min_events_pass: int,
+    tie_sensitive: bool,
+    n_distinct: int,
+    tie_cutoff: int,
+) -> tuple[str, str]:
+    """A group row's verdict and its reason, in `_verdict`'s precedence without a bench."""
+    if p_value is None:
+        return VERDICT_NOT_COMPUTED, reason
+    if tie_sensitive and n_distinct < tie_cutoff:
+        return (
+            VERDICT_TIES,
+            f"{n_distinct} distinct durations, below the cutoff of {tie_cutoff}",
+        )
+    if p_value <= alpha:
+        return VERDICT_FAIL, "rejected"
+    if n_events < min_events_pass:
+        return VERDICT_INCONCLUSIVE, f"n_events {n_events} < {min_events_pass}"
+    return VERDICT_PASS, ""
+
+
+@dataclass(frozen=True)
+class GroupMembers:
+    """A group's members on one (threshold, side, clock), ready for `min_p`.
+
+    `columns` maps each answering member to `[observed, *null]`, a two-sided member through
+    `|.|`. `absent` names each member left out and why. `blocking` is set when a member has
+    no answer and no refusal of the record, which leaves the group `not computed`.
+    """
+
+    columns: dict[str, np.ndarray]
+    absent: list[str]
+    blocking: str
+
+
+def group_members(
+    results: list[CheckResult], group: str, *, include_tau_checks: bool
+) -> GroupMembers:
+    """Which of `group`'s members answer, which are left out and why (`group_rows`)."""
+    by_key = {row_key(r): r for r in results}
+    columns: dict[str, np.ndarray] = {}
+    absent: list[str] = []
+    for key in GROUPS[group]:
+        check = key[0]
+        short = MEMBER_SHORT[check]
+        result = by_key.get(key)
+        if result is None:
+            if check in _TAU_CHECKS and not include_tau_checks:
+                absent.append(f"{short} not asked")
+                continue
+            return GroupMembers(columns, absent, f"{short} has no row")
+        if result.p_value is not None and result.null_statistics is not None:
+            column = np.concatenate([[result.statistic], result.null_statistics])
+            columns[short] = np.abs(column) if check in TWO_SIDED_MEMBERS else column
+            continue
+        reason = _first_clause(str(result.extra.get(UNDEFINED, result.notes)))
+        if result.p_value is None and result.extra.get(REFUSED):
+            absent.append(f"{short}: {reason}")
+            continue
+        return GroupMembers(
+            columns,
+            absent,
+            f"{short} has no answer, and not by a refusal of the record: {reason}",
+        )
+    return GroupMembers(columns, absent, "")
+
+
+def group_rows(
+    results: list[CheckResult],
+    *,
+    dataset_id: str,
+    label: str,
+    side: str,
+    clock: str,
+    alpha: float,
+    n_events: int,
+    n_read: int,
+    n_used: int,
+    min_events_pass: int,
+    n_distinct: int,
+    tie_fraction: float,
+    tie_cutoff: int,
+    include_tau_checks: bool,
+    n_segments: int,
+    n_censored_dropped: int,
+    read_note: str = "",
+    degenerate_note: str = "",
+) -> list[dict[str, object]]:
+    """The two group rows of one (threshold, side, clock), from its check results.
+
+    Each group is the single-step min-P (`min_p`) of its members that answered, on their
+    kept draws (`CheckResult.null_statistics`), a two-sided member through `|.|` as its own
+    p reads it. A member the run-set left out reads `not asked`; a member with no answer is
+    named with its reason, and may be left out only when that reason is a refusal of the
+    record (`extra[REFUSED]`). Any other failure, or no member answering, leaves the group
+    `not computed`. The verdict follows `_group_verdict`; no bench cell is read. A group
+    row's `statistic` is its smallest member p on the record, and its `p_value` the min-P
+    adjusted p of that smallest p; `n_segments` and `n_censored_dropped` are the record's.
+    A group whose members all read `n - 1` events of a segment that ends at one
+    (`EVENT_TIME_CHECKS`: the trend group) counts and judges by `n_read`, as their rows do,
+    and carries their `read_note`; the dependence group reads every event, `n_events`.
+
+    Validity assumptions
+
+    - Assumption: under the null the B + 1 rows of the shared permutation set are
+      exchangeable, and the set of members that answer does not change with which row is
+      taken as observed.
+      Diagnostic: only refusals that read sizes, gap multisets and tau, or the augmented
+      ensemble as a whole, may leave a member out (`checks.result.CheckRefused`).
+      Consequence of violation: the group p loses its size.
+      Reference: Westfall, P. H. and Young, S. S. (1993), Resampling-Based Multiple
+      Testing, Wiley, the single-step min-P adjustment; no section locator located.
+    """
+    rows: list[dict[str, object]] = []
+    for group, members in GROUPS.items():
+        found = group_members(results, group, include_tau_checks=include_tau_checks)
+        columns, absent, blocking = found.columns, found.absent, found.blocking
+        outcome = None
+        if not blocking and columns:
+            outcome = min_p(columns)
+        elif not blocking:
+            blocking = "no member answered"
+        tie_sensitive = any(key[0] in TIE_SENSITIVE_CHECKS for key in members)
+        reads_n_minus_1 = all(key[0] in EVENT_TIME_CHECKS for key in members)
+        n_group = n_read if reads_n_minus_1 else n_events
+        p_value = None if outcome is None else outcome.p_value
+        verdict, reason = _group_verdict(
+            p_value,
+            blocking,
+            alpha=alpha,
+            n_events=n_group,
+            min_events_pass=min_events_pass,
+            tie_sensitive=tie_sensitive,
+            n_distinct=n_distinct,
+            tie_cutoff=tie_cutoff,
+        )
+        parts = [] if outcome is None else [f"members {', '.join(columns)}"]
+        if absent:
+            parts.append("no answer: " + "; ".join(absent))
+        if outcome is not None:
+            parts.append(
+                "member p "
+                + ", ".join(f"{m} {v:.3g}" for m, v in outcome.member_p_values.items())
+                + f"; smallest {', '.join(outcome.argmin_labels)}"
+            )
+        parts += [reason, read_note if reads_n_minus_1 else "", degenerate_note]
+        rows.append(
+            {
+                "dataset_id": dataset_id,
+                "threshold_label": label,
+                "side": side,
+                "clock": clock,
+                "check_id": group,
+                "calibration": CALIB_MIN_P,
+                "variant": "",
+                "statistic": (
+                    float("nan")
+                    if outcome is None
+                    else float(min(outcome.member_p_values.values()))
+                ),
+                "p_value": p_value,
+                "verdict": verdict,
+                "n_events": n_group,
+                "n_windows_used": int(n_used),
+                "n_censored_dropped": int(n_censored_dropped),
+                "n_segments": int(n_segments),
+                "n_distinct_durations": n_distinct,
+                "tie_fraction": tie_fraction,
+                "bench_n_target": None,
+                "bench_size_at_n": float("nan"),
+                "bench_size_ci": "",
+                "bench_size_cell": "",
+                "bench_accepted": None,
+                "notes": "; ".join(part for part in parts if part),
+            }
+        )
+    return rows

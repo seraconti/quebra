@@ -23,8 +23,12 @@ CHECK_SHORT = {
     "c6_exchangeability": "C6 exch",
     # `check_ledger` iterates these keys to decide which lines the p-value ladder draws, and
     # `statistic_series` below takes the minimum p-value over calibrations per rung. A
-    # ledger carries the permutation rows only, so that minimum is the permutation p-value.
+    # ledger carries one calibration per check or group, the permutation rows and a window
+    # ledger's `min_p` group rows, so that minimum is the row's own p-value.
     "cvm_cramer_von_mises": "CvM",
+    # The two group rows of a window ledger (`check_ledger.GROUPS`), beside the checks.
+    "trend_group": "trend group",
+    "dependence_group": "dependence group",
 }
 
 
@@ -45,10 +49,11 @@ def ledger_grid(
 ) -> tuple[list[str], list[str], list[list]]:
     """Pivot the ledger into (row labels, column labels, cell records) for one clock.
 
-    Cell records are `(verdict, p_value, bench_accepted)` so the renderer can colour by
-    the first, annotate with the second and mark the third without going back to the
-    frame. `bench_accepted` is None where the bench has no cell for that check at that
-    event count, which is a different thing from False.
+    Cell records are `(verdict, p_value, bench_accepted, calibration)` so the renderer can
+    colour by the first, annotate with the second and mark the third without going back to
+    the frame. `bench_accepted` is None where the bench has no cell for that check at that
+    event count, which is a different thing from False; a group row has none by
+    construction, which its calibration (`min_p`) says.
     """
     frame = rows[rows["clock"] == clock].copy()
     if not len(frame):
@@ -65,6 +70,7 @@ def ledger_grid(
             r["verdict"],
             r["p_value"],
             r["bench_accepted"],
+            r["calibration"],
         )
         for _i, r in frame.iterrows()
     }

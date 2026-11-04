@@ -63,9 +63,9 @@ CALIB_R_COPULA = "r_copula"
 #
 # Both halves are needed and they do different jobs. `last_event_time` pins the CONSUMERS
 # (`validate_segment`'s lower bound, `Segment.residual`, `_eq7`) to eq (7)'s own summation
-# order, so they agree with each other. `gamma_hat` and C2's strict-tau refusal read it on
-# the sorted gaps instead, so that no shuffle moves them; the margin covers that
-# difference too. The margin covers the PRODUCERS, which are outside
+# order, so they agree with each other. `gamma_hat` and `validate_segment`'s strict-tau
+# refusal read it on the sorted gaps instead, so that no shuffle moves them; the margin
+# covers that difference too. The margin covers the PRODUCERS, which are outside
 # this module and cannot be pinned: `segments_from_windows` builds `tau` with
 # `durations.sum()`, and pairwise-vs-sequential summation disagrees in either direction on
 # 23% of random vectors.

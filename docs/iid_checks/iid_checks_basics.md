@@ -103,8 +103,10 @@ renewal interval.
 
 Every check ships a permutation calibration and it is the one to use. The pipeline uses
 nothing else: a ledger, the survey and a band carry the five permutation rows
-(`battery.ROW_KEYS`); the asymptotic rows of C1, C2 and CvM run only in the bench, which
-still measures them (the table below); and the ledgers do not run C3
+(`battery.ROW_KEYS`), and a window ledger and the survey also the two group rows that
+calibrate them together by min-P (`check_ledger.GROUPS`); the asymptotic rows of C1, C2
+and CvM run only in the bench, which still measures them (the table below); and the
+ledgers do not run C3
 (`ledger_recipe.LEDGER_KNOBS`). Permutation is
 **exactly** valid here rather than asymptotically: `tau`, `N` and `gamma_hat` are all
 invariant to reordering gaps within a segment, so the conditional null is exact at finite

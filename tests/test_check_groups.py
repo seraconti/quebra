@@ -1,36 +1,58 @@
-"""The battery's rows as members of a group: which members answer, and the draws they keep.
+"""The ledger's group rows: which members answer, the draws they keep, and what each
+group says.
 
 A min-P over several checks on one permutation set keeps its size only when the set of
 members that answer is a property of the record, never of the shuffle; a member's own
-permutation draws are what the min-P ranks. Synthetic segments only.
+permutation draws are what the min-P ranks. Synthetic segments and windows only.
 """
 
 from __future__ import annotations
 
 import ast
+import itertools
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
+import matplotlib
 import numpy as np
+import pandas as pd
 import pytest
 
-import quebra.analyzers.checks.c1_lewis_robinson as c1
-import quebra.analyzers.checks.c2_anderson_darling as c2
-import quebra.analyzers.checks.cvm_cramer_von_mises as cvm
-from quebra.analyzers.checks._permutation import (
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt  # noqa: E402
+
+import quebra.analyzers.check_ledger as ledger  # noqa: E402
+import quebra.analyzers.checks.c6_exchangeability as c6_module  # noqa: E402
+from quebra.analyzers import windows  # noqa: E402
+from quebra.analyzers.calibration_summary import bench_acceptance_at_n  # noqa: E402
+from quebra.analyzers.independence_survey import (  # noqa: E402
+    build_independence_survey,
+    survey_summary,
+)
+from quebra.analyzers.min_p import min_p  # noqa: E402
+from quebra.ledger_recipe import ledger_bag  # noqa: E402
+from quebra.panels.check_ledger import CheckLedgerPanel  # noqa: E402
+
+import quebra.analyzers.checks.c1_lewis_robinson as c1  # noqa: E402
+import quebra.analyzers.checks.c2_anderson_darling as c2  # noqa: E402
+import quebra.analyzers.checks.cvm_cramer_von_mises as cvm  # noqa: E402
+from quebra.analyzers.checks._permutation import (  # noqa: E402
+    PermutationSet,
     block_permutations,
     permutation_p_value,
     two_sided_p_value,
 )
-from quebra.analyzers.checks.battery import REFUSED, UNDEFINED, run_battery
-from quebra.analyzers.checks._rank_serial import (
+from quebra.analyzers.checks.battery import REFUSED, UNDEFINED, run_battery  # noqa: E402
+from quebra.analyzers.checks._rank_serial import (  # noqa: E402
     MAX_LAG_CAP,
     autocorrelations,
     global_ranks,
     lag_layout,
     studentize,
 )
-from quebra.analyzers.checks.result import (
+from quebra.analyzers.checks.result import (  # noqa: E402
     CALIB_PERMUTATION,
     TAU_MARGIN,
     CheckRefused,
@@ -38,8 +60,6 @@ from quebra.analyzers.checks.result import (
     last_event_time,
     validate_segment,
 )
-
-pytestmark = pytest.mark.unit
 
 C1, C2, CVM = c1.CHECK_NAME, c2.CHECK_NAME, cvm.CHECK_NAME
 C5, C6 = "c5_rank_autocorr", "c6_exchangeability"
@@ -52,12 +72,6 @@ def _seg(gaps: list[float], residual: float = 1.0) -> Segment:
 
 # (site, segments, the checks it must leave refused, the checks that must still answer)
 REFUSAL_SITES = [
-    (
-        "C2's strict tau",
-        [_seg([1.0, 2.5, 0.7, 1.9, 3.1, 0.4], residual=0.0)],
-        {C2},
-        {C1, CVM, C5, C6},
-    ),
     ("a zero gap", [_seg([1.0, 0.0, 2.0, 1.5, 0.8])], {C1, C2, CVM, C5, C6}, set()),
     ("no usable lag", [_seg([1.0, 2.0])], {C5, C6}, {C1, C2, CVM}),
     (
@@ -75,6 +89,7 @@ REFUSAL_SITES = [
 ]
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("site", "segments", "refused", "answering"),
     REFUSAL_SITES,
@@ -102,6 +117,7 @@ def test_each_refusal_of_the_record_is_marked_as_one(
         assert rows[check].p_value is not None, (site, check, rows[check].notes)
 
 
+@pytest.mark.unit
 def test_a_raise_that_is_not_a_refusal_leaves_its_row_unmarked() -> None:
     """Oracle: specification. A raise other than `CheckRefused` leaves its row undefined
     and unmarked, so no group may leave that member out: here a `tau` below the last
@@ -131,6 +147,7 @@ REVIEWED_REFUSALS = Counter(
 )
 
 
+@pytest.mark.unit
 def test_only_the_reviewed_raises_mark_a_refusal() -> None:
     """Oracle: the reviewed list above. A new mark, or a subclass of `CheckRefused`, must be
     reviewed as reading only the record before it joins the list."""
@@ -161,9 +178,13 @@ def test_only_the_reviewed_raises_mark_a_refusal() -> None:
     assert found == REVIEWED_REFUSALS
 
 
-def test_c2_refuses_a_tau_on_the_margin_in_every_order_or_in_none() -> None:
-    """Oracle: specification. C2's strict-tau refusal reads the gap multiset and `tau`, so
-    a `tau` placed exactly on the margin is refused in every order of its gaps or in none."""
+@pytest.mark.unit
+def test_the_strict_tau_refusal_reads_a_tau_on_the_margin_the_same_in_every_order() -> (
+    None
+):
+    """Oracle: specification. `validate_segment`'s strict-tau refusal, which no check asks
+    for since C1, C2 and CvM read n - 1 events, reads the gap multiset and `tau`, so a `tau`
+    placed exactly on the margin is refused in every order of its gaps or in none."""
     rng = np.random.default_rng(11)
     for _ in range(20):
         gaps = rng.uniform(0.1, 3.0, size=40)
@@ -179,6 +200,7 @@ def test_c2_refuses_a_tau_on_the_margin_in_every_order_or_in_none() -> None:
         assert len(outcomes) == 1, outcomes
 
 
+@pytest.mark.unit
 def test_each_permutation_row_keeps_the_draws_its_p_reads() -> None:
     """Oracle: each check's statistic recomputed row by row on the same permutation set
     (C1, C2 and CvM by their batch forms, C5 and C6 from the rank autocorrelations), and
@@ -221,3 +243,401 @@ def test_each_permutation_row_keeps_the_draws_its_p_reads() -> None:
         if r.calibration != CALIB_PERMUTATION
     ]
     assert asymptotic and all(r.null_statistics is None for r in asymptotic)
+
+
+# ----------------------------------------------------------------------------- group rows
+
+ACCEPTANCE = bench_acceptance_at_n(
+    pd.read_csv(
+        Path(__file__).resolve().parents[1] / "jobs/bench/results/size_table.csv"
+    ),
+    alpha=0.05,
+)
+GRID = sorted({int(n) for n in ACCEPTANCE["n_target"]})
+# Gaps that lengthen down the record: C1's statistic is negative there.
+LENGTHENING = [0.6, 0.5, 0.9, 0.7, 1.1, 0.8, 1.4, 1.0, 1.2, 1.7, 1.3, 1.9, 1.5, 2.2]
+# The same kind of gaps in no particular order.
+SCATTERED = [0.7, 1.9, 0.4, 2.6, 1.3, 0.9, 2.2, 0.5, 1.6, 1.1, 2.9, 0.8, 1.4, 2.0]
+
+
+def _context(**overrides: object) -> dict[str, object]:
+    context: dict[str, object] = dict(
+        dataset_id="t",
+        label="3 µs",
+        side="in_spec",
+        clock="side",
+        alpha=0.05,
+        n_events=40,
+        n_read=40,
+        n_used=40,
+        min_events_pass=0,
+        n_distinct=99,
+        tie_fraction=0.0,
+        tie_cutoff=0,
+        include_tau_checks=True,
+        n_segments=1,
+        n_censored_dropped=0,
+    )
+    context.update(overrides)
+    return context
+
+
+def _score(segments: list[Segment], **overrides: object) -> pd.DataFrame:
+    kwargs: dict[str, object] = dict(
+        n_dropped=0,
+        n_degenerate=0,
+        n_used=int(sum(len(s.x) for s in segments)),
+        label="3 µs",
+        side="in_spec",
+        clock="side",
+        dataset_id="t",
+        acceptance=ACCEPTANCE,
+        grid=GRID,
+        alpha=0.05,
+        min_events_pass=0,
+        tie_cutoff_distinct=0,
+        lag_max=5,
+        n_permutations=199,
+        seed=11,
+        min_events_per_segment=2,
+        include_tau_checks=True,
+        include_c2_asymptotic=False,
+        include_c3=False,
+        c3_n_null_sim=0,
+        groups=True,
+    )
+    kwargs.update(overrides)
+    return pd.DataFrame(ledger.score_segments(segments, **kwargs)).set_index("check_id")
+
+
+@pytest.mark.unit
+def test_each_member_p_in_a_group_is_its_own_rows_p() -> None:
+    """Oracle: each check's own permutation p. A member enters the min-P as its p reads it,
+    C1 two-sided through |.|, so the group's row-0 p of each member is that check's p, as
+    floats; C1's statistic is negative here, where a one-sided C1 would differ."""
+    results = run_battery(
+        [_seg(LENGTHENING, residual=0.6)],
+        rng=np.random.default_rng(5),
+        n_perm=199,
+        undefined_as_rows=True,
+    )
+    by_check = {r.check: r for r in results}
+    assert by_check[C1].statistic < 0.0
+    for group, members in ledger.GROUPS.items():
+        found = ledger.group_members(results, group, include_tau_checks=True)
+        assert found.blocking == "" and found.absent == []
+        member_p = min_p(found.columns).member_p_values
+        for check, _calibration, _variant in members:
+            assert member_p[ledger.MEMBER_SHORT[check]] == by_check[check].p_value, (
+                check
+            )
+
+
+@pytest.mark.unit
+def test_a_member_entered_twice_leaves_the_group_p_unchanged(monkeypatch) -> None:
+    """Oracle: min-P is invariant to an increasing copy of a member (test_min_p.py on
+    `min_p` itself); here through `group_rows`, so a builder that scaled the smallest
+    member p by the member count would move."""
+    results = run_battery(
+        [_seg(LENGTHENING, residual=0.6)],
+        rng=np.random.default_rng(5),
+        n_perm=199,
+        undefined_as_rows=True,
+    )
+    rows = ledger.group_rows(results, **_context())
+    before = {r["check_id"]: r["p_value"] for r in rows}
+    smallest = next(r["statistic"] for r in rows if r["check_id"] == ledger.GROUP_TREND)
+    copy = replace(next(r for r in results if r.check == C1), check="c1_copy")
+    monkeypatch.setitem(
+        ledger.GROUPS,
+        ledger.GROUP_TREND,
+        (*ledger.GROUPS[ledger.GROUP_TREND], ("c1_copy", CALIB_PERMUTATION, "")),
+    )
+    monkeypatch.setitem(ledger.MEMBER_SHORT, "c1_copy", "C1 copy")
+    monkeypatch.setattr(
+        ledger, "TWO_SIDED_MEMBERS", ledger.TWO_SIDED_MEMBERS | {"c1_copy"}
+    )
+    after = {
+        r["check_id"]: r["p_value"]
+        for r in ledger.group_rows([*results, copy], **_context())
+    }
+    assert 3 * smallest < 1.0, "premise: the count would show"
+    assert after == before
+
+
+@pytest.mark.statistical
+@pytest.mark.parametrize(
+    "residual", [0.8, 0.0], ids=["time truncated", "ends at an event"]
+)
+def test_every_shuffle_of_a_small_record_keeps_each_group_within_its_level(
+    residual: float,
+) -> None:
+    """Oracle: exhaustive enumeration. The 119 other orderings of 5 distinct gaps are the
+    permutation set, so B + 1 is the whole orbit; over every ordering taken as the record,
+    P(group p <= v) <= v at every attained v, for both groups, on a segment truncated in
+    time and on one that ends at an event, whose first n - 1 events C1, C2 and CvM read."""
+    x = np.array([0.7, 1.9, 0.4, 2.6, 1.3])
+    tau = float(np.cumsum(x)[-1]) + residual
+    assert Segment(x=x, tau=tau).ends_at_event is (residual == 0.0)
+    orders = list(itertools.permutations(range(5)))
+    perm = PermutationSet(sizes=(5,), indices=np.array(orders[1:]))
+    p_values: dict[str, list[float]] = {group: [] for group in ledger.GROUPS}
+    for order in orders:
+        results = run_battery(
+            [Segment(x=x[list(order)], tau=tau)],
+            perm=perm,
+            max_lag=3,
+            undefined_as_rows=True,
+        )
+        context = _context(n_events=5, n_read=4 if residual == 0.0 else 5)
+        for row in ledger.group_rows(results, **context):
+            p_values[str(row["check_id"])].append(row["p_value"])
+    for group, values in p_values.items():
+        assert len(values) == 120 and None not in values, group
+        ps = np.array(values, dtype=float)
+        for v in np.unique(ps):
+            assert np.mean(ps <= v) <= v + 1e-12, (group, v)
+
+
+@pytest.mark.unit
+def test_a_segment_that_ends_at_an_event_counts_the_trend_group_by_the_events_read() -> (
+    None
+):
+    """Oracle: specification. At tau = T_N, C1, C2 and CvM read the first n - 1 events and
+    all answer, so the trend group is their min-P; it counts and judges by n - 1 events, as
+    their rows do, and says so, while the dependence group counts all n."""
+    x = np.asarray(LENGTHENING, dtype=float)
+    rows = _score([Segment(x=x, tau=float(np.cumsum(x)[-1]))])
+    trend = rows.loc[ledger.GROUP_TREND]
+    for check in (C1, C2, CVM):
+        assert pd.notna(rows.loc[check, "p_value"]), check
+        assert rows.loc[check, "n_events"] == len(x) - 1, check
+    assert trend["notes"].startswith("members C1, C2, CvM; member p ")
+    assert (
+        "1 of 1 segment(s) end at an event: first n - 1 events read" in trend["notes"]
+    )
+    assert trend["n_events"] == len(x) - 1
+    assert rows.loc[ledger.GROUP_DEPENDENCE, "n_events"] == len(x)
+
+    s = np.asarray(SCATTERED, dtype=float)
+    floor = _score([Segment(x=s, tau=float(np.cumsum(s)[-1]))], min_events_pass=len(s))
+    assert (floor.loc[list(ledger.GROUPS), "p_value"] > 0.05).all()
+    assert floor.loc[ledger.GROUP_TREND, "verdict"] == ledger.VERDICT_INCONCLUSIVE
+    assert floor.loc[ledger.GROUP_DEPENDENCE, "verdict"] == ledger.VERDICT_PASS
+
+
+@pytest.mark.unit
+def test_a_member_failing_without_a_refusal_leaves_its_group_not_computed(
+    monkeypatch,
+) -> None:
+    """Oracle: specification. A member undefined for a cause that could depend on the
+    shuffle would make the member set do so: its group reads not computed with the reason,
+    and the other group still answers."""
+
+    def unforeseen(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("unforeseen")
+
+    monkeypatch.setattr(c6_module, "run", unforeseen)
+    rows = _score([_seg(LENGTHENING, residual=0.6)])
+    dependence = rows.loc[ledger.GROUP_DEPENDENCE]
+    assert dependence["verdict"] == ledger.VERDICT_NOT_COMPUTED
+    assert pd.isna(dependence["p_value"])
+    assert dependence["notes"] == (
+        "C6 has no answer, and not by a refusal of the record: unforeseen"
+    )
+    assert pd.notna(rows.loc[ledger.GROUP_TREND, "p_value"])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("refusal", [False, True], ids=["plain", "refusal"])
+def test_c2_undefined_leaves_the_trend_group_to_the_cause(
+    monkeypatch, refusal: bool
+) -> None:
+    """Oracle: specification. C2 undefined, C1 and CvM still answer. A refusal of the record
+    leaves the trend group the min-P of C1 and CvM; any other cause leaves it not computed,
+    naming C2. Either way every row counts the record's censored windows."""
+
+    def undefined(*_args: object, **_kwargs: object) -> None:
+        raise (CheckRefused if refusal else ValueError)("undefined here")
+
+    monkeypatch.setattr(c2, "run", undefined)
+    x = np.asarray(LENGTHENING, dtype=float)
+    rows = _score([Segment(x=x, tau=float(x.sum()) + 0.6, n_censored_dropped=1)])
+    trend = rows.loc[ledger.GROUP_TREND]
+    assert pd.notna(rows.loc[C1, "p_value"]) and pd.isna(rows.loc[C2, "p_value"])
+    if refusal:
+        smallest = min(rows.loc[C1, "p_value"], rows.loc[CVM, "p_value"])
+        assert trend["notes"].startswith(
+            "members C1, CvM; no answer: C2: undefined here; "
+        )
+        assert trend["statistic"] == smallest <= trend["p_value"]
+    else:
+        assert trend["verdict"] == ledger.VERDICT_NOT_COMPUTED
+        assert trend["notes"] == (
+            "C2 has no answer, and not by a refusal of the record: undefined here"
+        )
+    assert pd.notna(rows.loc[ledger.GROUP_DEPENDENCE, "p_value"])
+    counted = [C1, C2, ledger.GROUP_TREND, ledger.GROUP_DEPENDENCE]
+    assert list(rows.loc[counted, "n_censored_dropped"]) == [1, 1, 1, 1]
+    assert list(rows.loc[counted, "n_segments"]) == [1, 1, 1, 1]
+
+
+@pytest.mark.unit
+def test_a_run_set_without_c1_and_c2_leaves_the_trend_group_cvm_alone() -> None:
+    """Oracle: specification. Members a run-set did not ask for read `not asked` and are
+    left out; the trend group is then CvM's min-P, which is CvM's own p."""
+    rows = _score([_seg(LENGTHENING, residual=0.6)], include_tau_checks=False)
+    trend = rows.loc[ledger.GROUP_TREND]
+    assert C1 not in rows.index and C2 not in rows.index
+    assert trend["p_value"] == rows.loc[CVM, "p_value"]
+    assert trend["notes"].startswith(
+        "members CvM; no answer: C1 not asked; C2 not asked"
+    )
+
+
+@pytest.mark.unit
+def test_a_ledger_reads_the_tie_rule_and_the_event_floor_into_its_group_rows() -> None:
+    """Oracle: specification. Through `score_segments`: below the distinct-duration cutoff
+    the dependence group reads ties and the trend group does not; below the event floor a
+    group that does not reject reads inconclusive, and passes without the floor."""
+    segments = [_seg(SCATTERED, residual=0.6)]
+    ties = _score(segments, tie_cutoff_distinct=10**6)
+    assert ties.loc[ledger.GROUP_DEPENDENCE, "verdict"] == ledger.VERDICT_TIES
+    assert ties.loc[ledger.GROUP_TREND, "verdict"] != ledger.VERDICT_TIES
+    groups = list(ledger.GROUPS)
+    floor = _score(segments, min_events_pass=10**6).loc[groups]
+    open_ = _score(segments).loc[groups]
+    quiet = floor["p_value"] > 0.05
+    assert quiet.any()
+    assert set(floor.loc[quiet, "verdict"]) == {ledger.VERDICT_INCONCLUSIVE}
+    assert set(open_.loc[quiet, "verdict"]) == {ledger.VERDICT_PASS}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("p_value", "tie_sensitive", "n_distinct", "n_events", "floor", "verdict"),
+    [
+        (None, False, 99, 40, 35, ledger.VERDICT_NOT_COMPUTED),
+        (None, True, 3, 40, 35, ledger.VERDICT_NOT_COMPUTED),
+        (0.01, True, 3, 40, 35, ledger.VERDICT_TIES),
+        (0.01, False, 3, 10, 35, ledger.VERDICT_FAIL),
+        (0.3, False, 99, 10, 35, ledger.VERDICT_INCONCLUSIVE),
+        (0.3, False, 99, 20, 10, ledger.VERDICT_PASS),
+        (0.3, True, 99, 40, 35, ledger.VERDICT_PASS),
+    ],
+)
+def test_a_group_verdict_keeps_the_tie_rule_and_the_event_floor_and_no_bench(
+    p_value: float | None,
+    tie_sensitive: bool,
+    n_distinct: int,
+    n_events: int,
+    floor: int,
+    verdict: str,
+) -> None:
+    """Oracle: specification. `_verdict`'s precedence without the bench: not computed, the
+    tie rule for a tie-sensitive group, a rejection even below the floor, then the floor
+    read from the knob."""
+    got, _reason = ledger._group_verdict(
+        p_value,
+        "no member answered",
+        alpha=0.05,
+        n_events=n_events,
+        min_events_pass=floor,
+        tie_sensitive=tie_sensitive,
+        n_distinct=n_distinct,
+        tie_cutoff=5,
+    )
+    assert got == verdict
+
+
+def _ledger(seed: int) -> ledger.CheckLedger:
+    """A whole synthetic ledger: both bags at two rungs, both clocks, group rows included."""
+    rng = np.random.default_rng(seed)
+    values: list[float] = []
+    for _ in range(70):
+        values += [5.0] * int(rng.integers(2, 12))
+        values += [1.0] * int(rng.integers(2, 8))
+    series = np.asarray(values, dtype=float)
+    ladder = [("3 µs", 3.0, True), ("4 µs", 4.0, True)]
+    carve = windows.run(
+        windows.WindowsInputs(
+            t_rel_s=np.arange(len(series), dtype=float) * 60.0,
+            values=series,
+            thresholds=ladder,
+            dataset_id=f"synthetic {seed}",
+        )
+    )
+    return ledger.run(
+        ledger.make_inputs_from_windows(
+            carve,
+            pd.read_csv(
+                Path(__file__).resolve().parents[1]
+                / "jobs/bench/results/size_table.csv"
+            ),
+            thresholds=ladder,
+            alpha=0.05,
+            min_events_pass=35,
+            tie_cutoff_distinct=5,
+            lag_max=5,
+            n_permutations=99,
+            seed=seed,
+        )
+    )
+
+
+@pytest.mark.integration
+def test_the_ledger_panel_draws_both_group_columns_unhatched_with_their_note() -> None:
+    """Oracle: specification. Beside the checks, one column per group, labelled "trend
+    group" and "dependence group", never hatched as miscalibrated, a legend entry marking
+    them "no bench cell (permutation)", and the calibration sentence on the figure; on
+    each bag's figure."""
+    record = _ledger(3)
+    for side in ("in_spec", "out_of_spec"):
+        fig = CheckLedgerPanel(name="unit").build_matplotlib(
+            ledger_bag(record, side=side)
+        )
+        try:
+            table = fig.axes[0]
+            columns = [t.get_text() for t in table.get_xticklabels()]
+            assert "trend group" in columns and "dependence group" in columns
+            group_x = {columns.index("trend group"), columns.index("dependence group")}
+            group_cells = [
+                patch
+                for patch in table.patches
+                if int(patch.get_x()) in group_x and patch.get_facecolor()[3] > 0
+            ]
+            assert group_cells and all(not patch.get_hatch() for patch in group_cells)
+            legend = [t.get_text() for t in table.get_legend().get_texts()]
+            assert (
+                "trend group, dependence group: no bench cell (permutation)" in legend
+            )
+            assert ledger.GROUP_CALIBRATION_NOTE in [t.get_text() for t in fig.texts]
+        finally:
+            plt.close(fig)
+    checks_only = replace(
+        record, rows=record.rows[record.rows["calibration"] != ledger.CALIB_MIN_P]
+    )
+    fig = CheckLedgerPanel(name="unit").build_matplotlib(
+        ledger_bag(checks_only, side="in_spec")
+    )
+    try:
+        legend = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
+        assert not any("group" in text for text in legend)
+        assert ledger.GROUP_CALIBRATION_NOTE not in [t.get_text() for t in fig.texts]
+    finally:
+        plt.close(fig)
+
+
+@pytest.mark.integration
+def test_the_survey_carries_both_group_grids_and_their_table_rows() -> None:
+    """Oracle: specification. One grid per group, bag and clock beside the checks' grids,
+    and a summary-table row for each."""
+    data = build_independence_survey(_ledger(3), _ledger(4), dataset_labels=("a", "b"))
+    for key in ledger.GROUP_KEYS:
+        found = {(g.side, g.clock) for g in data.grids if g.key == key}
+        assert found == {(side, clock) for side in data.sides for clock in data.clocks}
+    instruments = set(survey_summary(data)["instrument"])
+    assert {
+        "Trend group (min-P over those of C1, C2, CvM that answer)",
+        "Dependence group (min-P over those of C5, C6 that answer)",
+    } <= instruments

@@ -60,7 +60,9 @@ def ledger_run_set(*, include_c3: bool) -> tuple[RowKey, ...]:
     """The run-set a ledger ran, from its node's kwargs: the battery's permutation rows.
 
     A ledger run with `include_c3` holds C3 rows, which no run-set can select
-    (`check_outcome.ALL_KEYS`), so it raises.
+    (`check_outcome.ALL_KEYS`), so it raises. A window ledger's group rows
+    (`check_ledger.GROUPS`) are no run-set's either: a band's check outcome reads single
+    checks only.
     """
     if include_c3:
         raise ValueError(

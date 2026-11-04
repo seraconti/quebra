@@ -99,7 +99,8 @@ would make a committed artifact differ per machine. C3's absence from it rests o
 on whether R is installed.
 
 `ledger_recipe.LEDGER_KNOBS` sets `include_c3` to `False` for every `check_ledger` job: the
-ledgers carry the permutation rows only, and the survey draws no C3 grid. A caller that asks a
+ledgers carry the permutation rows and the group rows built from them only, and the survey
+draws no C3 grid. A caller that asks a
 ledger for C3 gets a real C3 p-value in every eligible cell where R is present. Read a green
 C3 cell as "did not reject" and nothing stronger: there is no bench cell behind it to say
 whether that cell had the power to reject.

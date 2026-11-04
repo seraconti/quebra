@@ -20,6 +20,7 @@ from matplotlib.colors import to_rgba
 from matplotlib.text import Text
 
 from quebra.analyzers.check_ledger import (
+    CALIB_MIN_P,
     VERDICT_ABSENT,
     VERDICT_NOT_COMPUTED,
     CheckLedger,
@@ -163,10 +164,12 @@ def test_the_cross_check_holds_a_carve_to_the_ledger_that_scored_it() -> None:
 @pytest.mark.unit
 def test_the_run_set_holds_every_check_the_ledger_writes(scored) -> None:
     """Oracle: the real `ledger_step`. Every row of the synthetic record's ledger but an
-    `(all)` row has a key of the derived run-set, and the run-set's every key has a row;
-    a ledger run with C3 raises."""
+    `(all)` row or a group row has a key of the derived run-set, and the run-set's every
+    key has a row; a ledger run with C3 raises."""
     rows = scored.ledger.rows
-    answered = rows[rows["check_id"] != ALL_ROWS]
+    answered = rows[
+        (rows["check_id"] != ALL_ROWS) & (rows["calibration"] != CALIB_MIN_P)
+    ]
     keys = {
         (c, k, "" if pd.isna(v) else v)
         for c, k, v in answered[["check_id", "calibration", "variant"]].itertuples(

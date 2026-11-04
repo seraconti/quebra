@@ -68,7 +68,8 @@ LEDGER_KNOBS: dict[str, object] = {
     # The bench's `N_PERM`, so a ledger p-value has the resolution the bench measured.
     "n_permutations": 999,
     "seed": 20260812,
-    # C3 is not run: the ledgers carry the permutation rows only, and C3 has no bench cell,
+    # C3 is not run: the ledgers carry the permutation rows and the group rows built from
+    # them only, and C3 has no bench cell,
     # so its cells could never read `pass`. `c3_n_null_sim` stays a declared knob, recorded
     # on the artifact as `CheckLedger.c3_n_null_sim`, for a caller that asks for C3.
     "include_c3": False,

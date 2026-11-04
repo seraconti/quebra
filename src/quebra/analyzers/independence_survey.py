@@ -17,7 +17,10 @@ rather than on raw check results.
 **One grid per entry of `SURVEY_KEYS`**, which is `battery.ROW_KEYS`: the five permutation
 rows, each scored against a bench cell. The asymptotic rows of C1, C2 and CvM, and C5's
 unstudentized variant, run only in the bench (`battery.BENCH_ROW_KEYS`). C3 is not
-surveyed; the comment on `C3_KEY` below says why.
+surveyed; the comment on `C3_KEY` below says why. **And one grid per entry of
+`GROUP_KEYS`**, the ledger's two group rows (`check_ledger.GROUPS`), whose size rests on the
+permutation argument with no bench cell. They are kept apart from `SURVEY_KEYS`, which is
+also what a run-set may select (`check_outcome.ALL_KEYS`).
 
 **Pure compute.** Ledger row tables in, typed artifact out. The job loads the datasets and
 runs the ledgers; nothing here touches disk or matplotlib.
@@ -33,6 +36,7 @@ import numpy as np
 import pandas as pd
 
 from quebra.analyzers.check_ledger import (
+    GROUP_KEYS,
     VERDICT_FAIL,
     VERDICT_INCONCLUSIVE,
     VERDICT_NOT_COMPUTED,
@@ -69,6 +73,16 @@ CHECK_LABELS: dict[tuple[str, str, str], str] = {
     ("cvm_cramer_von_mises", "asymptotic", ""): "CvM Cramer-von Mises (asymptotic)",
     ("cvm_cramer_von_mises", "permutation", ""): "CvM Cramer-von Mises (permutation)",
     C3_KEY: "C3 serial copula (R, no bench cell)",
+    (
+        "trend_group",
+        "min_p",
+        "",
+    ): "Trend group (min-P over those of C1, C2, CvM that answer)",
+    (
+        "dependence_group",
+        "min_p",
+        "",
+    ): "Dependence group (min-P over those of C5, C6 that answer)",
 }
 
 # What each rejection MEANS, so a reader does not have to remember that `fail` is a
@@ -108,6 +122,22 @@ CHECK_NULL: dict[tuple[str, str, str], str] = {
         "",
     ): "rejects when the process is NOT a renewal process",
     C3_KEY: "rejects when the durations are NOT serially independent at any lag",
+    (
+        "trend_group",
+        "min_p",
+        "",
+    ): (
+        "rejects when any member that answers (C1, C2, CvM), calibrated together by "
+        "min-P, finds a TREND or NO renewal process"
+    ),
+    (
+        "dependence_group",
+        "min_p",
+        "",
+    ): (
+        "rejects when any member that answers (C5, C6), calibrated together by min-P, "
+        "finds the ORDER of the durations informative"
+    ),
 }
 
 VERDICT_ORDER = (
@@ -282,7 +312,7 @@ def build_independence_survey(
     blanket = everything[everything["check_id"] == "(all)"]
 
     grids: list[InstrumentGrid] = []
-    for key in SURVEY_KEYS:
+    for key in (*SURVEY_KEYS, *GROUP_KEYS):
         check, calibration, variant = key
         for side in sides:
             for clock in clocks:
@@ -324,7 +354,7 @@ def build_independence_survey(
         meta={
             "alpha": alpha,
             "n_datasets": len(datasets),
-            "n_instruments": len(SURVEY_KEYS),
+            "n_instruments": len(SURVEY_KEYS) + len(GROUP_KEYS),
         },
     )
 

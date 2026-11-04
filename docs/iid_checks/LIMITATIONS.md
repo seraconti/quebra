@@ -21,8 +21,10 @@ non-rejection is the expected outcome whether the durations are dependent or not
 the dependence is strong. A REJECTION is meaningful, because the checks are correctly calibrated. It is the
 silence that carries no information.
 
-`analyzers/check_ledger.py` enforces this: a `pass` requires the p-value AND a sufficient
-event count AND that the bench found the check calibrated at that count. On the 070423 record of qubit 1, 44 of its 56 non-rejections read
+`analyzers/check_ledger.py` enforces this: a check row's `pass` requires the p-value AND a
+sufficient event count AND that the bench found the check calibrated at that count. A group
+row (`check_ledger.GROUPS`) reads no bench cell: its size rests on the permutation argument.
+On the 070423 record of qubit 1, 44 of its 56 non-rejections read
 `inconclusive` or `not interpretable (ties)`, and would have printed `pass` under a p-value-only
 rule (`jobs/active/check_ledger_6d2s_q1.py`, its `q1_070423_check_ledger_data`). Measured on
 the 1 to 10 µs ladder (commit 44c1d78); not re-measured on the 2 to 5 µs ladder.
