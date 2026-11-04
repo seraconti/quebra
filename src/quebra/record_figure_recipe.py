@@ -32,10 +32,12 @@ from quebra.analyzers.check_ledger import CheckLedger
 from quebra.analyzers.check_outcome import RowKey
 from quebra.analyzers.kaplan_meier import CONF_LEVEL
 from quebra.analyzers.record_figure import (
+    build_hazard_block,
     build_survival_block,
     cross_check_carve,
     kaplan_meier_of,
     ledger_run_set,
+    nelson_aalen_of,
 )
 from quebra.analyzers.windows import WindowsResult
 from quebra.core.dataset import Dataset
@@ -47,7 +49,7 @@ from quebra.ledger_recipe import (
     included_ledger_set,
     ledger_step,
 )
-from quebra.plots.record_figure_plot import SurvivalBlockPlot
+from quebra.plots.record_figure_plot import HazardBlockPlot, SurvivalBlockPlot
 from quebra.recipes import wire_t2star_carve
 
 TARGETS = ["static", "academic"]
@@ -117,7 +119,36 @@ def wire_survival_block(job: Job, nodes: RecordNodes) -> None:
     )
 
 
-BLOCKS: tuple[Callable[[Job, RecordNodes], None], ...] = (wire_survival_block,)
+def wire_hazard_block(job: Job, nodes: RecordNodes) -> None:
+    """The hazard block: Nelson-Aalen per rung and bag, each item with its band's check
+    outcome in its `checks` field."""
+    hazards = job.step(
+        nelson_aalen_of,
+        nodes.carve,
+        name=f"nelson_aalen_{nodes.record}",
+        conf_level=CONF_LEVEL,
+    )
+    block = job.step(
+        build_hazard_block,
+        hazards,
+        nodes.ledger,
+        name=f"hazard_block_{nodes.record}",
+        run_set=nodes.run_set,
+        conf_level=CONF_LEVEL,
+        flag=nodes.flag,
+    )
+    job.figure(
+        HazardBlockPlot,
+        block,
+        targets=TARGETS,
+        title=f"{nodes.record} cumulative hazard",
+    )
+
+
+BLOCKS: tuple[Callable[[Job, RecordNodes], None], ...] = (
+    wire_survival_block,
+    wire_hazard_block,
+)
 
 
 @dataclass(frozen=True)

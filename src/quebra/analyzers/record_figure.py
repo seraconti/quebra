@@ -20,12 +20,20 @@ outcome is built (`expand_all_rows`), so its verdict and note reach every cell i
 reading `no row`. The bag rides on the outcome's dataset label (`{record}, {side} bag`), so
 an attachment read alone says which band it belongs to. A record whose carve failed draws
 the failure's note and no curve.
+
+**Hazard block** (`build_hazard_block`). The Nelson-Aalen cumulative hazard per rung and
+bag, with its band, from `survival.nelson_aalen_set` on the same carve. Each item's own
+`checks` field is filled with the outcome of the same rung and bag as the survival band, so
+the hazard band carries its check outcome as a field and a reader of the item alone sees
+it. The ages are converted to minutes here, the unit the survival block draws in.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 from quebra.analyzers.check_attachment import A1_RENEWAL_DURATIONS_ID, CheckAttachment
@@ -45,6 +53,7 @@ from quebra.analyzers.kaplan_meier import (
     KaplanMeierSet,
     kaplan_meier_set,
 )
+from quebra.analyzers.survival import ByThresholdSide, NelsonAalen, nelson_aalen_set
 from quebra.analyzers.windows import WindowsResult
 from quebra.core._artifact_guard import StaleArtifactGuard
 from quebra.core.types import RecordFailure
@@ -142,6 +151,38 @@ def kaplan_meier_of(
     return kaplan_meier_set(event_tables_from_carve(carve), conf_level=conf_level)
 
 
+def nelson_aalen_of(
+    carve: WindowsResult | RecordFailure, *, conf_level: float
+) -> ByThresholdSide[NelsonAalen] | RecordFailure:
+    """The Nelson-Aalen set of a record's carve; a failed carve passes through."""
+    if isinstance(carve, RecordFailure):
+        return carve
+    return nelson_aalen_set(event_tables_from_carve(carve), conf_level=conf_level)
+
+
+def _band_outcomes(
+    ledger: CheckLedger, ladder: tuple[str, ...], run: tuple[RowKey, ...]
+) -> dict[tuple[str, str], CheckOutcome]:
+    """The check outcome of every band of `ladder`, by (rung, side): that rung's and bag's
+    ledger rows on both clocks, `(all)` rows expanded over `run` (module docstring)."""
+    rows = expand_all_rows(ledger.rows, run)
+    return {
+        (label, side): build_check_outcome(
+            rows,
+            threshold_label=label,
+            run_set=run,
+            display_set=run,
+            datasets=(ledger.dataset_id,),
+            dataset_labels=(f"{ledger.dataset_id}, {side} bag",),
+            clocks=CLOCKS,
+            alpha=ledger.alpha,
+            side=side,
+        )
+        for label in ladder
+        for side in SIDES
+    }
+
+
 @dataclass
 class SurvivalBlockData(StaleArtifactGuard):
     """Everything the survival block of one record draws.
@@ -181,7 +222,6 @@ def build_survival_block(
     that rung and bag (module docstring)."""
     run, _display = resolve(run_set, run_set)
     record = ledger.dataset_id
-    rows = expand_all_rows(ledger.rows, run)
     if isinstance(km, RecordFailure):
         failure = km.note()
         ladder = tuple(label for label, _v, _b in ledger.thresholds)
@@ -196,21 +236,7 @@ def build_survival_block(
             raise ValueError(
                 f"the curves were built at {km.conf_level}, the block declares {conf_level}"
             )
-    outcomes = {
-        (label, side): build_check_outcome(
-            rows,
-            threshold_label=label,
-            run_set=run,
-            display_set=run,
-            datasets=(record,),
-            dataset_labels=(f"{record}, {side} bag",),
-            clocks=CLOCKS,
-            alpha=ledger.alpha,
-            side=side,
-        )
-        for label in ladder
-        for side in SIDES
-    }
+    outcomes = _band_outcomes(ledger, ladder, run)
     return SurvivalBlockData(
         dataset_id=record,
         flag=flag,
@@ -226,5 +252,81 @@ def build_survival_block(
             key: check_attachment_of(outcome, A1_RENEWAL_DURATIONS_ID)
             for key, outcome in outcomes.items()
         },
+        verdict_key=VERDICT_KEY,
+    )
+
+
+@dataclass
+class HazardBlockData(StaleArtifactGuard):
+    """Everything the hazard block of one record draws.
+
+    `hazards`, `time_min` and `outcomes` are keyed by (rung, side), every rung of `ladder`
+    and every side of `sides`. `hazards[key]` is the Nelson-Aalen item with its `checks`
+    field filled from `outcomes[key]`, naming a1; `time_min[key]` is its `time_s` in
+    minutes. `failure`, `flag` and `verdict_key` read as on `SurvivalBlockData`.
+    """
+
+    dataset_id: str
+    flag: str
+    failure: str
+    ladder: tuple[str, ...]
+    sides: tuple[str, ...]
+    clocks: tuple[str, ...]
+    run_set: tuple[RowKey, ...]
+    conf_level: float
+    hazards: dict[tuple[str, str], NelsonAalen]
+    time_min: dict[tuple[str, str], np.ndarray]
+    outcomes: dict[tuple[str, str], CheckOutcome]
+    verdict_key: tuple[str, ...]
+
+
+def build_hazard_block(
+    hazards: ByThresholdSide[NelsonAalen] | RecordFailure,
+    ledger: CheckLedger,
+    *,
+    run_set: tuple[RowKey, ...],
+    conf_level: float,
+    flag: str,
+) -> HazardBlockData:
+    """The hazard block of one record: each Nelson-Aalen item with the check outcome of its
+    rung and bag in its `checks` field (module docstring)."""
+    run, _display = resolve(run_set, run_set)
+    if isinstance(hazards, RecordFailure):
+        failure = hazards.note()
+        ladder = tuple(label for label, _v, _b in ledger.thresholds)
+        items: dict[tuple[str, str], NelsonAalen] = {}
+    else:
+        failure = ""
+        ladder = tuple(hazards.ladder)
+        items = {
+            (label, side): hazards.get(label, side)
+            for label in ladder
+            for side in SIDES
+        }
+        mismatched = {i.conf_level for i in items.values()} - {conf_level}
+        if mismatched:
+            raise ValueError(
+                f"the hazards were built at {sorted(mismatched)}, the block declares "
+                f"{conf_level}"
+            )
+    outcomes = _band_outcomes(ledger, ladder, run)
+    filled = {
+        key: dataclasses.replace(
+            item, checks=check_attachment_of(outcomes[key], A1_RENEWAL_DURATIONS_ID)
+        )
+        for key, item in items.items()
+    }
+    return HazardBlockData(
+        dataset_id=ledger.dataset_id,
+        flag=flag,
+        failure=failure,
+        ladder=ladder,
+        sides=SIDES,
+        clocks=CLOCKS,
+        run_set=run,
+        conf_level=conf_level,
+        hazards=filled,
+        time_min={key: item.time_s / 60.0 for key, item in filled.items()},
+        outcomes=outcomes,
         verdict_key=VERDICT_KEY,
     )

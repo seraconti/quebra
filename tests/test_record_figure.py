@@ -29,20 +29,29 @@ from quebra.analyzers.check_outcome import PERMUTATION_KEYS
 from quebra.analyzers.checks.result import CLOCKS
 from quebra.analyzers.event_table import SIDES
 from quebra.analyzers.kaplan_meier import CONF_LEVEL
+from quebra.analyzers.event_table import event_tables_from_carve
+from quebra.analyzers.independence_survey import CHECK_LABELS
 from quebra.analyzers.record_figure import (
     ALL_ROWS,
+    build_hazard_block,
     build_survival_block,
     cross_check_carve,
     kaplan_meier_of,
     ledger_run_set,
+    nelson_aalen_of,
 )
+from quebra.analyzers.survival import nelson_aalen_set
 from quebra.core.job import Job, _import_job
 from quebra.core.reference import ArtifactRef
 from quebra.core.runner import run_job
 from quebra.core.types import RecordFailure
 from quebra.ledger_recipe import LEDGER_KNOBS, ledger_step
 from quebra.paper_tables import FLAG_TEXT, PAPER_RECORDS, SHADED
-from quebra.plots.record_figure_plot import CELL_GID, SurvivalBlockPlot
+from quebra.plots.record_figure_plot import (
+    CELL_GID,
+    HazardBlockPlot,
+    SurvivalBlockPlot,
+)
 from quebra.plots.theme import verdict_color
 from quebra.record_figure_recipe import configure_record_figure_job
 from quebra.recipes import T2STAR_THRESHOLDS
@@ -312,6 +321,128 @@ def test_a_failed_record_draws_its_failure_and_no_curve() -> None:
     try:
         drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
         assert f"not computed: {failure.note()}" in drawn
+    finally:
+        plt.close(fig)
+
+
+def _hazard_block(carve: object, ledger: CheckLedger, flag: str = "") -> object:
+    return build_hazard_block(
+        nelson_aalen_of(carve, conf_level=CONF_LEVEL),  # type: ignore[arg-type]
+        ledger,
+        run_set=ledger_run_set(include_c3=False),
+        conf_level=CONF_LEVEL,
+        flag=flag,
+    )
+
+
+@pytest.mark.unit
+def test_each_hazard_item_carries_its_own_rung_and_bag_outcome(scored) -> None:
+    """Oracles: `survival.nelson_aalen_set` called on its own, the raw ledger rows, and
+    minutes = seconds / 60. Each item keeps the reference's numbers, which carry no check
+    outcome; its `checks` field names a1 and lists, check by check and clock by clock, the
+    ledger's verdict of its own rung and bag."""
+    block = _hazard_block(scored.carve, scored.ledger)
+    reference = nelson_aalen_set(
+        event_tables_from_carve(scored.carve), conf_level=CONF_LEVEL
+    )
+    rows = scored.ledger.rows
+    assert set(block.hazards) == set(reference.items)
+    for (rung, side), item in block.hazards.items():
+        plain = reference.get(rung, side)
+        assert plain.checks.checks_asked == (), "premise: the step alone fills nothing"
+        for field in (
+            "time_s",
+            "cumulative_hazard",
+            "variance",
+            "band_lower",
+            "band_upper",
+        ):
+            np.testing.assert_array_equal(getattr(item, field), getattr(plain, field))
+        assert (item.n_windows, item.n_deaths, item.n_unobserved_birth_dropped) == (
+            plain.n_windows, plain.n_deaths, plain.n_unobserved_birth_dropped
+        )  # fmt: skip
+        np.testing.assert_allclose(block.time_min[(rung, side)], plain.time_s / 60.0)
+        expected = []
+        for key in PERMUTATION_KEYS:
+            for clock in CLOCKS:
+                cell = rows[
+                    (rows["threshold_label"] == rung)
+                    & (rows["side"] == side)
+                    & (rows["clock"] == clock)
+                    & (rows["check_id"].isin([key[0], ALL_ROWS]))
+                ]
+                expected.append(
+                    (
+                        CHECK_LABELS[key],
+                        f"{RECORD}, {side} bag",
+                        cell["verdict"].iloc[0],
+                    )
+                )
+        assert item.checks.assumption_id == "a1_renewal_durations"
+        assert item.checks.check_verdicts == tuple(expected), (rung, side)
+
+
+@pytest.mark.unit
+def test_the_hazard_block_draws_its_artifact(scored) -> None:
+    """Oracle: the artifact's fields read back off the figure. One log-log axes per bag
+    holding each rung's H after its first death, in ladder order; every rung's counts in
+    that bag's legend; the check cells in each band's verdict colours, bag by bag, rung by
+    rung, check by check; the flag in the caption. A failed record draws its note."""
+    block = _hazard_block(scored.carve, scored.ledger, FLAG_TEXT)
+    fig = HazardBlockPlot("hazard").build_matplotlib(block)
+    try:
+        axes = [ax for ax in fig.axes if ax.get_yscale() == "log"]
+        assert len(axes) == len(SIDES)
+        drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
+        expected_cells = []
+        for ax, side in zip(axes, SIDES, strict=True):
+            assert ax.get_title(loc="left").startswith(side.split("_")[0])
+            steps = [line for line in ax.get_lines() if len(line.get_ydata())]
+            items = [block.hazards[(r, side)] for r in block.ladder]
+            with_deaths = [item for item in items if item.n_deaths]
+            assert len(steps) == len(with_deaths)
+            for line, item in zip(steps, with_deaths, strict=True):
+                np.testing.assert_array_equal(
+                    line.get_ydata(), item.cumulative_hazard[1:]
+                )
+            for rung, item in zip(block.ladder, items, strict=True):
+                assert (
+                    f"{rung}: n {item.n_windows}, d {item.n_deaths}, "
+                    f"excluded {item.n_unobserved_birth_dropped}"
+                ) in drawn
+                expected_cells += [
+                    to_rgba(verdict_color(v))
+                    for grid in block.outcomes[(rung, side)].grids
+                    for v in grid.verdicts[0]
+                ]
+        cells = [
+            p.get_facecolor()
+            for ax in fig.axes
+            for p in ax.patches
+            if p.get_gid() == CELL_GID
+        ]
+        assert cells == expected_cells
+        assert FLAG_TEXT in drawn
+    finally:
+        plt.close(fig)
+    failure = RecordFailure(
+        dataset_id=RECORD, stage="t2star", reason="ValueError: no reads"
+    )
+    failed = _hazard_block(
+        failure,
+        ledger_step(
+            failure,
+            pd.read_csv(BENCH),
+            thresholds=T2STAR_THRESHOLDS,
+            **{**LEDGER_KNOBS, "n_permutations": 99},  # type: ignore[arg-type]
+        ),
+    )
+    assert failed.hazards == {} and failed.failure == failure.note()
+    fig = HazardBlockPlot("hazard").build_matplotlib(failed)
+    try:
+        assert f"not computed: {failure.note()}" in "\n".join(
+            t.get_text() for t in fig.findobj(Text)
+        )
     finally:
         plt.close(fig)
 
