@@ -46,6 +46,7 @@ from quebra.core.job import Job
 from quebra.core.types import RecordFailure
 from quebra.panels.check_ledger import CheckLedgerPanel
 from quebra.plots.independence_survey_plot import (
+    GROUP_SURVEY_PLOTS,
     SURVEY_PLOTS,
     IndependenceSurveyOverviewPlot,
 )
@@ -249,7 +250,8 @@ def wire_independence_survey(
     prefix: str,
     alpha: float,
 ) -> None:
-    """One survey over `ledger_sets`: the grids, the overview and one figure per check.
+    """One survey over `ledger_sets`: the grids, the overview and one figure per check and
+    per group.
 
     `ledger_sets` are `CheckLedgers` nodes of this job or refs into included ledger jobs;
     the survey reshapes their ledgers and scores nothing.
@@ -270,7 +272,7 @@ def wire_independence_survey(
         targets=TARGETS,
         title=f"{prefix} overview all checks",
     )
-    for plot_class in SURVEY_PLOTS:
+    for plot_class in (*SURVEY_PLOTS, *GROUP_SURVEY_PLOTS):
         job.figure(
             plot_class, survey, targets=TARGETS, title=f"{prefix} {plot_class.__name__}"
         )

@@ -3,7 +3,8 @@
 One instrument, one figure, because a reader asks about one instrument at a time and a
 single composite of all of them would make each grid unreadably small. `SURVEY_PLOTS` holds
 one class per entry of `independence_survey.SURVEY_KEYS`, in that order, so the job can
-wire them in a loop.
+wire them in a loop, and `GROUP_SURVEY_PLOTS` one per group of `check_ledger.GROUP_KEYS`,
+whose caption says the group reads no bench cell.
 
 Each figure is one instrument: its grids are the clocks down and the bags across, each grid
 datasets down and threshold ladder across, each headed on a strip of its bag's colour
@@ -28,6 +29,7 @@ from quebra.analyzers.independence_survey import (
     IndependenceSurveyData,
     _fmt_p,
 )
+from quebra.analyzers.check_ledger import GROUP_CALIBRATION_NOTE, GROUP_KEYS
 from quebra.analyzers.independence_survey import SURVEY_KEYS
 from quebra.plots import theme
 from quebra.plots.base import BasePlot
@@ -42,10 +44,20 @@ def _check(result: object) -> IndependenceSurveyData:
     return result
 
 
+# A group grid's members are those that answer in each cell, which can differ by cell.
+GROUP_MEMBERS_NOTE = (
+    "A cell calibrates the members that answer in it, so they can differ from cell to "
+    "cell; each ledger row names them."
+)
+
+
 class _InstrumentSurveyPlot(BasePlot):
-    """Base: subclasses set `KEY` to one entry of `battery.ROW_KEYS`."""
+    """Base: subclasses set `KEY` to one entry of `battery.ROW_KEYS`, or `GROUP` and `KEY`
+    to one entry of `check_ledger.GROUP_KEYS`."""
 
     KEY: tuple[str, str, str] = ()
+    # A group row reads no bench cell, so its caption says what its size rests on instead.
+    GROUP: bool = False
 
     def build_matplotlib(self, result: object, style: str = "default") -> plt.Figure:
         pd_ = _check(result)
@@ -97,16 +109,27 @@ class _InstrumentSurveyPlot(BasePlot):
                 f"{g.counts['not computed']} of {g.verdicts.size} not computed"
                 for g in grids
             ]
+            pale = (
+                "too few events"
+                if self.GROUP
+                else "too few events, a size the bench found wrong, or no bench cell"
+            )
+            calibration = (
+                GROUP_CALIBRATION_NOTE[0].upper()
+                + GROUP_CALIBRATION_NOTE[1:]
+                + " "
+                + GROUP_MEMBERS_NOTE
+                if self.GROUP
+                else "Every instrument here is scored against a measured bench size."
+            )
             fig.text(
                 0.5,
                 0.035,
                 f"This instrument {first.null_statement}. A red cell is a statement about "
                 f"the DATA, not a failed test. A grid title's colour names its bag, not a "
                 f"verdict. Pale cells carry no information: an "
-                f"inconclusive non-rejection (too few events, a size the bench found "
-                f"wrong, or no bench cell) is not evidence of independence. "
-                f"{'; '.join(decided)}. "
-                "Every instrument here is scored against a measured bench size.",
+                f"inconclusive non-rejection ({pale}) is not evidence of independence. "
+                f"{'; '.join(decided)}. {calibration}",
                 ha="center",
                 wrap=True,
                 **theme.CAPTION,
@@ -170,13 +193,15 @@ class _InstrumentSurveyPlot(BasePlot):
         ax.tick_params(length=0)
 
 
-def _make(key: tuple[str, str, str], name: str) -> type[_InstrumentSurveyPlot]:
-    return type(name, (_InstrumentSurveyPlot,), {"KEY": key})
+def _make(
+    key: tuple[str, str, str], name: str, group: bool = False
+) -> type[_InstrumentSurveyPlot]:
+    return type(name, (_InstrumentSurveyPlot,), {"KEY": key, "GROUP": group})
 
 
 def _class_name(key: tuple[str, str, str]) -> str:
     """`("c5_rank_autocorr", "permutation", "studentized")` -> `C5RankAutocorrPermutationStudentizedSurveyPlot`."""
-    parts = [p for p in (*key[0].split("_"), key[1], key[2]) if p]
+    parts = [p for part in key for p in part.split("_") if p]
     return "".join(p.capitalize() for p in parts) + "SurveyPlot"
 
 
@@ -188,8 +213,13 @@ SURVEY_PLOTS: list[type[_InstrumentSurveyPlot]] = [
     _make(key, _class_name(key)) for key in SURVEY_KEYS
 ]
 
+# One per group of `check_ledger.GROUP_KEYS`, generated the same way.
+GROUP_SURVEY_PLOTS: list[type[_InstrumentSurveyPlot]] = [
+    _make(key, _class_name(key), group=True) for key in GROUP_KEYS
+]
+
 # Bound at module level too, so an importer can name one directly.
-for _cls in SURVEY_PLOTS:
+for _cls in (*SURVEY_PLOTS, *GROUP_SURVEY_PLOTS):
     globals()[_cls.__name__] = _cls
 
 

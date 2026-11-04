@@ -32,8 +32,12 @@ from quebra.analyzers.independence_survey import (  # noqa: E402
     survey_summary,
 )
 from quebra.analyzers.min_p import min_p  # noqa: E402
-from quebra.ledger_recipe import ledger_bag  # noqa: E402
+from quebra.ledger_recipe import ledger_bag, wire_independence_survey  # noqa: E402
 from quebra.panels.check_ledger import CheckLedgerPanel  # noqa: E402
+from quebra.plots.independence_survey_plot import (  # noqa: E402
+    GROUP_MEMBERS_NOTE,
+    GROUP_SURVEY_PLOTS,
+)
 
 import quebra.analyzers.checks.c1_lewis_robinson as c1  # noqa: E402
 import quebra.analyzers.checks.c2_anderson_darling as c2  # noqa: E402
@@ -641,3 +645,37 @@ def test_the_survey_carries_both_group_grids_and_their_table_rows() -> None:
         "Trend group (min-P over those of C1, C2, CvM that answer)",
         "Dependence group (min-P over those of C5, C6 that answer)",
     } <= instruments
+
+
+@pytest.mark.integration
+def test_each_group_gets_a_survey_figure_with_its_own_caption() -> None:
+    """Oracle: specification. One survey figure per group, wired beside the checks', titled
+    with the group's label and captioned with the group calibration sentence and the
+    members sentence, never with the bench sentence the checks' figures carry."""
+    from quebra.core.job import Job
+    from quebra.core.reference import LocalRef
+
+    data = build_independence_survey(_ledger(3), _ledger(4), dataset_labels=("a", "b"))
+    assert [plot.KEY for plot in GROUP_SURVEY_PLOTS] == list(ledger.GROUP_KEYS)
+    for plot_class in GROUP_SURVEY_PLOTS:
+        fig = plot_class(name="unit").build_matplotlib(data)
+        try:
+            title = fig._suptitle.get_text()
+            caption = " ".join(t.get_text() for t in fig.texts)
+        finally:
+            plt.close(fig)
+        assert title in {
+            "Trend group (min-P over those of C1, C2, CvM that answer)",
+            "Dependence group (min-P over those of C5, C6 that answer)",
+        }
+        sentence = ledger.GROUP_CALIBRATION_NOTE
+        assert sentence[0].upper() + sentence[1:] in caption
+        assert GROUP_MEMBERS_NOTE in caption
+        assert "scored against a measured bench size" not in caption
+
+    job = Job("survey_wiring")
+    ledgers = job.step(lambda: None, name="ledgers")
+    assert isinstance(ledgers, LocalRef)
+    wire_independence_survey(job, [ledgers], ["a"], prefix="p", alpha=0.05)
+    drawn = {getattr(sink, "plot_class", None) for sink in job.sinks}
+    assert set(GROUP_SURVEY_PLOTS) <= drawn

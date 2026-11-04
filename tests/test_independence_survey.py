@@ -56,6 +56,7 @@ from quebra.ledger_recipe import (
 )
 from quebra.panels.check_ledger import CheckLedgerPanel
 from quebra.plots.independence_survey_plot import (
+    GROUP_SURVEY_PLOTS,
     SURVEY_PLOTS,
     IndependenceSurveyOverviewPlot,
 )
@@ -229,7 +230,12 @@ def test_a_ledger_job_draws_and_writes_only_ledgers_and_their_survey():
     """No T2* panel: that belongs to the T2* jobs. What it writes is its ledgers, their
     survey, each record's carve (`CARVE_SUFFIX`) and the bundle of those carves
     (`CARVES_DATA_SUFFIX`), which the compliance survey reads."""
-    allowed = {CheckLedgerPanel, IndependenceSurveyOverviewPlot, *SURVEY_PLOTS}
+    allowed = {
+        CheckLedgerPanel,
+        IndependenceSurveyOverviewPlot,
+        *SURVEY_PLOTS,
+        *GROUP_SURVEY_PLOTS,
+    }
     for job_id, job in _ledger_jobs().items():
         for sink in job.sinks:
             if hasattr(sink, "plot_class"):
