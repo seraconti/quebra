@@ -47,7 +47,7 @@ from quebra.analyzers.check_attachment import (
 )
 from quebra.analyzers.event_table import CYCLES, EventTable
 from quebra.analyzers.kaplan_meier import CONF_LEVEL, z_two_sided
-from quebra.analyzers.survival import curve_summaries
+from quebra.analyzers.survival import CurveSummaries, curve_summaries
 from quebra.core.types import CalibrationEvent, Norm
 
 
@@ -142,6 +142,28 @@ class Mtbc:
     )
 
 
+def rmst_interval(summary: CurveSummaries, conf_level: float) -> tuple[float, float]:
+    """The Wald interval of a restricted mean: rmst -/+ z SE, z two-sided at `conf_level`.
+
+    The one definition: the MTBC (cycles) and the record figures' curve summaries (windows
+    of one bag at one rung) both call it. A lower end at or below 0 is returned as
+    computed. NaN in, NaN out.
+
+    Validity assumptions
+
+    - Assumption: the restricted mean is close to normal with the standard error
+      `survival.curve_summaries` gives, which rests on exchangeable durations (cycles:
+      `a2_renewal_cycles`; windows: `a1_renewal_durations`).
+      Diagnostic: the check outcome the summary carries; an SE of 0, which a curve with no
+      death before tau gives, makes an interval of no width that says nothing about the
+      spread.
+      Consequence of violation: coverage away from `conf_level`, worst with few deaths.
+      Reference: no source located.
+    """
+    half_s = z_two_sided(conf_level) * summary.rmst_se_s
+    return summary.rmst_s - half_s, summary.rmst_s + half_s
+
+
 def mtbc(table: EventTable, *, conf_level: float = CONF_LEVEL) -> Mtbc:
     """MTBC from an event table of cycles: `curve_summaries`, plus rmst +/- z SE.
 
@@ -153,13 +175,13 @@ def mtbc(table: EventTable, *, conf_level: float = CONF_LEVEL) -> Mtbc:
             f"mtbc needs an event table of cycles (side={CYCLES!r}); got {table.side!r}"
         )
     summary = curve_summaries(table, conf_level=conf_level)
-    half_s = z_two_sided(conf_level) * summary.rmst_se_s
+    lower_s, upper_s = rmst_interval(summary, conf_level)
     return Mtbc(
         dataset_id=table.dataset_id,
         rmst_s=summary.rmst_s,
         rmst_se_s=summary.rmst_se_s,
-        lower_s=summary.rmst_s - half_s,
-        upper_s=summary.rmst_s + half_s,
+        lower_s=lower_s,
+        upper_s=upper_s,
         tau_s=summary.rmst_tau_s,
         conf_level=conf_level,
         n_cycles=summary.n_windows,

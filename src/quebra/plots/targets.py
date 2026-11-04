@@ -1,9 +1,11 @@
 """Render targets: how a figure sink writes a built figure to disk, registered by name.
 
-Three are registered. `static` writes `{name}_static.pdf` in the default style, `academic`
-writes `{name}_academic.pdf` in the paper style, and `poster` writes a 600 dpi PNG in the
-poster style. A job names targets in `job.figure(..., targets=[...])`, and the runner refuses
-an unregistered name before any step runs. A new target is one decorated function.
+Four are registered. `static` writes `{name}_static.pdf` in the default style, `academic`
+writes `{name}_academic.pdf` in the paper style, `poster` writes a 600 dpi PNG in the poster
+style, and `table` writes `{name}.csv`: the frame the plot's `build_table` returns, which is
+the step-built frame unchanged, written unrounded. A job names targets in
+`job.figure(..., targets=[...])`, and the runner refuses an unregistered name before any
+step runs. A new target is one decorated function.
 """
 
 from __future__ import annotations
@@ -106,3 +108,19 @@ def render_poster(plot: _RenderablePlot, result: object, out_dir: Path) -> None:
             metadata=_PNG_METADATA,
         )
     plt.close(figure)
+
+
+@register_target("table")
+def render_table(plot: _RenderablePlot, result: object, out_dir: Path) -> None:
+    """The plot's table as `{name}.csv`, every float at full precision.
+
+    The plot must define `build_table(result)`; a figure-only plot raises here, before
+    anything is written.
+    """
+    build_table = getattr(plot, "build_table", None)
+    if build_table is None:
+        raise TypeError(f"{type(plot).__name__} has no build_table, so no table target")
+    frame = build_table(result)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # No float_format: pandas writes each float's shortest round-tripping repr.
+    frame.to_csv(out_dir / f"{plot.name}.csv", index=False)

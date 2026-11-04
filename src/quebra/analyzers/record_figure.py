@@ -26,6 +26,19 @@ bag, with its band, from `survival.nelson_aalen_set` on the same carve. Each ite
 `checks` field is filled with the outcome of the same rung and bag as the survival band, so
 the hazard band carries its check outcome as a field and a reader of the item alone sees
 it. The ages are converted to minutes here, the unit the survival block draws in.
+
+**Curve summaries** (`build_record_summaries`, `summaries_table`). Each record's quantiles
+and restricted mean per rung and bag (`survival.curve_summaries_set`, tau each curve's own
+longest age), each item's `checks` field filled as the hazard items' are, and the
+restricted mean's Wald interval from `mtbf.rmst_interval`, the function the MTBC uses. The
+job's table holds one row per drawn record, rung and bag, unrounded and keyed on
+`threshold_label`; a ledger record outside the paper's tables gets one row with
+`drawn = False` and the reason, and a record whose carve failed one row with its note. A
+quantile or an interval end the curve never reaches is NaN, and so is every number of an
+empty bag (`n_windows` 0). The interval is kept as computed, as the MTBC's is, and
+`rmst_interval_note` says when it has no width (no death before tau, so SE 0) or its lower
+end is at or below 0. `check_verdicts` lists each check's verdicts on the side clock, then
+the calendar clock.
 """
 
 from __future__ import annotations
@@ -53,13 +66,27 @@ from quebra.analyzers.kaplan_meier import (
     KaplanMeierSet,
     kaplan_meier_set,
 )
-from quebra.analyzers.survival import ByThresholdSide, NelsonAalen, nelson_aalen_set
+from quebra.analyzers.mtbf import rmst_interval
+from quebra.analyzers.survival import (
+    DEFAULT_QUANTILES,
+    ByThresholdSide,
+    CurveSummaries,
+    NelsonAalen,
+    curve_summaries_set,
+    nelson_aalen_set,
+)
 from quebra.analyzers.windows import WindowsResult
 from quebra.core._artifact_guard import StaleArtifactGuard
 from quebra.core.types import RecordFailure
 
 # The check id of the one row the ledger writes for a rung, bag and clock it could not score.
 ALL_ROWS = "(all)"
+# The reason a ledger record outside the paper's dataset tables carries in the summaries.
+EXCLUDED_REASON = "not in the paper's dataset tables, so not drawn"
+# `rmst_interval_note` of a restricted mean whose SE is 0, and of one whose interval
+# reaches 0.
+NOTE_NO_WIDTH = "SE 0: no death before tau, so the interval has no width"
+NOTE_LOWER_AT_ZERO = "lower end at or below 0, reported as computed"
 # The verdicts a survival block's key names: what the ledger can say, then what a builder
 # writes for a cell with no row.
 VERDICT_KEY = (*VERDICTS, VERDICT_ABSENT)
@@ -330,3 +357,196 @@ def build_hazard_block(
         outcomes=outcomes,
         verdict_key=VERDICT_KEY,
     )
+
+
+def curve_summaries_of(
+    carve: WindowsResult | RecordFailure, *, conf_level: float
+) -> ByThresholdSide[CurveSummaries] | RecordFailure:
+    """The curve summaries of a record's carve, each restricted to its own longest age; a
+    failed carve passes through."""
+    if isinstance(carve, RecordFailure):
+        return carve
+    return curve_summaries_set(event_tables_from_carve(carve), conf_level=conf_level)
+
+
+@dataclass
+class RecordSummaries(StaleArtifactGuard):
+    """One record's curve summaries, keyed by (rung, side), each with its `checks` field
+    filled from its band's check outcome, naming a1, and `rmst_interval_s` its restricted
+    mean's Wald interval at `conf_level`. `failure` is the carve's failure note, empty when
+    it carved; a failed record has no item."""
+
+    dataset_id: str
+    flag: str
+    failure: str
+    ladder: tuple[str, ...]
+    conf_level: float
+    summaries: dict[tuple[str, str], CurveSummaries]
+    rmst_interval_s: dict[tuple[str, str], tuple[float, float]]
+
+
+def build_record_summaries(
+    summaries: ByThresholdSide[CurveSummaries] | RecordFailure,
+    ledger: CheckLedger,
+    *,
+    run_set: tuple[RowKey, ...],
+    conf_level: float,
+    flag: str,
+) -> RecordSummaries:
+    """One record's summaries with their check outcomes and intervals (module docstring)."""
+    run, _display = resolve(run_set, run_set)
+    if isinstance(summaries, RecordFailure):
+        failure = summaries.note()
+        ladder = tuple(label for label, _v, _b in ledger.thresholds)
+        items: dict[tuple[str, str], CurveSummaries] = {}
+    else:
+        failure = ""
+        ladder = tuple(summaries.ladder)
+        items = {
+            (label, side): summaries.get(label, side)
+            for label in ladder
+            for side in SIDES
+        }
+        mismatched = {i.conf_level for i in items.values()} - {conf_level}
+        if mismatched:
+            raise ValueError(
+                f"the summaries were built at {sorted(mismatched)}, the block declares "
+                f"{conf_level}"
+            )
+    outcomes = _band_outcomes(ledger, ladder, run)
+    filled = {
+        key: dataclasses.replace(
+            item, checks=check_attachment_of(outcomes[key], A1_RENEWAL_DURATIONS_ID)
+        )
+        for key, item in items.items()
+    }
+    return RecordSummaries(
+        dataset_id=ledger.dataset_id,
+        flag=flag,
+        failure=failure,
+        ladder=ladder,
+        conf_level=conf_level,
+        summaries=filled,
+        rmst_interval_s={
+            key: rmst_interval(item, conf_level) for key, item in filled.items()
+        },
+    )
+
+
+def _quantile_columns(p: float) -> tuple[str, str, str]:
+    name = f"q{100 * p:g}"
+    return f"{name}_s", f"{name}_lower_s", f"{name}_upper_s"
+
+
+# The summaries table's columns, in order; the quantiles are `curve_summaries_of`'s.
+SUMMARY_COLUMNS = (
+    "record",
+    "drawn",
+    "reason",
+    "flag",
+    "threshold_label",
+    "side",
+    "conf_level",
+    "n_windows",
+    "n_deaths",
+    "n_censored",
+    "n_unobserved_birth_dropped",
+    "max_observed_age_s",
+    "rmst_tau_s",
+    "rmst_s",
+    "rmst_se_s",
+    "rmst_lower_s",
+    "rmst_upper_s",
+    "rmst_interval_note",
+    *(name for p in DEFAULT_QUANTILES for name in _quantile_columns(p)),
+    "point_standing",
+    "interval_standing",
+    "assumption_id",
+    "checks_asked",
+    "checks_unanswered",
+    "check_verdicts",
+    "check_summary",
+)
+# Counts, written as integers with an empty cell where a row has none.
+COUNT_COLUMNS = ("n_windows", "n_deaths", "n_censored", "n_unobserved_birth_dropped")
+
+
+def _interval_note(item: CurveSummaries, lower: float) -> str:
+    if item.rmst_se_s == 0.0:
+        return NOTE_NO_WIDTH
+    if lower <= 0.0:
+        return NOTE_LOWER_AT_ZERO
+    return ""
+
+
+def _verdicts_text(checks: CheckAttachment) -> str:
+    """`check: verdict, verdict; ...`, each check's verdicts in clock order."""
+    by_check: dict[str, list[str]] = {}
+    for check, _dataset, verdict in checks.check_verdicts:
+        by_check.setdefault(check, []).append(verdict)
+    return "; ".join(f"{check}: {', '.join(v)}" for check, v in by_check.items())
+
+
+def summaries_table(
+    *records: RecordSummaries, excluded: tuple[str, ...]
+) -> pd.DataFrame:
+    """One row per record, rung and bag of `records`, then one per record in `excluded`
+    (module docstring). Floats are kept as computed; a quantile the curve never reaches is
+    NaN."""
+    rows: list[dict[str, object]] = []
+    for record in records:
+        head = {"record": record.dataset_id, "drawn": True, "flag": record.flag}
+        if record.failure:
+            rows.append({**head, "reason": record.failure})
+            continue
+        for (label, side), item in record.summaries.items():
+            lower, upper = record.rmst_interval_s[(label, side)]
+            row: dict[str, object] = {
+                **head,
+                "reason": "",
+                "threshold_label": label,
+                "side": side,
+                "conf_level": item.conf_level,
+                "n_windows": item.n_windows,
+                "n_deaths": item.n_deaths,
+                "n_censored": item.n_censored,
+                "n_unobserved_birth_dropped": item.n_unobserved_birth_dropped,
+                "max_observed_age_s": item.max_observed_age_s,
+                "rmst_tau_s": item.rmst_tau_s,
+                "rmst_s": item.rmst_s,
+                "rmst_se_s": item.rmst_se_s,
+                "rmst_lower_s": lower,
+                "rmst_upper_s": upper,
+                "rmst_interval_note": _interval_note(item, lower),
+            }
+            for p, point, low, high in zip(
+                item.quantile_p,
+                item.quantile_s,
+                item.quantile_lower_s,
+                item.quantile_upper_s,
+                strict=True,
+            ):
+                names = _quantile_columns(p)
+                for name, value in zip(names, (point, low, high), strict=True):
+                    row[name] = np.nan if value is None else value
+            row.update(
+                {
+                    "point_standing": item.point_standing,
+                    "interval_standing": item.interval_standing,
+                    "assumption_id": item.checks.assumption_id,
+                    "checks_asked": "; ".join(item.checks.checks_asked),
+                    "checks_unanswered": "; ".join(item.checks.checks_unanswered),
+                    "check_verdicts": _verdicts_text(item.checks),
+                    "check_summary": item.checks.summary("interval"),
+                }
+            )
+            rows.append(row)
+    rows += [
+        {"record": record, "drawn": False, "flag": "", "reason": EXCLUDED_REASON}
+        for record in excluded
+    ]
+    unknown = sorted({key for row in rows for key in row} - set(SUMMARY_COLUMNS))
+    if unknown:
+        raise ValueError(f"summary columns {unknown} are not in SUMMARY_COLUMNS")
+    table = pd.DataFrame(rows, columns=list(SUMMARY_COLUMNS))
+    return table.astype({column: "Int64" for column in COUNT_COLUMNS})

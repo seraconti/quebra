@@ -16,6 +16,9 @@ is drawn and, for a record the paper's dataset tables shade, carries its flag.
 hazard with its band, on log axes shared by both bags, the counts per rung in the legend.
 Under each bag, the check outcome of each rung's band: checks down, and per rung its two
 clocks side by side. The key and the caption read as in the survival block.
+
+**Curve summaries** (`SummariesTablePlot`). No drawing: `build_table` hands the step-built
+frame to the `table` target unchanged.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ import math
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from matplotlib.figure import Figure, SubFigure
 from matplotlib.patches import Patch, Rectangle
 from matplotlib.ticker import NullFormatter
@@ -461,3 +465,14 @@ class HazardBlockPlot(BasePlot):
             )
             draw_hazard(fig, data, style)
         return fig
+
+
+class SummariesTablePlot(BasePlot):
+    """The curve summaries of a record-figure job, for the `table` target only."""
+
+    def build_table(self, result: object) -> pd.DataFrame:
+        if not isinstance(result, pd.DataFrame):
+            raise TypeError(
+                f"{type(self).__name__} writes a DataFrame; got {type(result).__name__}"
+            )
+        return result

@@ -16,7 +16,9 @@ listed record of this ledger job's qubits that the job does not hold raises.
 **Blocks.** `BLOCKS` is the one registration point: each entry wires one block of one
 record, its builder step from `analyzers/record_figure.py` and its figure from
 `plots/record_figure_plot.py`, off the record's `RecordNodes`. A new block is one function
-appended there.
+appended there. The job's tables are wired after the records: the curve summaries, one row
+per record, rung and bag, with the records outside the tables as `excluded=`, written by
+the `table` target.
 
 A module of its own, not part of `quebra.recipes`, for the reason `ledger_recipe.py` gives:
 what a module imports joins the identity closure of every step function it defines.
@@ -33,11 +35,14 @@ from quebra.analyzers.check_outcome import RowKey
 from quebra.analyzers.kaplan_meier import CONF_LEVEL
 from quebra.analyzers.record_figure import (
     build_hazard_block,
+    build_record_summaries,
     build_survival_block,
     cross_check_carve,
+    curve_summaries_of,
     kaplan_meier_of,
     ledger_run_set,
     nelson_aalen_of,
+    summaries_table,
 )
 from quebra.analyzers.windows import WindowsResult
 from quebra.core.dataset import Dataset
@@ -49,10 +54,15 @@ from quebra.ledger_recipe import (
     included_ledger_set,
     ledger_step,
 )
-from quebra.plots.record_figure_plot import HazardBlockPlot, SurvivalBlockPlot
+from quebra.plots.record_figure_plot import (
+    HazardBlockPlot,
+    SummariesTablePlot,
+    SurvivalBlockPlot,
+)
 from quebra.recipes import wire_t2star_carve
 
 TARGETS = ["static", "academic"]
+TABLE_TARGETS = ["table"]
 # The carve kwargs a ledger job's windows node carries, which the figure job carves with.
 CARVE_KWARGS = ("gap_mult", "k", "use_uncertainty", "thresholds")
 
@@ -151,6 +161,26 @@ BLOCKS: tuple[Callable[[Job, RecordNodes], None], ...] = (
 )
 
 
+def wire_record_summaries(job: Job, nodes: RecordNodes) -> object:
+    """One record's curve summaries with their check outcomes and intervals; returns the
+    node the job's summaries table reads."""
+    summaries = job.step(
+        curve_summaries_of,
+        nodes.carve,
+        name=f"curve_summaries_{nodes.record}",
+        conf_level=CONF_LEVEL,
+    )
+    return job.step(
+        build_record_summaries,
+        summaries,
+        nodes.ledger,
+        name=f"record_summaries_{nodes.record}",
+        run_set=nodes.run_set,
+        conf_level=CONF_LEVEL,
+        flag=nodes.flag,
+    )
+
+
 @dataclass(frozen=True)
 class _LedgerRecord:
     dataset: Dataset
@@ -229,6 +259,7 @@ def configure_record_figure_job(
         raise ValueError(
             f"{ledger_job}: the paper's tables list {missing}, which it does not hold"
         )
+    summaries: list[object] = []
     for record, held in records.items():
         if record not in listed:
             continue
@@ -253,3 +284,16 @@ def configure_record_figure_job(
         )
         for block in BLOCKS:
             block(job, nodes)
+        summaries.append(wire_record_summaries(job, nodes))
+    table = job.step(
+        summaries_table,
+        *summaries,  # type: ignore[arg-type]
+        name="curve_summaries_table",
+        excluded=tuple(record for record in records if record not in listed),
+    )
+    job.figure(
+        SummariesTablePlot,
+        table,
+        targets=TABLE_TARGETS,
+        title=f"{job.name} curve summaries",
+    )

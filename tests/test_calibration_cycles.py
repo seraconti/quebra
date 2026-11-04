@@ -45,6 +45,7 @@ from quebra.analyzers.checks._permutation import block_permutations
 from quebra.analyzers.checks.battery import run_battery
 from quebra.analyzers.checks.result import Segment
 from quebra.analyzers.event_table import CYCLES, EventTable
+from quebra.analyzers.survival import curve_summaries
 from quebra.analyzers.kaplan_meier import curve_from_event_table
 from quebra.core.types import Norm
 from quebra.panels.calibration_cycles import MTBC_SPAN_GID, CalibrationCyclesPanel
@@ -92,6 +93,21 @@ def test_mtbc_hand_computed_censored_case() -> None:
     assert m90.conf_level == 0.90
     assert m90.lower_s == pytest.approx(48.0 - z90 * se, rel=1e-12)
     assert m90.upper_s == pytest.approx(48.0 + z90 * se, rel=1e-12)
+    # The same ages as one bag's windows: `rmst_interval`, which the record figures' curve
+    # summaries use, gives the hand interval from that table's summaries too.
+    windows = EventTable(
+        dataset_id="hand",
+        threshold_label="a",
+        side="in_spec",
+        age_s=np.array([30.0, 35.0, 48.0, 60.0]),
+        event=np.array([True, False, True, False]),
+    )
+    for level, zq in ((0.95, z), (0.90, z90)):
+        lower, upper = mtbf.rmst_interval(
+            curve_summaries(windows, conf_level=level), level
+        )
+        assert lower == pytest.approx(48.0 - zq * se, rel=1e-12)
+        assert upper == pytest.approx(48.0 + zq * se, rel=1e-12)
 
 
 @pytest.mark.unit

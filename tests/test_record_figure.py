@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from statistics import NormalDist
 from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
@@ -29,18 +30,31 @@ from quebra.analyzers.check_outcome import PERMUTATION_KEYS
 from quebra.analyzers.checks.result import CLOCKS
 from quebra.analyzers.event_table import SIDES
 from quebra.analyzers.kaplan_meier import CONF_LEVEL
-from quebra.analyzers.event_table import event_tables_from_carve
+from quebra.analyzers.event_table import EventTable, event_tables_from_carve
 from quebra.analyzers.independence_survey import CHECK_LABELS
 from quebra.analyzers.record_figure import (
     ALL_ROWS,
+    COUNT_COLUMNS,
+    EXCLUDED_REASON,
+    NOTE_LOWER_AT_ZERO,
+    NOTE_NO_WIDTH,
+    SUMMARY_COLUMNS,
+    RecordSummaries,
     build_hazard_block,
+    build_record_summaries,
     build_survival_block,
     cross_check_carve,
+    curve_summaries_of,
     kaplan_meier_of,
     ledger_run_set,
     nelson_aalen_of,
+    summaries_table,
 )
-from quebra.analyzers.survival import nelson_aalen_set
+from quebra.analyzers.survival import (
+    curve_summaries,
+    curve_summaries_set,
+    nelson_aalen_set,
+)
 from quebra.core.job import Job, _import_job
 from quebra.core.reference import ArtifactRef
 from quebra.core.runner import run_job
@@ -50,8 +64,10 @@ from quebra.paper_tables import FLAG_TEXT, PAPER_RECORDS, SHADED
 from quebra.plots.record_figure_plot import (
     CELL_GID,
     HazardBlockPlot,
+    SummariesTablePlot,
     SurvivalBlockPlot,
 )
+from quebra.plots.targets import render_table
 from quebra.plots.theme import verdict_color
 from quebra.record_figure_recipe import configure_record_figure_job
 from quebra.recipes import T2STAR_THRESHOLDS
@@ -447,6 +463,175 @@ def test_the_hazard_block_draws_its_artifact(scored) -> None:
         plt.close(fig)
 
 
+def _summaries(scored: SimpleNamespace, level: float, flag: str = "") -> object:
+    return build_record_summaries(
+        curve_summaries_of(scored.carve, conf_level=level),
+        scored.ledger,
+        run_set=ledger_run_set(include_c3=False),
+        conf_level=level,
+        flag=flag,
+    )
+
+
+@pytest.mark.unit
+def test_each_summaries_row_is_its_items_fields(scored) -> None:
+    """Oracles: `survival.curve_summaries_set` called on its own, the interval in closed
+    form at 95% and at 90% (z from the standard library), and the raw ledger rows. One row
+    per rung and bag holding every number of the item unrounded, the restricted mean's
+    interval at the block's level with a note where it has no width or reaches 0, and the
+    band's check outcome, each check's verdicts on both clocks; an excluded record one row,
+    not drawn, with the reason; a failed record one row with its note."""
+    rows = scored.ledger.rows
+    failure = RecordFailure(
+        dataset_id="q1_030423", stage="t2star", reason="ValueError: x"
+    )
+    failed = build_record_summaries(
+        failure,
+        ledger_step(
+            failure,
+            pd.read_csv(BENCH),
+            thresholds=T2STAR_THRESHOLDS,
+            **{**LEDGER_KNOBS, "n_permutations": 99},  # type: ignore[arg-type]
+        ),
+        run_set=ledger_run_set(include_c3=False),
+        conf_level=CONF_LEVEL,
+        flag="",
+    )
+    notes: set[str] = set()
+    for level in (0.95, 0.90):
+        z = NormalDist().inv_cdf(0.5 + level / 2)
+        table = summaries_table(
+            _summaries(scored, level), failed, excluded=("q1_040423",)
+        )
+        assert list(table.columns) == list(SUMMARY_COLUMNS)
+        assert {str(table[c].dtype) for c in COUNT_COLUMNS} == {"Int64"}
+        reference = curve_summaries_set(
+            event_tables_from_carve(scored.carve), conf_level=level
+        )
+        drawn = table[table["record"] == RECORD]
+        assert len(drawn) == len(reference.items)
+        for row in drawn.to_dict("records"):
+            plain = reference.get(row["threshold_label"], row["side"])
+            assert row["drawn"] and row["reason"] == "" and row["conf_level"] == level
+            for name in (*COUNT_COLUMNS, "max_observed_age_s", "rmst_tau_s", "rmst_s",
+                         "rmst_se_s"):  # fmt: skip
+                np.testing.assert_array_equal(
+                    row[name], getattr(plain, name), err_msg=name
+                )
+            for i, p in enumerate(plain.quantile_p):
+                q = f"q{100 * p:g}"
+                for column, values in (
+                    (f"{q}_s", plain.quantile_s),
+                    (f"{q}_lower_s", plain.quantile_lower_s),
+                    (f"{q}_upper_s", plain.quantile_upper_s),
+                ):
+                    expected = np.nan if values[i] is None else values[i]
+                    np.testing.assert_array_equal(row[column], expected, err_msg=column)
+            lower = plain.rmst_s - z * plain.rmst_se_s
+            upper = plain.rmst_s + z * plain.rmst_se_s
+            if plain.n_windows:
+                assert row["rmst_lower_s"] == pytest.approx(lower, rel=1e-12, abs=1e-9)
+                assert row["rmst_upper_s"] == pytest.approx(upper, rel=1e-12, abs=1e-9)
+            note = row["rmst_interval_note"]
+            notes.add(note)
+            if plain.rmst_se_s == 0.0:
+                assert (
+                    note == NOTE_NO_WIDTH and row["rmst_lower_s"] == row["rmst_upper_s"]
+                )
+            elif plain.n_windows and lower <= 0.0:
+                assert note == NOTE_LOWER_AT_ZERO
+            else:
+                assert note == ""
+            cells = []
+            for key in PERMUTATION_KEYS:
+                verdicts = []
+                for clock in CLOCKS:
+                    cell = rows[
+                        (rows["threshold_label"] == row["threshold_label"])
+                        & (rows["side"] == row["side"])
+                        & (rows["clock"] == clock)
+                        & (rows["check_id"].isin([key[0], ALL_ROWS]))
+                    ]
+                    verdicts.append(str(cell["verdict"].iloc[0]))
+                cells.append(f"{CHECK_LABELS[key]}: {', '.join(verdicts)}")
+            assert row["check_verdicts"] == "; ".join(cells)
+            assert row["assumption_id"] == "a1_renewal_durations"
+            assert row["check_summary"].startswith("5 checks asked")
+            assert row["interval_standing"] == "rests on exchangeability"
+        (failed_row,) = table[table["record"] == "q1_030423"].to_dict("records")
+        assert failed_row["drawn"] and failed_row["reason"] == failure.note()
+        (excluded_row,) = table[table["record"] == "q1_040423"].to_dict("records")
+        assert not excluded_row["drawn"] and excluded_row["reason"] == EXCLUDED_REASON
+    assert notes == {""}, "premise: the synthetic record's intervals all have width"
+    # Hand tables for the notes. One death at tau = 10: SE 0, no width. Ages 1 (death) and
+    # 100 (censored): S = 1/2 from 1, the mean to 100 is 1 + 99 / 2 = 50.5, its SE
+    # sqrt(49.5^2 / (2 x 1)) = 35.0, so the 95% lower end is about -18.1.
+    hand = {
+        ("a", SIDES[0]): ([10.0], [True]),
+        ("a", SIDES[1]): ([1.0, 100.0], [True, False]),
+    }
+    items = {
+        key: curve_summaries(
+            EventTable(dataset_id="hand", threshold_label=key[0], side=key[1],
+                       age_s=np.array(ages), event=np.array(event)),
+            conf_level=0.95,
+        )
+        for key, (ages, event) in hand.items()
+    }  # fmt: skip
+    z95 = NormalDist().inv_cdf(0.975)
+    table = summaries_table(
+        RecordSummaries(
+            dataset_id="hand",
+            flag="",
+            failure="",
+            ladder=("a",),
+            conf_level=0.95,
+            summaries=items,
+            rmst_interval_s={
+                key: (
+                    item.rmst_s - z95 * item.rmst_se_s,
+                    item.rmst_s + z95 * item.rmst_se_s,
+                )
+                for key, item in items.items()
+            },
+        ),
+        excluded=(),
+    )
+    no_width, below = table.to_dict("records")
+    assert (no_width["rmst_s"], no_width["rmst_se_s"]) == (10.0, 0.0)
+    assert no_width["rmst_interval_note"] == NOTE_NO_WIDTH
+    assert below["rmst_s"] == pytest.approx(50.5)
+    assert below["rmst_lower_s"] == pytest.approx(50.5 - z95 * 49.5 / np.sqrt(2.0))
+    assert below["rmst_interval_note"] == NOTE_LOWER_AT_ZERO
+
+
+@pytest.mark.unit
+def test_the_table_target_writes_the_frame_unrounded(scored, tmp_path: Path) -> None:
+    """Oracle: the frame itself. The CSV read back with round-trip float parsing holds the
+    frame's every value bit for bit; a plot with no table raises before writing."""
+    frame = summaries_table(
+        _summaries(scored, CONF_LEVEL, FLAG_TEXT), excluded=("q1_040423",)
+    )
+    render_table(SummariesTablePlot("summaries"), frame, tmp_path)
+    read = pd.read_csv(tmp_path / "summaries.csv", float_precision="round_trip")
+    assert list(read.columns) == list(frame.columns) and len(read) == len(frame)
+    for column in frame.columns:
+        if pd.api.types.is_float_dtype(frame[column]) or pd.api.types.is_integer_dtype(
+            frame[column]
+        ):
+            np.testing.assert_array_equal(
+                read[column].to_numpy(dtype=float, na_value=np.nan),
+                frame[column].to_numpy(dtype=float, na_value=np.nan),
+                err_msg=column,
+            )
+        else:
+            assert read[column].fillna("").astype(str).tolist() == (
+                frame[column].fillna("").astype(str).tolist()
+            ), column
+    with pytest.raises(TypeError, match="no build_table"):
+        render_table(SurvivalBlockPlot("survival"), frame, tmp_path)
+
+
 @pytest.mark.policy
 def test_each_figure_job_takes_one_ref_loads_only_data_and_draws_the_listed_records() -> (
     None
@@ -480,6 +665,12 @@ def test_each_figure_job_takes_one_ref_loads_only_data_and_draws_the_listed_reco
                 drawn_all.append(record)
     paper_6d2s = [record for device, record in PAPER_RECORDS if device == "6D2S"]
     assert sorted(drawn_all) == sorted(paper_6d2s)
+    excluded = [
+        record
+        for path in FIGURE_JOBS
+        for record in _import_job(path).dag["curve_summaries_table"].kwargs["excluded"]
+    ]
+    assert sorted(excluded) == ["q4_070723", "q4_100723", "q5_070723", "q6_070723"]
     assert not {"q4_070723", "q4_100723", "q5_070723", "q6_070723"} & set(drawn_all)
 
 
@@ -590,3 +781,6 @@ def test_a_figure_job_runs_its_ledger_job_once_and_draws_each_record(
         assert list(run_dir.glob(f"{record}_survival_*.pdf")), sorted(
             p.name for p in run_dir.iterdir()
         )
+    summaries = pd.read_csv(run_dir / "figures_probe_curve_summaries.csv")
+    assert len(summaries) == 2 * len(T2STAR_THRESHOLDS) * len(SIDES)
+    assert set(summaries["record"]) == {"q1_010423", "q1_020423"}
