@@ -224,8 +224,9 @@ for _cls in (*SURVEY_PLOTS, *GROUP_SURVEY_PLOTS):
 
 
 class IndependenceSurveyOverviewPlot(BasePlot):
-    """EVERY instrument in one image: one row per instrument, columns grouped by bag, one
-    column per clock within each bag, each column headed on a strip of its bag's colour.
+    """EVERY single check in one image: one row per check, columns grouped by bag, one
+    column per clock within each bag, each column headed on a strip of its bag's colour. The
+    two group grids are not drawn here; each has its own figure (`GROUP_SURVEY_PLOTS`).
 
     The per-instrument figures above are for reading one instrument closely. This one is
     for the question they cannot answer between them - does the picture change when you
@@ -301,11 +302,14 @@ class IndependenceSurveyOverviewPlot(BasePlot):
                 frameon=False,
                 **theme.LEGEND_TEXT,
             )
-            fig.suptitle("Window independence across every dataset - every instrument")
+            fig.suptitle(
+                "Window independence across every dataset - every single check"
+            )
             fig.text(
                 0.5,
                 0.028,
-                "Rows are instruments; columns are grouped by bag, the windows on each "
+                "Rows are the single checks (the two group grids have their own "
+                "figures); columns are grouped by bag, the windows on each "
                 "side of the threshold, each group headed in its colour and holding the "
                 "two clocks; a header's colour names its bag, not a verdict. Within each "
                 "grid the y axis is the threshold ladder and the x "

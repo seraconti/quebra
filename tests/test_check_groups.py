@@ -151,35 +151,61 @@ REVIEWED_REFUSALS = Counter(
 )
 
 
-@pytest.mark.unit
-def test_only_the_reviewed_raises_mark_a_refusal() -> None:
-    """Oracle: the reviewed list above. A new mark, or a subclass of `CheckRefused`, must be
-    reviewed as reading only the record before it joins the list."""
-    package = Path(c1.__file__).resolve().parents[2]
+def _refusal_sites(package: Path) -> Counter[tuple[str, str]]:
+    """Every place the package makes a `CheckRefused`, by module and function: a call to it
+    or a bare raise of it, under every name a module binds it to (an import alias, an
+    assignment, a subclass), and every subclass. A re-raised variable is counted where the
+    exception was made."""
     found: Counter[tuple[str, str]] = Counter()
     for path in sorted(package.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
+        module = path.relative_to(package).as_posix()
         parents = {
             child: node
             for node in ast.walk(tree)
             for child in ast.iter_child_nodes(node)
         }
+        names = {"CheckRefused"}
+
+        def refers(node: ast.AST) -> bool:
+            return getattr(node, "id", getattr(node, "attr", None)) in names
+
+        grown = True
+        while grown:
+            before = set(names)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    names |= {a.asname or a.name for a in node.names if a.name in names}
+                elif isinstance(node, ast.Assign) and refers(node.value):
+                    names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+                elif isinstance(node, ast.ClassDef) and any(map(refers, node.bases)):
+                    names.add(node.name)
+            grown = names != before
         for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                bases = {getattr(b, "id", getattr(b, "attr", "")) for b in node.bases}
-                if "CheckRefused" in bases:
-                    found[(path.relative_to(package).as_posix(), node.name)] += 1
-            if not isinstance(node, ast.Raise) or node.exc is None:
+            if isinstance(node, ast.ClassDef) and any(map(refers, node.bases)):
+                found[(module, node.name)] += 1
                 continue
-            exc = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
-            if getattr(exc, "id", getattr(exc, "attr", "")) != "CheckRefused":
+            made = isinstance(node, ast.Call) and refers(node.func)
+            raised = (
+                isinstance(node, ast.Raise)
+                and node.exc is not None
+                and not isinstance(node.exc, ast.Call)
+                and refers(node.exc)
+            )
+            if not (made or raised):
                 continue
             owner: ast.AST = node
             while owner in parents and not isinstance(owner, ast.FunctionDef):
                 owner = parents[owner]
-            name = getattr(owner, "name", "<module>")
-            found[(path.relative_to(package).as_posix(), name)] += 1
-    assert found == REVIEWED_REFUSALS
+            found[(module, getattr(owner, "name", "<module>"))] += 1
+    return found
+
+
+@pytest.mark.unit
+def test_only_the_reviewed_raises_mark_a_refusal() -> None:
+    """Oracle: the reviewed list above. A new mark, under any name, or a subclass of
+    `CheckRefused`, must be reviewed as reading only the record before it joins the list."""
+    assert _refusal_sites(Path(c1.__file__).resolve().parents[2]) == REVIEWED_REFUSALS
 
 
 @pytest.mark.unit
@@ -335,6 +361,53 @@ def test_each_member_p_in_a_group_is_its_own_rows_p() -> None:
             assert member_p[ledger.MEMBER_SHORT[check]] == by_check[check].p_value, (
                 check
             )
+
+
+@pytest.mark.unit
+def test_each_group_p_is_the_min_p_of_its_members_draws_paired_row_by_row() -> None:
+    """Oracle: a reference recomputation. On one permutation set each member's column is
+    rebuilt in permutation row order from the checks' batch statistics (C1 through |.|) and
+    from the studentized rank autocorrelations (C5, C6); `min_p` on those columns is each
+    group row's p. A member whose draws were reordered, or drawn from another set, moves it."""
+    # Every member's p lies between 0.15 and 0.7 here, where a reordering moves the group p.
+    segments = [
+        _seg(
+            [1.17, 0.41, 5.48, 0.47, 0.22, 1.9, 0.6, 0.65, 0.13, 0.86, 1.14, 0.33], 0.5
+        ),
+        _seg(
+            [1.78, 0.31, 0.89, 0.23, 1.02, 0.56, 0.79, 2.75, 1.21, 1.0, 2.94, 2.13], 0.5
+        ),
+    ]
+    sizes = [len(s.x) for s in segments]
+    perm = block_permutations(sizes, 199, np.random.default_rng(13))
+    results = run_battery(segments, perm=perm, undefined_as_rows=True)
+    by_check = {r.check: r for r in results}
+
+    def column(check: str, null: np.ndarray) -> np.ndarray:
+        return np.concatenate([[by_check[check].statistic], null])
+
+    layout = lag_layout(sizes, MAX_LAG_CAP)
+    ranks = global_ranks(np.concatenate([s.x for s in segments]))
+    _, z_null = studentize(
+        autocorrelations(ranks, layout)[0], autocorrelations(perm.apply(ranks), layout)
+    )
+    reference = {
+        ledger.GROUP_TREND: {
+            "C1": np.abs(column(C1, c1.statistic_batch(segments, perm))),
+            "C2": column(C2, c2.statistic_batch(segments, perm)),
+            "CvM": column(CVM, cvm.statistic_batch(segments, perm)),
+        },
+        ledger.GROUP_DEPENDENCE: {
+            "C5": column(C5, np.abs(z_null).max(axis=1)),
+            "C6": column(C6, (z_null**2).sum(axis=1)),
+        },
+    }
+    n = sum(sizes)
+    rows = ledger.group_rows(results, **_context(n_events=n, n_read=n))
+    assert len(rows) == 2
+    for row in rows:
+        group = str(row["check_id"])
+        assert row["p_value"] == min_p(reference[group]).p_value, group
 
 
 @pytest.mark.unit

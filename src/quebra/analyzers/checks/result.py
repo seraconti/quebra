@@ -166,10 +166,10 @@ class CheckRefused(ValueError):
     answers cannot depend on which row is the observed one: what a min-P over several
     checks needs to keep its size. A raise left a plain ValueError carries no mark, so a
     min-P cannot leave that check out and reads not computed instead: an answer lost,
-    never size. Two raises that read only the record stay plain, because no ledger
-    reaches them: a segment below a check's event floor, which `drop_unusable_segments`
-    removes first, and a negative eq (10) variance, which the default estimator cannot
-    give. It is a ValueError, so every caller that catches one still catches it.
+    never size. The other raises that read only the record stay plain, a segment below a
+    check's event floor (which `drop_unusable_segments` removes first) and a negative eq
+    (10) variance (which the default estimator cannot give) among them; each leaves a group
+    not computed. It is a ValueError, so every caller that catches one still catches it.
     """
 
 

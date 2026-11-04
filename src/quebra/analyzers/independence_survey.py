@@ -127,16 +127,16 @@ CHECK_NULL: dict[tuple[str, str, str], str] = {
         "min_p",
         "",
     ): (
-        "rejects when any member that answers (C1, C2, CvM), calibrated together by "
-        "min-P, finds a TREND or NO renewal process"
+        "rejects, for a TREND or NO renewal process, when the smallest p of the members "
+        "that answer (C1, C2, CvM), adjusted by min-P, is at most alpha"
     ),
     (
         "dependence_group",
         "min_p",
         "",
     ): (
-        "rejects when any member that answers (C5, C6), calibrated together by min-P, "
-        "finds the ORDER of the durations informative"
+        "rejects, for an informative ORDER of the durations, when the smallest p of the "
+        "members that answer (C5, C6), adjusted by min-P, is at most alpha"
     ),
 }
 

@@ -2,7 +2,8 @@
 
 The device-wide survey: one grid per instrument, every record of both devices down (6D2S
 first, then 2x2), the T2* threshold ladder across, both clocks stacked. One figure per entry of
-`independence_survey.SURVEY_KEYS`, which is `battery.ROW_KEYS`: the five permutation rows.
+`independence_survey.SURVEY_KEYS`, which is `battery.ROW_KEYS`: the five permutation rows, and
+one per group of `check_ledger.GROUP_KEYS`.
 
 It includes every job of the `check_ledger` family and refs each job's `CheckLedgers`
 bundle, so it carves nothing and scores nothing: every cell is the verdict that record's own

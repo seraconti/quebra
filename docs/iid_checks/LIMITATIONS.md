@@ -32,7 +32,9 @@ the 1 to 10 µs ladder (commit 44c1d78); not re-measured on the 2 to 5 µs ladde
 ## 2. Multiplicity across the ladder is not corrected
 
 A ledger runs 5 checks x 2 calibrations x 2 clocks over up to 7 thresholds. Nothing
-corrects for that. The thresholds are nested (a read in spec at 4 µs is in spec at 3 µs),
+corrects for that. The group rows (`check_ledger.GROUPS`) correct only within one group at
+one (threshold, bag, clock); nothing corrects across rungs, bags, clocks or the two groups.
+The thresholds are nested (a read in spec at 4 µs is in spec at 3 µs),
 so the tests are strongly positively dependent and a Bonferroni correction would be far too
 conservative - but "far too conservative" is not "unnecessary". **Read the ladder as a
 pattern, not as ~140 independent decisions.** A single isolated rejection at one threshold
