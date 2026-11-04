@@ -25,6 +25,14 @@ time are counted in the axes.
 
 **Curve summaries** (`SummariesTablePlot`). No drawing: `build_table` hands the step-built
 frame to the `table` target unchanged.
+
+**Resolvability** (`ResolvabilityBlockPlot`). Three panels. The spectrum on log-log axes
+with the band edge (dotted), the edge level over the top tenth of the band (heavy), the noise
+floor (dashed) and the top decade G10 reads (shaded), and no fitted line. The count ratio of
+each rung across the decimation ladder, with its two limits as labelled guides. The crossing
+placement counts of each rung at k = 1 and 2, stacked by kind. A group the tellability did
+not compute shows its status instead: a panel in its place; a mark of the spectrum in the
+caption, which names only the marks drawn and gives the status of each one not drawn.
 """
 
 from __future__ import annotations
@@ -40,8 +48,11 @@ from matplotlib.patches import Patch, Rectangle
 from matplotlib.ticker import NullFormatter
 
 from quebra.analyzers.record_figure import (
+    LIMIT_INDEPENDENT,
+    LIMIT_SMOOTH,
     FractionBlockData,
     HazardBlockData,
+    ResolvabilityBlockData,
     SurvivalBlockData,
 )
 from quebra.plots import theme
@@ -607,3 +618,227 @@ class SummariesTablePlot(BasePlot):
                 f"{type(self).__name__} writes a DataFrame; got {type(result).__name__}"
             )
         return result
+
+
+# Width and height in inches of one panel of the resolvability block.
+_PANEL_W = 3.4
+_PANEL_H = 2.8
+# The kinds of down-crossing, stacked in this order, and the k each pair of bars reads.
+CROSSING_KINDS = ("clean", "merged", "unbracketed")
+# The id each crossing bar carries, so a test can read the bars back.
+CROSSING_GID = "crossing_bar"
+# The dash of each count-ratio limit, so the two guides differ in more than their label.
+LIMIT_DASHES = {LIMIT_INDEPENDENT: "--", LIMIT_SMOOTH: "-."}
+
+
+def _status_text(ax: plt.Axes, text: str, style: str) -> None:
+    ax.text(
+        0.5,
+        0.5,
+        text,
+        transform=ax.transAxes,
+        ha="center",
+        va="center",
+        wrap=True,
+        **theme.scaled_text(theme.ANNOTATION, style),
+    )
+
+
+def _spectrum_marks(data: ResolvabilityBlockData) -> tuple[list[str], list[str]]:
+    """The marks of the spectrum panel the block holds, by name, and a note with the status
+    of each one it does not."""
+    drawn: list[str] = []
+    notes: list[str] = []
+    if data.band_edge_hz is not None:
+        drawn.append("band edge")
+    else:
+        notes.append(f"band edge ({data.band_edge_status})")
+    if data.edge_stretch_hz is not None and data.edge_level_per_hz is not None:
+        drawn.append("edge level")
+    else:
+        notes.append("edge level (no band edge to place it on)")
+    if data.noise_floor_per_hz is not None:
+        drawn.append("noise floor")
+    else:
+        notes.append(f"noise floor ({data.noise_floor_status})")
+    if data.top_decade_hz is not None:
+        drawn.append("the top decade G10 reads")
+    else:
+        notes.append(f"the top decade G10 reads ({data.g10_status})")
+    return drawn, notes
+
+
+def _draw_spectrum(ax: plt.Axes, data: ResolvabilityBlockData, style: str) -> None:
+    if not data.frequency_hz.size:
+        ax.set_axis_off()
+        _status_text(ax, f"spectrum {data.spectrum_status}", style)
+        return
+    f, s = data.frequency_hz, data.spectrum_per_hz
+    if data.top_decade_hz is not None:
+        ax.axvspan(
+            *data.top_decade_hz, label="top decade (G10)", **theme.TOP_DECADE_SHADE
+        )
+    ax.plot(f, s, label=f"S of {data.value_key}", **theme.SPECTRUM_LINE)
+    if data.band_edge_hz is not None:
+        ax.axvline(data.band_edge_hz, label="band edge", **theme.BAND_EDGE_LINE)
+    if data.edge_stretch_hz is not None and data.edge_level_per_hz is not None:
+        ax.plot(
+            data.edge_stretch_hz,
+            (data.edge_level_per_hz, data.edge_level_per_hz),
+            label="edge level",
+            **theme.EDGE_LEVEL_LINE,
+        )
+    if data.noise_floor_per_hz is not None:
+        ax.axhline(
+            data.noise_floor_per_hz, label="noise floor", **theme.NOISE_FLOOR_LINE
+        )
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("Frequency (Hz)")
+    ax.set_ylabel(f"S of {data.value_key} (per Hz)")
+    ax.set_title("Aliasing: the spectrum and its band")
+    ax.legend(frameon=False, **theme.scaled_text(theme.LEGEND_TEXT, style))
+    theme.apply_common_style(ax)
+
+
+def _draw_counts(ax: plt.Axes, data: ResolvabilityBlockData, style: str) -> None:
+    m = np.asarray(data.decimation_ladder, dtype=float)
+    drawn = [label for label in data.ladder if data.count_ratio[label]]
+    if not drawn:
+        ax.set_axis_off()
+        _status_text(ax, "count ratio not computed at any rung", style)
+        return
+    for name, values in data.count_limits.items():
+        ax.plot(
+            m,
+            values,
+            label=f"limit: {name}",
+            **{**theme.REFERENCE_LINE, "linestyle": LIMIT_DASHES[name]},
+        )
+    n = len(data.ladder)
+    for i, label in enumerate(data.ladder):
+        ratio = data.count_ratio[label]
+        if not ratio:
+            continue
+        kept = [(mm, r) for mm, r in zip(m, ratio, strict=True) if r is not None]
+        ax.plot(
+            [mm for mm, _ in kept],
+            [r for _, r in kept],
+            marker="o",
+            color=theme.threshold_color(i, n),
+            label=label,
+        )
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("Decimation m")
+    ax.set_ylabel("Count ratio per kept pair")
+    ax.set_title("Detection: crossings as reads thin")
+    ax.legend(frameon=False, **theme.scaled_text(theme.LEGEND_TEXT, style))
+    theme.apply_common_style(ax)
+
+
+def _draw_crossings(ax: plt.Axes, data: ResolvabilityBlockData, style: str) -> None:
+    if not any(data.crossing_counts[label] for label in data.ladder):
+        ax.set_axis_off()
+        _status_text(ax, "crossing counts not computed at any rung", style)
+        return
+    width = 0.38
+    names: list[str] = []
+    for i, label in enumerate(data.ladder):
+        counts = data.crossing_counts[label]
+        if not counts:
+            ax.text(
+                i,
+                0.0,
+                data.crossing_status[label].replace("not computed: ", ""),
+                rotation=90,
+                ha="center",
+                va="bottom",
+                **theme.scaled_text(theme.ANNOTATION, style),
+            )
+        for j, count in enumerate(counts):
+            x = i + (j - (len(counts) - 1) / 2.0) * width
+            bottom = 0
+            for kind in CROSSING_KINDS:
+                value = int(getattr(count, kind))
+                ax.bar(
+                    x,
+                    value,
+                    width=width * 0.9,
+                    bottom=bottom,
+                    color=theme.CROSSING_COLORS[kind],
+                    label=kind if i == 0 and j == 0 else None,
+                    gid=CROSSING_GID,
+                )
+                bottom += value
+        names.append(label)
+    ax.set_xticks(range(len(data.ladder)))
+    ax.set_xticklabels(names, rotation=45, ha="right")
+    ax.set_ylabel("Down-crossings")
+    levels = ", ".join(f"{k:g}" for k in data.confidence_levels)
+    ax.set_title(f"Placement: each rung at k = {levels}")
+    ax.legend(frameon=False, **theme.scaled_text(theme.LEGEND_TEXT, style))
+    theme.apply_common_style(ax)
+
+
+def _listed(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def _resolvability_caption(data: ResolvabilityBlockData) -> str:
+    drawn, notes = _spectrum_marks(data) if data.frequency_hz.size else ([], [])
+    marks = f" with its {_listed(drawn)}" if drawn else ""
+    parts = [
+        f"Event resolvability of {data.dataset_id} ({data.metric_key}): the spectrum of "
+        f"{data.value_key}{marks}; per rung of {data.threshold_value_key}, the count ratio "
+        "across the decimation ladder with its limits, and the down-crossings clean, "
+        "merged or unbracketed at each confidence level k, left to right in increasing k.",
+        "G10 and its halves are in the record's table.",
+    ]
+    if notes:
+        parts.append(f"Not drawn on the spectrum: {_listed(notes)}.")
+    if data.flag:
+        parts.append(f"This record is {data.flag}.")
+    return " ".join(parts)
+
+
+def draw_resolvability(
+    fig: Figure | SubFigure, data: ResolvabilityBlockData, style: str
+) -> None:
+    """The resolvability block of one record on `fig` (module docstring)."""
+    title = f"Event resolvability, {data.dataset_id}"
+    if data.failure:
+        ax = fig.add_subplot(1, 1, 1)
+        ax.set_axis_off()
+        _status_text(ax, f"not computed: {data.failure}", style)
+        fig.suptitle(title)
+        return
+    axes = fig.subplots(1, 3)
+    _draw_spectrum(axes[0], data, style)
+    _draw_counts(axes[1], data, style)
+    _draw_crossings(axes[2], data, style)
+    fig.suptitle(f"{title} ({data.metric_key})")
+    fig.supxlabel(
+        _resolvability_caption(data),
+        wrap=True,
+        **theme.scaled_text(theme.CAPTION, style),
+    )
+
+
+class ResolvabilityBlockPlot(BasePlot):
+    """The resolvability block of one record: aliasing, detection and placement."""
+
+    def build_matplotlib(self, result: object, style: str = "default") -> plt.Figure:
+        if not isinstance(result, ResolvabilityBlockData):
+            raise TypeError(
+                f"{type(self).__name__} draws a ResolvabilityBlockData; got "
+                f"{type(result).__name__}"
+            )
+        with theme.style_context(style):
+            fig = plt.figure(
+                figsize=(3 * _PANEL_W, _PANEL_H + 1.2),
+                layout="constrained",
+                facecolor="white",
+            )
+            draw_resolvability(fig, result, style)
+        return fig

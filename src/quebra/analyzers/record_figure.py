@@ -46,6 +46,16 @@ carve: the numbers the compliance survey draws for the same record. The bounds c
 unsettled stretch either way at the carve's k sigma; they are placement bounds, not a band
 on exchangeability, so no check outcome is attached. The block carries the gaps the
 observed time leaves out, so the figure can say how much time it does not read.
+
+**Resolvability block** (`build_resolvability_block`). The record's tellability, read for
+whether its reads can resolve the events the windows count (`docs/TELLABILITY_SEMANTICS.md`):
+the spectrum with the marks Q1 reads beside it (band edge, edge level, noise floor) and the
+top decade G10 reads, shaded; per rung, the count ratio across the decimation ladder (Q2.2)
+with its two limits, and the crossing placement counts (Q3.4). Each group is drawn only where
+the tellability computed it; elsewhere its status is shown. G10 and its halves are numbers
+with their statuses in the per-record table, with the one sentence they are read by: no
+slope, no reference level. The tables keep every value unrounded, keyed on
+`threshold_label`. A record whose carve or tellability failed draws the failure's note.
 """
 
 from __future__ import annotations
@@ -82,6 +92,13 @@ from quebra.analyzers.survival import (
     NelsonAalen,
     curve_summaries_set,
     nelson_aalen_set,
+)
+from quebra.analyzers.tellability import (
+    COMPUTED,
+    CONFIDENCE_LEVELS,
+    DECIMATION_LADDER,
+    CrossingCounts,
+    TellabilityResult,
 )
 from quebra.analyzers.windows import WindowsResult
 from quebra.core._artifact_guard import StaleArtifactGuard
@@ -626,4 +643,270 @@ def build_fraction_block(
         gap_mult=compliance.gap_mult,
         n_gaps=n_gaps,
         gap_h=gap_h,
+    )
+
+
+# DEC-12a of #4: the one sentence G10 is read by. A small G10 means a red spectrum; a large
+# one does not mean white (`spectrum.g10`).
+G10_READING = "read one way: small means a red spectrum"
+# The two limits of the count ratio (Q2.2), by what reads at each: 1 for independent reads,
+# m for a smooth signal.
+LIMIT_INDEPENDENT = "independent reads"
+LIMIT_SMOOTH = "a smooth signal"
+
+
+@dataclass
+class ResolvabilityBlockData(StaleArtifactGuard):
+    """Everything the resolvability block of one record draws, and its two tables.
+
+    `value_key` names the series the spectrum reads and `threshold_value_key` the one the
+    rungs classify (the signed x and |x| for the infidelity). A group's arrays are empty and
+    its scalars None unless its status is `computed`: `spectrum_status` covers the spectrum
+    and the edge level, `band_edge_status` the band edge, `noise_floor_status` the floor,
+    `g10_status` G10. `top_decade_hz` is the decade G10 reads, `(f_top / 10, f_top)` with
+    `f_top` the last grid frequency, None unless G10 was computed; `edge_stretch_hz` is the
+    top tenth of the band the edge level averages.
+    Per rung of `ladder`: `count_status`, `count_ratio` on `decimation_ladder` (None where a
+    rung keeps no pair), `count_limits` (the two limits by name, on `decimation_ladder`),
+    `crossing_status` and `crossing_counts`, one entry per k of `confidence_levels`.
+    `failure` is the carve's or the tellability's
+    failure note, empty when it ran; a failed record has no ladder and empty tables.
+    """
+
+    dataset_id: str
+    metric_key: str
+    value_key: str
+    threshold_value_key: str
+    flag: str
+    failure: str
+    spectrum_status: str
+    frequency_hz: np.ndarray
+    spectrum_per_hz: np.ndarray
+    edge_level_per_hz: float | None
+    edge_stretch_hz: tuple[float, float] | None
+    band_edge_status: str
+    band_edge_hz: float | None
+    noise_floor_status: str
+    noise_floor_per_hz: float | None
+    g10_status: str
+    top_decade_hz: tuple[float, float] | None
+    ladder: tuple[str, ...]
+    decimation_ladder: tuple[int, ...]
+    count_limits: dict[str, tuple[float, ...]]
+    count_status: dict[str, str]
+    count_ratio: dict[str, tuple[float | None, ...]]
+    crossing_status: dict[str, str]
+    crossing_counts: dict[str, tuple[CrossingCounts, ...]]
+    confidence_levels: tuple[float, ...]
+    per_threshold: pd.DataFrame
+    per_record: pd.DataFrame
+
+
+PER_RECORD_COLUMNS = (
+    "dataset_id",
+    "metric_key",
+    "value_key",
+    "failure",
+    "g10",
+    "g10_status",
+    "g10_first_half",
+    "g10_second_half",
+    "g10_halves_status",
+    "g10_reading",
+    "top_decade_lower_hz",
+    "top_decade_upper_hz",
+    "spectrum_status",
+    "edge_level_per_hz",
+    "window_status",
+    "band_edge_hz",
+    "first_alias_hz",
+    "window_band_max",
+    "window_band_peak_over_fs",
+    "noise_floor_status",
+    "noise_floor_per_hz",
+    "edge_noise_ratio",
+)
+
+
+def _per_threshold_columns(ladder: tuple[int, ...]) -> list[str]:
+    return [
+        "dataset_id",
+        "threshold_label",
+        "threshold_value",
+        "count_exponent_status",
+        "count_exponent",
+        "rungs_excluded",
+        *(f"count_ratio_m{m}" for m in ladder),
+        "crossing_counts_status",
+        *(
+            f"{kind}_k{k:g}"
+            for k in CONFIDENCE_LEVELS
+            for kind in ("clean", "merged", "unbracketed")
+        ),
+        "clean_fraction_k1",
+    ]
+
+
+def build_resolvability_block(
+    tellability: TellabilityResult | RecordFailure, *, flag: str
+) -> ResolvabilityBlockData:
+    """The resolvability block of one record (module docstring). Reads each group of the
+    tellability only where its status is `computed`."""
+    decimation = tuple(int(m) for m in DECIMATION_LADDER)
+    levels = tuple(float(k) for k in CONFIDENCE_LEVELS)
+    limits = {
+        LIMIT_INDEPENDENT: tuple(1.0 for _ in decimation),
+        LIMIT_SMOOTH: tuple(float(m) for m in decimation),
+    }
+    if isinstance(tellability, RecordFailure):
+        return ResolvabilityBlockData(
+            dataset_id=tellability.dataset_id,
+            metric_key="",
+            value_key="",
+            threshold_value_key="",
+            flag=flag,
+            failure=tellability.note(),
+            spectrum_status="",
+            frequency_hz=np.zeros(0),
+            spectrum_per_hz=np.zeros(0),
+            edge_level_per_hz=None,
+            edge_stretch_hz=None,
+            band_edge_status="",
+            band_edge_hz=None,
+            noise_floor_status="",
+            noise_floor_per_hz=None,
+            g10_status="",
+            top_decade_hz=None,
+            ladder=(),
+            decimation_ladder=decimation,
+            count_limits=limits,
+            count_status={},
+            count_ratio={},
+            crossing_status={},
+            crossing_counts={},
+            confidence_levels=levels,
+            per_threshold=pd.DataFrame(columns=_per_threshold_columns(decimation)),
+            per_record=pd.DataFrame(
+                [
+                    {
+                        "dataset_id": tellability.dataset_id,
+                        "failure": tellability.note(),
+                    }
+                ],
+                columns=list(PER_RECORD_COLUMNS),
+            ),
+        )
+    metric = tellability.metric
+    status = metric.status
+    spectrum_on = status["spectrum"] == COMPUTED
+    edge_on = status["window"] == COMPUTED
+    g10_on = status["g10"] == COMPUTED
+    f = np.asarray(metric.spectrum_frequency_hz if spectrum_on else [], dtype=float)
+    top = (float(f[-1]) / 10.0, float(f[-1])) if spectrum_on and g10_on else None
+    edge = (
+        float(metric.band_edge_hz)
+        if edge_on and metric.band_edge_hz is not None
+        else None
+    )
+    stretch = (0.9 * edge, edge) if spectrum_on and edge is not None else None
+    per_record = {
+        "dataset_id": tellability.dataset_id,
+        "metric_key": metric.metric_key,
+        "value_key": metric.value_key,
+        "failure": "",
+        "g10": metric.g10,
+        "g10_status": status["g10"],
+        "g10_first_half": metric.g10_first_half,
+        "g10_second_half": metric.g10_second_half,
+        "g10_halves_status": status["g10_halves"],
+        "g10_reading": G10_READING,
+        "top_decade_lower_hz": top[0] if top else None,
+        "top_decade_upper_hz": top[1] if top else None,
+        "spectrum_status": status["spectrum"],
+        "edge_level_per_hz": metric.edge_level_per_hz,
+        "window_status": status["window"],
+        "band_edge_hz": metric.band_edge_hz,
+        "first_alias_hz": metric.first_alias_hz,
+        "window_band_max": metric.window_band_max,
+        "window_band_peak_over_fs": metric.window_band_peak_over_fs,
+        "noise_floor_status": status["noise_floor"],
+        "noise_floor_per_hz": metric.noise_floor_per_hz,
+        "edge_noise_ratio": metric.edge_noise_ratio,
+    }
+    rows = []
+    count_status: dict[str, str] = {}
+    count_ratio: dict[str, tuple[float | None, ...]] = {}
+    crossing_status: dict[str, str] = {}
+    crossings: dict[str, tuple[CrossingCounts, ...]] = {}
+    for row in tellability.thresholds:
+        label = row.threshold_label
+        counted = row.status["count_exponent"] == COMPUTED
+        placed = row.status["crossing_counts"] == COMPUTED
+        if counted and tuple(row.decimation_ladder) != decimation:  # type: ignore[arg-type]
+            raise ValueError(
+                f"{label}: the count ratio was read on {row.decimation_ladder}, the block "
+                f"draws {decimation}"
+            )
+        count_status[label] = row.status["count_exponent"]
+        count_ratio[label] = tuple(row.count_ratio) if counted else ()  # type: ignore[arg-type]
+        crossing_status[label] = row.status["crossing_counts"]
+        crossings[label] = tuple(row.crossing_counts) if placed else ()  # type: ignore[arg-type]
+        by_k = {float(c.k): c for c in crossings[label]}
+        rows.append(
+            {
+                "dataset_id": tellability.dataset_id,
+                "threshold_label": label,
+                "threshold_value": row.threshold_value,
+                "count_exponent_status": row.status["count_exponent"],
+                "count_exponent": row.count_exponent,
+                "rungs_excluded": (
+                    " ".join(str(m) for m in row.rungs_excluded or ())
+                    if counted
+                    else None
+                ),
+                **{
+                    f"count_ratio_m{m}": (count_ratio[label][i] if counted else None)
+                    for i, m in enumerate(decimation)
+                },
+                "crossing_counts_status": row.status["crossing_counts"],
+                **{
+                    f"{kind}_k{k:g}": (
+                        getattr(by_k[float(k)], kind) if float(k) in by_k else None
+                    )
+                    for k in CONFIDENCE_LEVELS
+                    for kind in ("clean", "merged", "unbracketed")
+                },
+                "clean_fraction_k1": row.clean_fraction_k1,
+            }
+        )
+    return ResolvabilityBlockData(
+        dataset_id=tellability.dataset_id,
+        metric_key=metric.metric_key,
+        value_key=metric.value_key,
+        threshold_value_key=str(tellability.settings["threshold_value_key"]),
+        flag=flag,
+        failure="",
+        spectrum_status=status["spectrum"],
+        frequency_hz=f,
+        spectrum_per_hz=np.asarray(
+            metric.spectrum_per_hz if spectrum_on else [], dtype=float
+        ),
+        edge_level_per_hz=metric.edge_level_per_hz,
+        edge_stretch_hz=stretch,
+        band_edge_status=status["window"],
+        band_edge_hz=edge,
+        noise_floor_status=status["noise_floor"],
+        noise_floor_per_hz=metric.noise_floor_per_hz,
+        g10_status=status["g10"],
+        top_decade_hz=top,
+        ladder=tuple(row.threshold_label for row in tellability.thresholds),
+        decimation_ladder=decimation,
+        count_limits=limits,
+        count_status=count_status,
+        count_ratio=count_ratio,
+        crossing_status=crossing_status,
+        crossing_counts=crossings,
+        confidence_levels=levels,
+        per_threshold=pd.DataFrame(rows, columns=_per_threshold_columns(decimation)),
+        per_record=pd.DataFrame([per_record], columns=list(PER_RECORD_COLUMNS)),
     )
