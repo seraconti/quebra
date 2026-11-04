@@ -148,4 +148,5 @@ def run(
             "n_pairs_per_lag": list(layout.n_pairs),
             "z": [float(z) for z in z_observed],
         },
+        null_statistics=null,
     )

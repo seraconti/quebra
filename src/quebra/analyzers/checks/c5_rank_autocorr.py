@@ -149,4 +149,5 @@ def run(
             # its sign is not the direction of the dependence.
             "r_lag1": float(observed_r[0]),
         },
+        null_statistics=null,
     )

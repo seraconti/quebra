@@ -39,6 +39,7 @@ from quebra.analyzers.windows import (
 from quebra.analyzers.checks.result import (
     CLOCK_CALENDAR,
     CLOCK_SIDE,
+    CheckRefused,
     Segment,
     last_event_time,
 )
@@ -113,8 +114,14 @@ def gamma_hat(x: np.ndarray, tau: float, estimator: str = GAMMA_DEFAULT) -> floa
     Their eq (11) `sigma*^2` is deliberately absent: the authors evaluate it and decline
     to use it ("less satisfactory significance level properties"), so shipping it would
     mean shipping a variant its own source rejects.
+
+    The gaps are sorted first. Every estimator here is a function of the gap multiset, but
+    the one-pass variance below rounds by summation order: on gaps equal up to rounding it
+    reaches zero in some orders and not in others, and whether a check answers must not
+    depend on the order (`result.CheckRefused`). Sorted, every ordering of one segment
+    gives the same bits, and a zero variance is a property of the segment, refused as one.
     """
-    x = np.asarray(x, dtype=float)
+    x = np.sort(np.asarray(x, dtype=float))
     n = len(x)
     if n < 2:
         raise ValueError(f"gamma_hat needs at least 2 gaps; got {n}")
@@ -149,7 +156,7 @@ def gamma_hat(x: np.ndarray, tau: float, estimator: str = GAMMA_DEFAULT) -> floa
         )
     var = max(var, 0.0)
     if var == 0.0 or (estimator != GAMMA_TRUNCATED and gaps_all_equal(x)):
-        raise ValueError(
+        raise CheckRefused(
             "gamma_hat is zero: every gap is identical, so the statistic it scales is "
             "undefined. A fully quantised duration vector (every window one read long) "
             "reaches this, and it is a degenerate cell rather than a result."
@@ -165,9 +172,10 @@ def gamma_hat_batch(
     Permuting gaps cannot change `sum(x)`, `sum(x^2)` or `N`, so every row shares the
     observed value - but it is computed rather than broadcast, because that invariance is
     the reason the permutation test is exact here and an assertion is cheaper than a
-    comment.
+    comment. Each row is sorted first, as `gamma_hat` sorts, so that holds to the bit: a
+    row cannot round to a zero variance its own segment does not have.
     """
-    x_matrix = np.asarray(x_matrix, dtype=float)
+    x_matrix = np.sort(np.asarray(x_matrix, dtype=float), axis=1)
     n = x_matrix.shape[1]
     if n < 2:
         raise ValueError(f"gamma_hat needs at least 2 gaps; got {n}")

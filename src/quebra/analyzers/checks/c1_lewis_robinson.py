@@ -209,6 +209,7 @@ def run(
     if len(segments) > 1:
         notes += f" weights={weights}"
 
+    null: np.ndarray | None = None
     if calibration == CALIB_ASYMPTOTIC:
         p_value = float(2.0 * stats.norm.sf(abs(observed)))
     elif calibration == CALIB_PERMUTATION:
@@ -232,4 +233,5 @@ def run(
         n_segments=len(segments),
         n_censored_dropped=n_censored,
         notes=notes,
+        null_statistics=null,
     )

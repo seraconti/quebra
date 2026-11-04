@@ -70,6 +70,7 @@ from quebra.analyzers.checks.result import (
     CALIB_PERMUTATION,
     CLOCK_CALENDAR,
     CLOCK_SIDE,
+    CheckRefused,
     Segment,
     validate_segment,
 )
@@ -1304,3 +1305,26 @@ def test_no_call_site_still_carries_its_own_copy():
     assert carriers == ["_permutation.py"], (
         f"the guard should live only in _permutation.py; also found in {carriers}"
     )
+
+
+@pytest.mark.unit
+def test_gamma_reads_a_segment_the_same_in_every_order() -> None:
+    """Oracle: gamma is a function of the gap multiset, so every ordering of one segment
+    must give the same bits, the scalar form and each row of the batch alike.
+
+    Gaps one ulp apart round the one-pass variance to zero in some orders and not others,
+    and distinct decimal gaps round its last bits by order; read sorted, neither can.
+    """
+    near = np.array([0.3, 0.3, 0.1 * 3])
+    distinct = np.array([0.6, 1.0, 0.2, 1.0, 0.4, 0.5])
+    for x in (near, distinct):
+        rows = np.array(sorted(set(itertools.permutations(x))))
+        outcomes = set()
+        for row in rows:
+            try:
+                outcomes.add(gamma_hat(row, 9.0))
+            except CheckRefused:
+                outcomes.add("refused")
+        assert len(outcomes) == 1, outcomes
+        if outcomes != {"refused"}:
+            assert set(gamma_hat_batch(rows, 9.0).tolist()) == outcomes

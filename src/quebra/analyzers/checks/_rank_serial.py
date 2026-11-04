@@ -48,6 +48,8 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import stats
 
+from quebra.analyzers.checks.result import CheckRefused
+
 # Cap on the number of lags. Beyond a handful of lags the pair count collapses and each
 # extra coordinate costs power in the max/portmanteau without plausibly carrying signal.
 # Ljung and Box (1978, Sect. 4.3, p. 302) found a smaller lag count gave their portmanteau
@@ -77,7 +79,11 @@ class LagLayout:
 def lag_layout(
     sizes: list[int] | tuple[int, ...], max_lag: int = MAX_LAG_CAP
 ) -> LagLayout:
-    """Within-segment `(i, i+h)` index pairs for each usable lag `h`."""
+    """Within-segment `(i, i+h)` index pairs for each usable lag `h`.
+
+    Raises `CheckRefused` when no lag has `MIN_PAIRS_PER_LAG` pairs: that reads the segment
+    sizes alone, which no shuffle changes.
+    """
     sizes = [int(s) for s in sizes]
     lags: list[int] = []
     left: list[np.ndarray] = []
@@ -101,7 +107,7 @@ def lag_layout(
         right.append(flat + lag)
         counts.append(len(flat))
     if not lags:
-        raise ValueError(
+        raise CheckRefused(
             f"no usable lag: segment sizes {sizes} give fewer than "
             f"{MIN_PAIRS_PER_LAG} within-segment pairs even at lag 1. A record of "
             "very short segments carries no ordering information to test."
@@ -117,11 +123,14 @@ def lag_layout(
 def global_ranks(x: np.ndarray) -> np.ndarray:
     """Midrank-averaged ranks. Ties get their average rank, which is what keeps a
     quantised duration vector (many windows exactly one read long) from being ordered
-    arbitrarily by input order."""
+    arbitrarily by input order.
+
+    Raises `CheckRefused` when every duration is tied: that reads the multiset, the same
+    in every order."""
     x = np.asarray(x, dtype=float)
     ranks = stats.rankdata(x, method="average")
     if float(np.var(ranks)) == 0.0:
-        raise ValueError(
+        raise CheckRefused(
             "every duration is tied, so the rank vector is constant and no serial "
             "statistic is defined. This is a degenerate cell, not a result."
         )
@@ -135,12 +144,15 @@ def autocorrelations(rank_matrix: np.ndarray, layout: LagLayout) -> np.ndarray:
     by every lag, so the values are comparable across lags in the usual autocorrelation
     sense; the pair-count differences between lags, and each lag's null mean, are then
     handled by studentization, which C6 and C5's studentized variant share.
+
+    Raises `CheckRefused` on a constant rank vector: a shuffle of a constant vector is
+    constant, so every row of the ensemble agrees.
     """
     rank_matrix = np.atleast_2d(np.asarray(rank_matrix, dtype=float))
     centred = rank_matrix - rank_matrix.mean(axis=1, keepdims=True)
     denominator = (centred**2).sum(axis=1)
     if np.any(denominator <= 0.0):
-        raise ValueError("a rank vector is constant; no serial statistic is defined")
+        raise CheckRefused("a rank vector is constant; no serial statistic is defined")
     out = np.empty((rank_matrix.shape[0], len(layout.lags)), dtype=float)
     for column, (left, right) in enumerate(zip(layout.left, layout.right)):
         out[:, column] = (centred[:, left] * centred[:, right]).sum(
@@ -157,7 +169,9 @@ def studentize(observed: np.ndarray, null: np.ndarray) -> tuple[np.ndarray, np.n
     what makes the transformation symmetric across the augmented sample - see the module
     docstring.
 
-    Raises when a lag's range across the augmented sample is at most `ZERO_SPREAD_TOL`.
+    Raises `CheckRefused` when a lag's range across the augmented sample is at most
+    `ZERO_SPREAD_TOL`: the range is symmetric in the B + 1 rows, so which row is the
+    observed one cannot change it.
     The range of equal values is exactly zero, while their standard deviation can round
     to a small positive number, which would scale every `z_h` at that lag to +/-1.
     """
@@ -170,7 +184,7 @@ def studentize(observed: np.ndarray, null: np.ndarray) -> tuple[np.ndarray, np.n
         )
     augmented = np.vstack([observed, null])
     if np.any(np.ptp(augmented, axis=0) <= ZERO_SPREAD_TOL):
-        raise ValueError(
+        raise CheckRefused(
             "a lag has no spread across the permutation ensemble, so it cannot be "
             "studentized. Every permutation gave the same autocorrelation at that lag, "
             "as it does when every segment holds two events, or every segment that pairs "

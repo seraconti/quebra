@@ -256,6 +256,7 @@ def run(
     n_censored = int(sum(s.n_censored_dropped for s in segments))
     notes = f"gamma={gamma_estimator}"
 
+    null: np.ndarray | None = None
     if calibration == CALIB_ASYMPTOTIC:
         if len(segments) > 1:
             raise ValueError(
@@ -288,4 +289,5 @@ def run(
         n_segments=len(segments),
         n_censored_dropped=n_censored,
         notes=notes,
+        null_statistics=null,
     )

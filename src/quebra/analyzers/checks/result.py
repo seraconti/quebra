@@ -62,8 +62,10 @@ CALIB_R_COPULA = "r_copula"
 # `nan`. Reproduced on trials 6 and 7 of a 40,000-segment sweep at N = 64.
 #
 # Both halves are needed and they do different jobs. `last_event_time` pins the CONSUMERS
-# (`validate_segment`, `gamma_hat`, `Segment.residual`, `_eq7`) to eq (7)'s own summation
-# order, so they agree with each other. The margin covers the PRODUCERS, which are outside
+# (`validate_segment`'s lower bound, `Segment.residual`, `_eq7`) to eq (7)'s own summation
+# order, so they agree with each other. `gamma_hat` and C2's strict-tau refusal read it on
+# the sorted gaps instead, so that no shuffle moves them; the margin covers that
+# difference too. The margin covers the PRODUCERS, which are outside
 # this module and cannot be pinned: `segments_from_windows` builds `tau` with
 # `durations.sum()`, and pairwise-vs-sequential summation disagrees in either direction on
 # 23% of random vectors.
@@ -156,6 +158,21 @@ class Segment:
         return self.n_events - 1 if self.ends_at_event else self.n_events
 
 
+class CheckRefused(ValueError):
+    """A check this record leaves undefined, whichever of the B + 1 rows is observed.
+
+    Raised only where the reason reads the segments' sizes, the multisets of their gaps and
+    their `tau`, or the augmented permutation ensemble as a whole, so whether the check
+    answers cannot depend on which row is the observed one: what a min-P over several
+    checks needs to keep its size. A raise left a plain ValueError carries no mark, so a
+    min-P cannot leave that check out and reads not computed instead: an answer lost,
+    never size. Two raises that read only the record stay plain, because no ledger
+    reaches them: a segment below a check's event floor, which `drop_unusable_segments`
+    removes first, and a negative eq (10) variance, which the default estimator cannot
+    give. It is a ValueError, so every caller that catches one still catches it.
+    """
+
+
 @dataclass(frozen=True)
 class CheckResult:
     check: str
@@ -171,6 +188,10 @@ class CheckResult:
     n_censored_dropped: int = 0
     notes: str = ""
     extra: dict[str, object] = field(default_factory=dict)
+    # The B permutation draws of `statistic`, signed as it is, on a permutation-calibrated
+    # row; None otherwise. Kept so several checks on one permutation set can be calibrated
+    # together (`min_p`); no ledger or bench row carries it.
+    null_statistics: np.ndarray | None = field(default=None, compare=False, repr=False)
 
 
 def validate_segment(
@@ -190,6 +211,10 @@ def validate_segment(
     II) truncation, not the time censoring the equation is derived for. No check asks for
     it: C1, C2 and CvM read such a segment's first `N - 1` events (`events_read`), where
     the term is finite.
+
+    A zero gap and the strict-tau refusal raise `CheckRefused`: each reads only the gap
+    multiset and `tau`, which no shuffle within the segment changes, so the strict-tau
+    test reads `T_N` on the sorted gaps. The other raises carry no mark.
     """
     x = np.asarray(segment.x, dtype=float)
     if x.ndim != 1:
@@ -206,12 +231,12 @@ def validate_segment(
         )
     if not np.all(x > 0.0):
         n_bad = int((x <= 0.0).sum())
-        raise ValueError(
+        raise CheckRefused(
             f"segment gaps must be strictly positive; {n_bad} of {len(x)} are <= 0. "
             "A zero-duration window is producible by the real carve (a single-read "
             "scan_end window has duration_s exactly 0.0) and makes eq (7) singular "
-            "once it is the first gap, which a permutation can make it, "
-            "so it has to be excluded deliberately upstream rather than here."
+            "once it is the first gap, which a permutation can make it, so no check is "
+            "defined on this segment."
         )
     if not np.isfinite(segment.tau):
         raise ValueError(f"tau must be finite; got {segment.tau}")
@@ -228,9 +253,11 @@ def validate_segment(
             f"more than the {TAU_MARGIN:.0e} relative margin. tau is a truncation time "
             "and must cover every event it censors."
         )
-    if require_strict_tau and at_last_event(segment.tau, total):
-        raise ValueError(
-            f"tau ({segment.tau:.6g}) does not clear T_N ({total:.6g}) by the required "
+    # On the sorted gaps, as `gamma_hat` reads them, so every permutation row agrees.
+    sorted_total = last_event_time(np.sort(x))
+    if require_strict_tau and at_last_event(segment.tau, sorted_total):
+        raise CheckRefused(
+            f"tau ({segment.tau:.6g}) does not clear T_N ({sorted_total:.6g}) by the required "
             f"relative margin {TAU_MARGIN:.1e}, so the trailing gap is empty or within "
             "float noise of it. Eq (7) contains ln((tau - T_{N-1})/(tau - T_N)), which is +inf at "
             "equality: this is failure truncation, not the time censoring the statistic "

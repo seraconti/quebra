@@ -73,6 +73,7 @@ from quebra.analyzers.checks.result import (
     CALIB_ASYMPTOTIC,
     CALIB_PERMUTATION,
     CLOCK_IN_SPEC,
+    CheckRefused,
     CheckResult,
     Segment,
     concatenated_gaps,
@@ -81,6 +82,9 @@ from quebra.analyzers.checks.result import (
 
 # The `extra` key of a result whose check raised on its segments; the value is the reason.
 UNDEFINED = "undefined"
+# Whether an undefined row's cause was a `CheckRefused`, the same whichever of the B + 1
+# rows is observed, rather than a raise that could depend on which one is.
+REFUSED = "refused"
 
 C5_RAW_KEY = ("c5_rank_autocorr", CALIB_PERMUTATION, c5.VARIANT_RAW)
 
@@ -174,6 +178,7 @@ def _undefined(
     """The result of a check that raised on these segments: no p-value, and the reason.
 
     The notes carry the variant token `row_key` reads, so the row lands on its own key.
+    `extra[REFUSED]` says whether the cause was a `CheckRefused`.
     """
     return CheckResult(
         check=check,
@@ -185,7 +190,7 @@ def _undefined(
         n_segments=len(segments),
         n_censored_dropped=int(sum(s.n_censored_dropped for s in segments)),
         notes=f"variant={variant} {exc}" if variant else str(exc),
-        extra={UNDEFINED: str(exc)},
+        extra={UNDEFINED: str(exc), REFUSED: isinstance(exc, CheckRefused)},
     )
 
 
@@ -209,8 +214,9 @@ def run_battery(
     Only the bench sets either.
 
     `undefined_as_rows=True` turns a check's ValueError or KeyError into its result with no
-    p-value and the reason in `extra[UNDEFINED]` (`_undefined`), in the same position; the
-    shared rank arrays failing does that to C5 and C6. Left False, the first one raises.
+    p-value and the reason in `extra[UNDEFINED]` (`_undefined`), in the same position, and
+    whether that was a `CheckRefused` in `extra[REFUSED]`; the shared rank arrays failing
+    does that to C5 and C6. Left False, the first one raises.
 
     `include_c2_asymptotic` acts only with `include_asymptotic`. It exists because C2's
     asymptotic calibration is defined only for
