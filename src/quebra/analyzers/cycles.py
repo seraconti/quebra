@@ -100,15 +100,22 @@ Validity assumptions
   Consequence of violation: each merge hides a cycle of length 0, so the MTBC is slightly
   high and the cycle count slightly low.
   Reference: no source located; the rule is this project's.
-- Assumption: every battery segment ends inside a cycle, so tau > T_N.
-  Diagnostic: a segment whose last calibration ends exactly at the segment's end has
-  tau = T_N; C2 refuses it, and the ledger drops C1 and C2 together for the whole record
-  when either is undefined, whose rows then read `not computed` with the note "C1/C2
-  undefined here".
-  Consequence of violation: C1 and C2 give no answer on that record, until the checks read
-  a segment that ends at an event in its failure-truncated form; the cycles reach the
-  battery only through the shared segment path, so they take that form unchanged.
-  Reference: `checks.result.validate_segment`, `check_ledger.score_segments`.
+- Assumption: the within-stretch rows read each segment's complete cycles in time order,
+  each from a calibration's end to the next calibration's start, calibration time left
+  out; tau is their sum plus the censored cycle to the segment's end when there is one. A
+  segment that ends exactly at a calibration's end has none: it is read in its
+  failure-truncated form, its first n - 1 cycles with tau = T_N
+  (`Segment.ends_at_event`), and the rows' notes say how many segments ended so. The piece
+  before a segment's first calibration is dropped and counted
+  (`n_unobserved_birth_dropped`), and so are short and degenerate segments
+  (`n_segments_dropped`, `n_segments_degenerate`). The whole-record rows are a diagnostic
+  only (below).
+  Diagnostic: those counts on the panel, and the rows' notes.
+  Consequence of violation: the failure-truncated reading, and with it the permutation
+  p-value, is exact only if stopping at a calibration's end does not depend on the order
+  of the cycles; a stop that does makes the reshuffled cycles the wrong reference set.
+  Reference: Rigdon and Basu (2000), Sect. 4.3, the failure-truncated case;
+  `checks.c1_lewis_robinson`, Validity assumptions; `check_ledger.score_segments`.
 - Assumption: the cycles are exchangeable across stretches as well as inside each, since
   the MTBC interval and the band pool every cycle of the record.
   Diagnostic: none that sets the standing. The within-stretch rows permute inside each

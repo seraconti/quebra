@@ -164,8 +164,11 @@ A2_RENEWAL_CYCLES = Assumption(
     ),
     diagnostic=(
         "The battery's permutation rows on the cycles (`analyzers/cycles.cycle_checks`), "
-        "scored by `check_ledger.score_segments`: x is the complete cycles of each stretch "
-        "between outages, in time order. The rows carry the calendar clock's label and are "
+        "scored by `check_ledger.score_segments`: the within-stretch rows, x the complete "
+        "cycles of each stretch between outages in time order, which do not test a drift "
+        "between stretches. The whole-record rows beside them join the complete cycles of "
+        "all stretches and are a diagnostic only, sensitive to the outage layout. The rows "
+        "carry the calendar clock's label and are "
         "matched to the bench's calendar cells, which were measured on gaps between window "
         "births, not on cycles; whether that transfer is valid is UNRESOLVED."
     ),
