@@ -17,6 +17,12 @@ hazard with its band, on log axes shared by both bags, the counts per rung in th
 Under each bag, the check outcome of each rung's band: checks down, and per rung its two
 clocks side by side. The key and the caption read as in the survival block.
 
+**Fraction** (`FractionBlockPlot`). The time-weighted in-spec fraction at each rung as a
+bar in the in-spec colour, its bounds as a whisker, drawn as the compliance survey draws
+them: a dotted whisker from 0 to 1 where the fraction is computed and its bounds are not,
+a grey cell where the fraction itself is not computed. The gaps left out of the observed
+time are counted in the axes.
+
 **Curve summaries** (`SummariesTablePlot`). No drawing: `build_table` hands the step-built
 frame to the `table` target unchanged.
 """
@@ -29,10 +35,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure, SubFigure
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 from matplotlib.ticker import NullFormatter
 
-from quebra.analyzers.record_figure import HazardBlockData, SurvivalBlockData
+from quebra.analyzers.record_figure import (
+    FractionBlockData,
+    HazardBlockData,
+    SurvivalBlockData,
+)
 from quebra.plots import theme
 from quebra.plots.base import BasePlot
 from quebra.plots.km_survival_plot import band_vertices, step_arrays
@@ -155,7 +166,9 @@ def _caption(data: SurvivalBlockData) -> str:
 
 
 def _draw_failure(
-    fig: Figure | SubFigure, data: SurvivalBlockData | HazardBlockData, style: str
+    fig: Figure | SubFigure,
+    data: SurvivalBlockData | HazardBlockData | FractionBlockData,
+    style: str,
 ) -> bool:
     """Draw why a block has nothing to draw, and say whether it did."""
     if not (data.failure or not data.ladder):
@@ -464,6 +477,124 @@ class HazardBlockPlot(BasePlot):
                 facecolor="white",
             )
             draw_hazard(fig, data, style)
+        return fig
+
+
+# The fraction block: inches per rung, the axes' height, and the bar's width in rung units.
+_FRACTION_RUNG_W = 0.75
+_FRACTION_H = 3.2
+_FRACTION_BAR_W = 0.62
+# The ids a fraction bar, a bounds whisker, a whisker of bounds not computed, and a
+# not-computed cell carry, so a test can find each.
+FRACTION_GID = "fraction"
+BOUNDS_GID = "bounds"
+NO_BOUNDS_GID = "bounds_not_computed"
+NOT_COMPUTED_GID = "fraction_not_computed"
+# Bounds not computed: the compliance survey's dotted whisker.
+_NO_BOUNDS = {**theme.BOUNDS_WHISKER, "linestyle": ":"}
+
+
+def _fraction_caption(data: FractionBlockData) -> str:
+    k = f"{data.unsure_k:g}" if data.unsure_k is not None else "the carve's"
+    parts = [
+        f"Time-weighted in-spec fraction of the observed time of {data.dataset_id} at "
+        "each rung, the gaps left out.",
+        f"The whisker bounds it, counting every stretch the reads cannot settle at {k} "
+        "sigma either way; dotted from 0 to 1 where the bounds are not computed, grey "
+        "where the fraction is not.",
+    ]
+    if data.flag:
+        parts.append(f"This record is {data.flag}.")
+    return " ".join(parts)
+
+
+def draw_fraction(fig: Figure | SubFigure, data: FractionBlockData, style: str) -> None:
+    """The fraction block of one record on `fig` (module docstring)."""
+    title = f"In-spec fraction by rung, {data.dataset_id}"
+    if _draw_failure(fig, data, style):
+        fig.suptitle(title)
+        return
+    ax = fig.add_subplot(1, 1, 1)
+    grey = theme.verdict_color("not computed")
+    for j, (fraction, lower, upper) in enumerate(
+        zip(data.fraction, data.lower, data.upper, strict=True)
+    ):
+        if fraction is None:
+            ax.add_patch(
+                Rectangle(
+                    (j - _FRACTION_BAR_W / 2, 0.0),
+                    _FRACTION_BAR_W,
+                    1.0,
+                    facecolor=grey,
+                    edgecolor="none",
+                    gid=NOT_COMPUTED_GID,
+                )
+            )
+        else:
+            (bar,) = ax.bar(
+                j,
+                fraction,
+                width=_FRACTION_BAR_W,
+                color=theme.STATE_COLORS["in_spec"],
+                linewidth=0,
+            )
+            bar.set_gid(FRACTION_GID)
+        if lower is not None and upper is not None:
+            ax.vlines(j, lower, upper, zorder=3, gid=BOUNDS_GID, **theme.BOUNDS_WHISKER)
+        elif fraction is not None:
+            ax.vlines(j, 0.0, 1.0, zorder=3, gid=NO_BOUNDS_GID, **_NO_BOUNDS)
+    ax.set_xlim(-0.5, len(data.ladder) - 0.5)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xticks(range(len(data.ladder)))
+    ax.set_xticklabels(list(data.ladder))
+    ax.set_xlabel("Rung")
+    ax.set_ylabel("In-spec fraction of observed time")
+    gap = (
+        f"gaps left out: {data.n_gaps} ({data.gap_h:.3g} h)"
+        if data.n_gaps is not None and data.gap_h is not None
+        else "gaps left out: not counted"
+    )
+    ax.set_title(gap, loc="right", **theme.scaled_text(theme.ANNOTATION, style))
+    ax.legend(
+        handles=[
+            Patch(facecolor=theme.STATE_COLORS["in_spec"], label="in-spec fraction"),
+            Line2D([], [], **theme.BOUNDS_WHISKER, label="bounds"),
+            Line2D([], [], **_NO_BOUNDS, label="bounds not computed"),
+            Patch(facecolor=grey, label="not computed"),
+        ],
+        loc="lower left",
+        bbox_to_anchor=(0.0, 1.0),
+        ncol=4,
+        frameon=False,
+        borderaxespad=0.2,
+        **theme.scaled_text(theme.LEGEND_TEXT, style),
+    )
+    theme.apply_common_style(ax)
+    fig.suptitle(title)
+    fig.supxlabel(
+        _fraction_caption(data), wrap=True, **theme.scaled_text(theme.CAPTION, style)
+    )
+
+
+class FractionBlockPlot(BasePlot):
+    """The fraction block of one record: the in-spec fraction at every rung with its
+    bounds."""
+
+    def build_matplotlib(self, result: object, style: str = "default") -> plt.Figure:
+        if not isinstance(result, FractionBlockData):
+            raise TypeError(
+                f"{type(self).__name__} draws a FractionBlockData; got "
+                f"{type(result).__name__}"
+            )
+        data = result
+        width = max(_FRACTION_RUNG_W * max(len(data.ladder), 1) + 1.5, 6.0)
+        with theme.style_context(style):
+            fig = plt.figure(
+                figsize=(width, _FRACTION_H + 1.2),
+                layout="constrained",
+                facecolor="white",
+            )
+            draw_fraction(fig, data, style)
         return fig
 
 

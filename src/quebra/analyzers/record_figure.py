@@ -39,6 +39,13 @@ empty bag (`n_windows` 0). The interval is kept as computed, as the MTBC's is, a
 `rmst_interval_note` says when it has no width (no death before tau, so SE 0) or its lower
 end is at or below 0. `check_verdicts` lists each check's verdicts on the side clock, then
 the calendar clock.
+
+**Fraction block** (`build_fraction_block`). The time-weighted in-spec fraction at each
+rung and its bounds, from `compliance_survey.record_compliance` on the record's checked
+carve: the numbers the compliance survey draws for the same record. The bounds count every
+unsettled stretch either way at the carve's k sigma; they are placement bounds, not a band
+on exchangeability, so no check outcome is attached. The block carries the gaps the
+observed time leaves out, so the figure can say how much time it does not read.
 """
 
 from __future__ import annotations
@@ -60,6 +67,7 @@ from quebra.analyzers.check_outcome import (
     resolve,
 )
 from quebra.analyzers.checks.result import CLOCKS
+from quebra.analyzers.compliance_survey import RecordCompliance
 from quebra.analyzers.event_table import SIDES, event_tables_from_carve
 from quebra.analyzers.kaplan_meier import (
     KaplanMeierCurve,
@@ -550,3 +558,72 @@ def summaries_table(
         raise ValueError(f"summary columns {unknown} are not in SUMMARY_COLUMNS")
     table = pd.DataFrame(rows, columns=list(SUMMARY_COLUMNS))
     return table.astype({column: "Int64" for column in COUNT_COLUMNS})
+
+
+@dataclass
+class FractionBlockData(StaleArtifactGuard):
+    """Everything the fraction block of one record draws, rung by rung in ladder order.
+
+    `fraction`, `lower` and `upper` are `record_compliance`'s, None where not computed;
+    `status` belongs to the fraction and `bounds_status` to the bounds, each `computed` or
+    `not computed: <reason>`. `unsure_k` and `gap_mult` are the carve's. `n_gaps` and
+    `gap_h` count the gaps the observed time leaves out. `failure`, `flag` read as on
+    `SurvivalBlockData`; a failed record has every rung not computed and no gap count.
+    """
+
+    dataset_id: str
+    flag: str
+    failure: str
+    ladder: tuple[str, ...]
+    fraction: tuple[float | None, ...]
+    lower: tuple[float | None, ...]
+    upper: tuple[float | None, ...]
+    status: tuple[str, ...]
+    bounds_status: tuple[str, ...]
+    unsure_k: float | None
+    gap_mult: float | None
+    n_gaps: int | None
+    gap_h: float | None
+
+
+def build_fraction_block(
+    compliance: RecordCompliance,
+    carve: WindowsResult | RecordFailure,
+    *,
+    flag: str,
+) -> FractionBlockData:
+    """The fraction block of one record from its compliance and its carve (module
+    docstring). Raises if the two describe different records."""
+    carved = (
+        carve.dataset_id
+        if isinstance(carve, RecordFailure)
+        else str(carve.meta["dataset_id"])
+    )
+    if carved != compliance.dataset_id:
+        raise ValueError(
+            f"the compliance of {compliance.dataset_id!r} is drawn with the carve of "
+            f"{carved!r}"
+        )
+    if isinstance(carve, RecordFailure):
+        n_gaps: int | None = None
+        gap_h: float | None = None
+    else:
+        spans = carve.diagnostics["gap_spans_s"]
+        n_gaps = len(spans)
+        gap_h = float(sum(hi - lo for lo, hi in spans)) / 3600.0
+    rungs = compliance.rungs
+    return FractionBlockData(
+        dataset_id=compliance.dataset_id,
+        flag=flag,
+        failure=compliance.record_failure,
+        ladder=tuple(r.threshold_label for r in rungs),
+        fraction=tuple(r.in_spec_fraction for r in rungs),
+        lower=tuple(r.in_spec_fraction_lower for r in rungs),
+        upper=tuple(r.in_spec_fraction_upper for r in rungs),
+        status=tuple(r.status for r in rungs),
+        bounds_status=tuple(r.bounds_status for r in rungs),
+        unsure_k=compliance.unsure_k,
+        gap_mult=compliance.gap_mult,
+        n_gaps=n_gaps,
+        gap_h=gap_h,
+    )

@@ -31,9 +31,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from quebra.analyzers.check_ledger import CheckLedger
+from quebra.analyzers.compliance_survey import record_compliance
 from quebra.analyzers.check_outcome import RowKey
 from quebra.analyzers.kaplan_meier import CONF_LEVEL
 from quebra.analyzers.record_figure import (
+    build_fraction_block,
     build_hazard_block,
     build_record_summaries,
     build_survival_block,
@@ -55,6 +57,7 @@ from quebra.ledger_recipe import (
     ledger_step,
 )
 from quebra.plots.record_figure_plot import (
+    FractionBlockPlot,
     HazardBlockPlot,
     SummariesTablePlot,
     SurvivalBlockPlot,
@@ -155,9 +158,37 @@ def wire_hazard_block(job: Job, nodes: RecordNodes) -> None:
     )
 
 
+def wire_fraction_block(job: Job, nodes: RecordNodes) -> None:
+    """The fraction block: `record_compliance` on the checked carve, the compliance
+    survey's numbers for this record, drawn rung by rung."""
+    compliance = job.step(
+        record_compliance,
+        nodes.carve,
+        name=f"compliance_{nodes.record}",
+        thresholds=tuple(
+            (str(lb), float(v), bool(b))
+            for lb, v, b in nodes.carve_kwargs["thresholds"]
+        ),
+    )
+    block = job.step(
+        build_fraction_block,
+        compliance,
+        nodes.carve,
+        name=f"fraction_block_{nodes.record}",
+        flag=nodes.flag,
+    )
+    job.figure(
+        FractionBlockPlot,
+        block,
+        targets=TARGETS,
+        title=f"{nodes.record} in-spec fraction",
+    )
+
+
 BLOCKS: tuple[Callable[[Job, RecordNodes], None], ...] = (
     wire_survival_block,
     wire_hazard_block,
+    wire_fraction_block,
 )
 
 

@@ -32,6 +32,7 @@ from quebra.analyzers.event_table import SIDES
 from quebra.analyzers.kaplan_meier import CONF_LEVEL
 from quebra.analyzers.event_table import EventTable, event_tables_from_carve
 from quebra.analyzers.independence_survey import CHECK_LABELS
+from quebra.analyzers.compliance_survey import record_compliance
 from quebra.analyzers.record_figure import (
     ALL_ROWS,
     COUNT_COLUMNS,
@@ -40,6 +41,8 @@ from quebra.analyzers.record_figure import (
     NOTE_NO_WIDTH,
     SUMMARY_COLUMNS,
     RecordSummaries,
+    FractionBlockData,
+    build_fraction_block,
     build_hazard_block,
     build_record_summaries,
     build_survival_block,
@@ -62,7 +65,12 @@ from quebra.core.types import RecordFailure
 from quebra.ledger_recipe import LEDGER_KNOBS, ledger_step
 from quebra.paper_tables import FLAG_TEXT, PAPER_RECORDS, SHADED
 from quebra.plots.record_figure_plot import (
+    BOUNDS_GID,
     CELL_GID,
+    FRACTION_GID,
+    NO_BOUNDS_GID,
+    NOT_COMPUTED_GID,
+    FractionBlockPlot,
     HazardBlockPlot,
     SummariesTablePlot,
     SurvivalBlockPlot,
@@ -630,6 +638,99 @@ def test_the_table_target_writes_the_frame_unrounded(scored, tmp_path: Path) -> 
             ), column
     with pytest.raises(TypeError, match="no build_table"):
         render_table(SurvivalBlockPlot("survival"), frame, tmp_path)
+
+
+@pytest.mark.unit
+def test_the_fraction_block_is_the_compliance_surveys_numbers_for_its_record(
+    scored,
+) -> None:
+    """Oracles: `record_compliance` called on its own, the bound's definition (it holds
+    the fraction), and the carve's gap spans summed. Each rung's fraction, bounds and
+    statuses are the survey's, in ladder order, with lower <= fraction <= upper; the gaps
+    the observed time leaves out are counted; a failed record has every rung not computed
+    and no gap count; the compliance of another record is refused."""
+    survey = record_compliance(scored.carve, T2STAR_THRESHOLDS)
+    block = build_fraction_block(survey, scored.carve, flag="")
+    assert block.ladder == tuple(label for label, _, _ in T2STAR_THRESHOLDS)
+    for i, rung in enumerate(survey.rungs):
+        assert (block.fraction[i], block.lower[i], block.upper[i]) == (
+            rung.in_spec_fraction, rung.in_spec_fraction_lower, rung.in_spec_fraction_upper
+        )  # fmt: skip
+        assert (block.status[i], block.bounds_status[i]) == (
+            rung.status,
+            rung.bounds_status,
+        )
+        assert block.lower[i] <= block.fraction[i] <= block.upper[i]
+    assert len({*block.fraction}) == len(block.ladder), "premise: the rungs differ"
+    spans = scored.carve.diagnostics["gap_spans_s"]
+    assert block.n_gaps == len(spans) >= 1
+    assert block.gap_h == pytest.approx(sum(hi - lo for lo, hi in spans) / 3600.0)
+    failure = RecordFailure(dataset_id=RECORD, stage="t2star", reason="ValueError: x")
+    failed = build_fraction_block(
+        record_compliance(failure, T2STAR_THRESHOLDS), failure, flag=""
+    )
+    assert failed.failure == failure.note() and failed.n_gaps is None
+    assert set(failed.fraction) == {None}
+    with pytest.raises(ValueError, match="is drawn with the carve of"):
+        build_fraction_block(
+            survey,
+            RecordFailure(dataset_id="q9_010101", stage="t2star", reason="x"),
+            flag="",
+        )
+
+
+@pytest.mark.unit
+def test_the_fraction_block_draws_its_artifact() -> None:
+    """Oracle: a hand artifact read back off the figure. A computed rung with its bounds
+    draws its bar and whisker; a rung whose bounds are not computed its bar and a dotted
+    whisker from 0 to 1; a rung not computed a grey cell and no bar; the gaps are counted
+    in the axes and the flag reaches the caption."""
+    data = FractionBlockData(
+        dataset_id=RECORD,
+        flag=FLAG_TEXT,
+        failure="",
+        ladder=("a", "b", "c"),
+        fraction=(0.7, 0.4, None),
+        lower=(0.6, None, None),
+        upper=(0.8, None, None),
+        status=(
+            "computed",
+            "computed",
+            "not computed: no segment with at least 2 reads",
+        ),
+        bounds_status=("computed", "not computed: no read", "not computed: no read"),
+        unsure_k=1.0,
+        gap_mult=10.0,
+        n_gaps=2,
+        gap_h=1.5,
+    )
+    fig = FractionBlockPlot("fraction").build_matplotlib(data)
+    try:
+        (ax,) = fig.axes
+        bars = [p for p in ax.patches if p.get_gid() == FRACTION_GID]
+        assert [(b.get_x() + b.get_width() / 2, b.get_height()) for b in bars] == [
+            (pytest.approx(0.0), pytest.approx(0.7)),
+            (pytest.approx(1.0), pytest.approx(0.4)),
+        ]
+        (cell,) = [p for p in ax.patches if p.get_gid() == NOT_COMPUTED_GID]
+        assert cell.get_x() + cell.get_width() / 2 == pytest.approx(2.0)
+        assert cell.get_height() == 1.0
+        whiskers = {
+            gid: [
+                seg.tolist()
+                for c in ax.collections
+                if c.get_gid() == gid
+                for seg in c.get_segments()
+            ]
+            for gid in (BOUNDS_GID, NO_BOUNDS_GID)
+        }
+        assert whiskers[BOUNDS_GID] == [[[0.0, 0.6], [0.0, 0.8]]]
+        assert whiskers[NO_BOUNDS_GID] == [[[1.0, 0.0], [1.0, 1.0]]]
+        drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
+        assert "gaps left out: 2 (1.5 h)" in drawn
+        assert FLAG_TEXT in drawn
+    finally:
+        plt.close(fig)
 
 
 @pytest.mark.policy
