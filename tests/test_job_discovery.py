@@ -155,6 +155,7 @@ def test_a_bare_sweep_excludes_the_composites_as_the_docs_promise():
         "compare_t2star_0704_vs_1004",
         "independence_survey",
         *(f"check_ledger_6d2s_q{q}" for q in range(1, 7)),
+        *(f"record_figures_6d2s_q{q}" for q in range(1, 7)),
     ):
         assert composite in all_jobs, f"{composite} should still be discoverable"
         assert composite not in swept_ids, (

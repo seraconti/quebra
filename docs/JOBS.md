@@ -7,7 +7,7 @@ Every job declares a `JOB_ID` (the logical name `job.include` resolves) and a
 `JOB_FAMILY` (its category). Neither is its directory: a job can move without
 breaking any composite, and recategorising costs one string edit.
 
-30 jobs in 8 families.
+36 jobs in 9 families.
 
 ## check_ledger
 
@@ -28,7 +28,7 @@ breaking any composite, and recategorising costs one string edit.
 
 | JOB_ID | file | datasets | includes | parameters |
 |---|---|---|---|---|
-| `compliance_survey` | `jobs/composite/compliance_survey.py` | — | `check_ledger_2x2_q1`<br>`check_ledger_2x2_q2`<br>`check_ledger_2x2_q3`<br>`check_ledger_2x2_q4`<br>`check_ledger_6d2s_q1`<br>`check_ledger_6d2s_q2`<br>`check_ledger_6d2s_q3`<br>`check_ledger_6d2s_q4`<br>`check_ledger_6d2s_q5`<br>`check_ledger_6d2s_q6` | `PREFIX='compliance_survey'`<br>`TABLE_SOURCE='Capannelli et al., Supplementary notes, Supplementary Fig. 10 (6D2S, p. 10) and Supplementary Fig. 11 (2x2, p. 11)'` |
+| `compliance_survey` | `jobs/composite/compliance_survey.py` | — | `check_ledger_2x2_q1`<br>`check_ledger_2x2_q2`<br>`check_ledger_2x2_q3`<br>`check_ledger_2x2_q4`<br>`check_ledger_6d2s_q1`<br>`check_ledger_6d2s_q2`<br>`check_ledger_6d2s_q3`<br>`check_ledger_6d2s_q4`<br>`check_ledger_6d2s_q5`<br>`check_ledger_6d2s_q6` | `PREFIX='compliance_survey'` |
 
 ## independence
 
@@ -52,6 +52,17 @@ breaking any composite, and recategorising costs one string edit.
 |---|---|---|---|---|
 | `ramsey_2x2_q1_030723` | `jobs/active/ramsey_2x2_q1_030723.py` | `data/real_private/2x2/030723_2x2_qubit1.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='q1_2x2_16h_0307_dataset'` |
 | `ramsey_q1_100423` | `jobs/active/ramsey_q1_100423.py` | `data/real_private/6D2S/100423_6D2S_qubit1.pickle` | — | `PREFIX='q1_13h_1004_dataset'` |
+
+## record_figure
+
+| JOB_ID | file | datasets | includes | parameters |
+|---|---|---|---|---|
+| `record_figures_6d2s_q1` | `jobs/composite/record_figures_6d2s_q1.py` | — | `check_ledger_6d2s_q1` | — |
+| `record_figures_6d2s_q2` | `jobs/composite/record_figures_6d2s_q2.py` | — | `check_ledger_6d2s_q2` | — |
+| `record_figures_6d2s_q3` | `jobs/composite/record_figures_6d2s_q3.py` | — | `check_ledger_6d2s_q3` | — |
+| `record_figures_6d2s_q4` | `jobs/composite/record_figures_6d2s_q4.py` | — | `check_ledger_6d2s_q4` | — |
+| `record_figures_6d2s_q5` | `jobs/composite/record_figures_6d2s_q5.py` | — | `check_ledger_6d2s_q5` | — |
+| `record_figures_6d2s_q6` | `jobs/composite/record_figures_6d2s_q6.py` | — | `check_ledger_6d2s_q6` | — |
 
 ## survival
 
