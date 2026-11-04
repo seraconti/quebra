@@ -56,6 +56,14 @@ the tellability computed it; elsewhere its status is shown. G10 and its halves a
 with their statuses in the per-record table, with the one sentence they are read by: no
 slope, no reference level. The tables keep every value unrounded, keyed on
 `threshold_label`. A record whose carve or tellability failed draws the failure's note.
+
+**Timeline block** (`build_timeline_block`). Read state along the scan clock at each rung,
+twice: the four states with uncertainty, and the two states the carve used, from the T2*
+panel data built as the T2* jobs build it (`panel_data_of`, `t2star.make_panel_data`).
+Which rungs are drawn is data: a rung is drawn when its in-spec fraction (the panel's
+`occupancy`) is at least `OCCUPANCY_DRAWN`, the rule today's within-calibration panel
+applies; a rung below it, and one with no observed time to measure it on, are named as
+culled. Beside each drawn rung, the scan-clock hour of its first read out of spec.
 """
 
 from __future__ import annotations
@@ -85,6 +93,8 @@ from quebra.analyzers.kaplan_meier import (
     kaplan_meier_set,
 )
 from quebra.analyzers.mtbf import rmst_interval
+from quebra.analyzers.t2star import T2StarResult, make_panel_data
+from quebra.analyzers.within_calibration_data import WithinCalibrationPanelData
 from quebra.analyzers.survival import (
     DEFAULT_QUANTILES,
     ByThresholdSide,
@@ -106,6 +116,10 @@ from quebra.core.types import RecordFailure
 
 # The check id of the one row the ledger writes for a rung, bag and clock it could not score.
 ALL_ROWS = "(all)"
+# The in-spec fraction at or above which a rung's timeline is drawn: the rule today's
+# within-calibration panel applies (`panels/within_calibration.py`), held equal to it by a
+# differential test.
+OCCUPANCY_DRAWN = 0.05
 # The reason a ledger record outside the paper's dataset tables carries in the summaries.
 EXCLUDED_REASON = "not in the paper's dataset tables, so not drawn"
 # `rmst_interval_note` of a restricted mean whose SE is 0, and of one whose interval
@@ -909,4 +923,122 @@ def build_resolvability_block(
         confidence_levels=levels,
         per_threshold=pd.DataFrame(rows, columns=_per_threshold_columns(decimation)),
         per_record=pd.DataFrame([per_record], columns=list(PER_RECORD_COLUMNS)),
+    )
+
+
+def panel_data_of(
+    fit: T2StarResult | RecordFailure,
+    carve: WindowsResult | RecordFailure,
+    km: KaplanMeierSet | RecordFailure,
+    *,
+    shape_min_reads: int,
+    xi_seed: int,
+    k: float,
+    use_uncertainty: bool,
+    thresholds: tuple[tuple[str, float, bool], ...],
+) -> WithinCalibrationPanelData | RecordFailure:
+    """The record's T2* panel data, built as the T2* jobs build it; the first failure of
+    its inputs passes through."""
+    for upstream in (fit, carve, km):
+        if isinstance(upstream, RecordFailure):
+            return upstream
+    if not (
+        isinstance(fit, T2StarResult)
+        and isinstance(carve, WindowsResult)
+        and isinstance(km, KaplanMeierSet)
+    ):
+        raise TypeError(
+            "panel data needs a T2* fit, its carve and its Kaplan-Meier set"
+        )
+    return make_panel_data(
+        fit,
+        windows=carve.windows_in_spec,
+        reads=carve.reads,
+        gap_spans_s=carve.diagnostics["gap_spans_s"],
+        kaplan_meier=km,
+        shape_min_reads=shape_min_reads,
+        xi_seed=xi_seed,
+        k=k,
+        use_uncertainty=use_uncertainty,
+        thresholds=list(thresholds),
+    )
+
+
+@dataclass
+class TimelineBlockData(StaleArtifactGuard):
+    """Everything the timeline block of one record draws.
+
+    `drawn` holds the rungs whose in-spec fraction reaches `OCCUPANCY_DRAWN`, in ladder
+    order; `culled_below` those under it and `culled_unmeasured` those with no observed
+    time to measure it on. `states_4` and `states_2` map each drawn rung to its (start h,
+    end h, state) segments on the scan clock, the four states and the two the carve used;
+    `first_out_h` its first read out of spec, None if it never left. `t_min_h` and
+    `t_max_h` span the record's reads. `failure` and `flag` read as on `SurvivalBlockData`.
+    """
+
+    dataset_id: str
+    flag: str
+    failure: str
+    ladder: tuple[str, ...]
+    drawn: tuple[str, ...]
+    culled_below: tuple[str, ...]
+    culled_unmeasured: tuple[str, ...]
+    states_4: dict[str, tuple[tuple[float, float, str], ...]]
+    states_2: dict[str, tuple[tuple[float, float, str], ...]]
+    first_out_h: dict[str, float | None]
+    t_min_h: float
+    t_max_h: float
+
+
+def build_timeline_block(
+    panel: WithinCalibrationPanelData | RecordFailure,
+    *,
+    record: str,
+    flag: str,
+) -> TimelineBlockData:
+    """The timeline block of one record from its panel data (module docstring)."""
+    if isinstance(panel, RecordFailure):
+        return TimelineBlockData(
+            dataset_id=record,
+            flag=flag,
+            failure=panel.note(),
+            ladder=(),
+            drawn=(),
+            culled_below=(),
+            culled_unmeasured=(),
+            states_4={},
+            states_2={},
+            first_out_h={},
+            t_min_h=float("nan"),
+            t_max_h=float("nan"),
+        )
+    ladder = tuple(label for label, _v, _b in panel.thresholds)
+    occupancy = panel.reliability.occupancy
+    drawn = tuple(label for label in ladder if occupancy[label] >= OCCUPANCY_DRAWN)
+    unmeasured = tuple(label for label in ladder if np.isnan(occupancy[label]))
+    below = tuple(
+        label for label in ladder if label not in drawn and label not in unmeasured
+    )
+    t_h = np.asarray(panel.signal.t_h, dtype=float)
+    return TimelineBlockData(
+        dataset_id=record,
+        flag=flag,
+        failure="",
+        ladder=ladder,
+        drawn=drawn,
+        culled_below=below,
+        culled_unmeasured=unmeasured,
+        states_4={
+            label: tuple(panel.distinguish.state_series_per_threshold.get(label, ()))
+            for label in drawn
+        },
+        states_2={
+            label: tuple(panel.reliability.compliance_state_series.get(label, ()))
+            for label in drawn
+        },
+        first_out_h={
+            label: panel.reliability.ttf_per_threshold.get(label) for label in drawn
+        },
+        t_min_h=float(np.nanmin(t_h)),
+        t_max_h=float(np.nanmax(t_h)),
     )

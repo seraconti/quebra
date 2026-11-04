@@ -23,6 +23,12 @@ them: a dotted whisker from 0 to 1 where the fraction is computed and its bounds
 a grey cell where the fraction itself is not computed. The gaps left out of the observed
 time are counted in the axes.
 
+**Timelines** (`TimelineBlockPlot`). Read state along the scan clock, one row per drawn
+rung: the four states with uncertainty above, the two the carve used below, a key of the
+states over both and each rung's first read out of spec beside the lower one. The culled
+rungs are named on the upper title when they fit on one line, otherwise counted there and
+listed under the lower axes.
+
 **Curve summaries** (`SummariesTablePlot`). No drawing: `build_table` hands the step-built
 frame to the `table` target unchanged.
 
@@ -50,11 +56,14 @@ from matplotlib.ticker import NullFormatter
 from quebra.analyzers.record_figure import (
     LIMIT_INDEPENDENT,
     LIMIT_SMOOTH,
+    OCCUPANCY_DRAWN,
     FractionBlockData,
     HazardBlockData,
     ResolvabilityBlockData,
     SurvivalBlockData,
+    TimelineBlockData,
 )
+from quebra.analyzers.windows import STATE_UNOBSERVED
 from quebra.plots import theme
 from quebra.plots.base import BasePlot
 from quebra.plots.km_survival_plot import band_vertices, step_arrays
@@ -178,7 +187,7 @@ def _caption(data: SurvivalBlockData) -> str:
 
 def _draw_failure(
     fig: Figure | SubFigure,
-    data: SurvivalBlockData | HazardBlockData | FractionBlockData,
+    data: SurvivalBlockData | HazardBlockData | FractionBlockData | TimelineBlockData,
     style: str,
 ) -> bool:
     """Draw why a block has nothing to draw, and say whether it did."""
@@ -606,6 +615,181 @@ class FractionBlockPlot(BasePlot):
                 facecolor="white",
             )
             draw_fraction(fig, data, style)
+        return fig
+
+
+# The timeline block: inches per drawn rung's row, per axes' frame and labels, the key
+# row, the first-out column, and the figure's width. Culled names longer than
+# `_CULL_TITLE_CHARS` move off the title into a list under the lower axes.
+_TIMELINE_ROW_H = 0.28
+_TIMELINE_FRAME_H = 0.8
+_TIMELINE_KEY_H = 0.45
+_TIMELINE_FIRST_OUT_W = 1.1
+_TIMELINE_W = 12.0
+_CULL_TITLE_CHARS = 70
+_BAR_H = 0.75
+# The states a timeline draws, in the key's order, with the key's words.
+_TIMELINE_STATES = (
+    ("in_spec", "in spec"),
+    ("in_spec_uncertain", "in spec, error overlaps threshold, or no error"),
+    ("out_of_spec", "out of spec"),
+    ("out_of_spec_uncertain", "out of spec, error overlaps threshold, or no error"),
+)
+
+
+def _cull_lines(data: TimelineBlockData) -> tuple[str, str]:
+    """The title's cull clause and, when the names do not fit there, the list under the
+    lower axes."""
+    parts = []
+    if data.culled_below:
+        parts.append(
+            f"below {OCCUPANCY_DRAWN:.0%} in spec: {', '.join(data.culled_below)}"
+        )
+    if data.culled_unmeasured:
+        parts.append(f"not measured: {', '.join(data.culled_unmeasured)}")
+    if not parts:
+        return "", ""
+    named = f"culled, {'; '.join(parts)}"
+    if len(named) <= _CULL_TITLE_CHARS:
+        return f" ({named})", ""
+    n = len(data.culled_below) + len(data.culled_unmeasured)
+    return f" ({n} culled, listed below)", f"Culled, {'; '.join(parts)}"
+
+
+def _draw_states(
+    ax: plt.Axes,
+    data: TimelineBlockData,
+    states: dict[str, tuple[tuple[float, float, str], ...]],
+) -> None:
+    n = len(data.drawn)
+    for y, label in zip(range(n - 1, -1, -1), data.drawn, strict=True):
+        for t0, t1, state in states[label]:
+            unobserved = state == STATE_UNOBSERVED
+            ax.barh(
+                y,
+                t1 - t0,
+                left=t0,
+                height=_BAR_H,
+                color=theme.state_color(state),
+                edgecolor=theme.UNOBSERVED_EDGE if unobserved else "none",
+                hatch=theme.UNOBSERVED_HATCH if unobserved else None,
+                linewidth=0.4 if unobserved else 0.0,
+                gid=f"state:{label}",
+            )
+    ax.set_ylim(-0.5, n - 0.5)
+    ax.set_yticks(range(n))
+    ax.set_yticklabels(list(data.drawn)[::-1])
+    ax.set_xlim(data.t_min_h, data.t_max_h)
+    ax.grid(True, axis="x", alpha=0.3)
+
+
+def draw_timelines(
+    fig: Figure | SubFigure, data: TimelineBlockData, style: str
+) -> None:
+    """The timeline block of one record on `fig` (module docstring)."""
+    title = f"Read state along the scan clock by rung, {data.dataset_id}"
+    if _draw_failure(fig, data, style):
+        fig.suptitle(title)
+        return
+    annotation = theme.scaled_text(theme.ANNOTATION, style)
+    rows = _TIMELINE_ROW_H * max(len(data.drawn), 1) + _TIMELINE_FRAME_H
+    grid = fig.add_gridspec(
+        3,
+        2,
+        width_ratios=[_TIMELINE_W - _TIMELINE_FIRST_OUT_W, _TIMELINE_FIRST_OUT_W],
+        height_ratios=[_TIMELINE_KEY_H, rows, rows],
+    )
+    key = fig.add_subplot(grid[0, :])
+    key.set_axis_off()
+    handles = [
+        Patch(facecolor=theme.state_color(state), label=name)
+        for state, name in _TIMELINE_STATES
+    ]
+    handles.append(
+        Patch(
+            facecolor=theme.state_color(STATE_UNOBSERVED),
+            edgecolor=theme.UNOBSERVED_EDGE,
+            hatch=theme.UNOBSERVED_HATCH,
+            label="unobserved (read gap)",
+        )
+    )
+    key.legend(
+        handles=handles,
+        loc="center left",
+        ncol=3,
+        frameon=False,
+        **theme.scaled_text(theme.LEGEND_TEXT, style),
+    )
+    upper = fig.add_subplot(grid[1, 0])
+    lower = fig.add_subplot(grid[2, 0], sharex=upper)
+    first_out = fig.add_subplot(grid[2, 1], sharey=lower)
+    fig.add_subplot(grid[1, 1]).set_axis_off()
+    clause, listed = _cull_lines(data)
+    upper.set_title(f"Four states, with uncertainty{clause}", loc="left")
+    lower.set_title("Two states, as carved", loc="left")
+    first_out.set_axis_off()
+    if not data.drawn:
+        for ax in (upper, lower):
+            ax.set_yticks([])
+        upper.text(
+            0.5,
+            0.5,
+            f"no rung reaches {OCCUPANCY_DRAWN:.0%} in spec",
+            transform=upper.transAxes,
+            ha="center",
+            va="center",
+            **annotation,
+        )
+    else:
+        _draw_states(upper, data, data.states_4)
+        _draw_states(lower, data, data.states_2)
+        first_out.set_title("first out", loc="left", **annotation)
+        for y, label in zip(
+            range(len(data.drawn) - 1, -1, -1), data.drawn, strict=True
+        ):
+            hour = data.first_out_h[label]
+            first_out.text(
+                0.0,
+                y,
+                f"{hour:.1f} h" if hour is not None else "never",
+                ha="left",
+                va="center",
+                **annotation,
+            )
+    upper.tick_params(axis="x", labelbottom=False)
+    lower.set_xlabel("\n".join(["Scan clock (h)", *([listed] if listed else [])]))
+    for ax in (upper, lower):
+        theme.apply_common_style(ax)
+    fig.suptitle(title)
+    caption = (
+        f"Each read's state at each rung of {data.dataset_id}, the four states above and "
+        f"the two the carve used below; a rung is drawn when it is in spec at least "
+        f"{OCCUPANCY_DRAWN:.0%} of the observed time, the rest are named as culled. "
+        "Hatched spans are read gaps."
+    )
+    if data.flag:
+        caption += f" This record is {data.flag}."
+    fig.supxlabel(caption, wrap=True, **theme.scaled_text(theme.CAPTION, style))
+
+
+class TimelineBlockPlot(BasePlot):
+    """The timeline block of one record: read state by rung, four states and two."""
+
+    def build_matplotlib(self, result: object, style: str = "default") -> plt.Figure:
+        if not isinstance(result, TimelineBlockData):
+            raise TypeError(
+                f"{type(self).__name__} draws a TimelineBlockData; got "
+                f"{type(result).__name__}"
+            )
+        data = result
+        rows = _TIMELINE_ROW_H * max(len(data.drawn), 1) + _TIMELINE_FRAME_H
+        with theme.style_context(style):
+            fig = plt.figure(
+                figsize=(_TIMELINE_W, _TIMELINE_KEY_H + 2 * rows + 1.2),
+                layout="constrained",
+                facecolor="white",
+            )
+            draw_timelines(fig, data, style)
         return fig
 
 

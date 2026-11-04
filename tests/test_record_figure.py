@@ -11,6 +11,7 @@ for the nested-run count.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import json
 from pathlib import Path
@@ -47,6 +48,7 @@ from quebra.analyzers.record_figure import (
     SUMMARY_COLUMNS,
     RecordSummaries,
     FractionBlockData,
+    TimelineBlockData,
     build_fraction_block,
     build_hazard_block,
     build_record_summaries,
@@ -59,8 +61,10 @@ from quebra.analyzers.record_figure import (
     kaplan_meier_of,
     ledger_run_set,
     nelson_aalen_of,
+    panel_data_of,
     summaries_table,
 )
+from quebra.analyzers.record_figure import build_timeline_block
 from quebra.analyzers.survival import (
     curve_summaries,
     curve_summaries_set,
@@ -79,6 +83,7 @@ from quebra.plots.record_figure_plot import (
     CROSSING_GID,
     FRACTION_GID,
     FractionBlockPlot,
+    TimelineBlockPlot,
     HazardBlockPlot,
     LIMIT_DASHES,
     NOT_COMPUTED_GID,
@@ -87,7 +92,9 @@ from quebra.plots.record_figure_plot import (
     SummariesTablePlot,
     SurvivalBlockPlot,
 )
+from quebra.panels.within_calibration import WithinCalibrationPanel
 from quebra.plots.targets import render_table
+from quebra.plots.theme import state_color
 from quebra.plots.theme import verdict_color
 from quebra.record_figure_recipe import (
     RecordNodes,
@@ -95,7 +102,7 @@ from quebra.record_figure_recipe import (
     configure_record_figure_job,
     t2star_tellability_of,
 )
-from quebra.recipes import T2STAR_THRESHOLDS
+from quebra.recipes import T2STAR_THRESHOLDS, XI_SEED
 from quebra.tellability_recipe import TELLABILITY_PERMUTATIONS, TELLABILITY_SEED
 from tests.test_compliance_survey import _carve, _track912_csv
 
@@ -107,9 +114,10 @@ FIGURE_JOBS = sorted((REPO / "jobs" / "composite").glob("record_figures_6d2s_q*.
 
 @pytest.fixture(scope="module")
 def scored(tmp_path_factory) -> SimpleNamespace:
-    """A synthetic record's real carve and the real ledger of it, at 99 permutations."""
+    """A synthetic record's real T2* fit, its carve and the real ledger of it, at 99
+    permutations."""
     root = tmp_path_factory.mktemp("record_figure")
-    _, carve = _carve(
+    fit, carve = _carve(
         _track912_csv(root / "020423_r.csv", seed=2, gap=True, n=600), RECORD
     )
     ledger = ledger_step(
@@ -118,7 +126,7 @@ def scored(tmp_path_factory) -> SimpleNamespace:
         thresholds=T2STAR_THRESHOLDS,
         **{**LEDGER_KNOBS, "n_permutations": 99},  # type: ignore[arg-type]
     )
-    return SimpleNamespace(carve=carve, ledger=ledger)
+    return SimpleNamespace(fit=fit, carve=carve, ledger=ledger)
 
 
 def _block(km: object, ledger: CheckLedger, flag: str = "") -> object:
@@ -747,6 +755,122 @@ def test_the_fraction_block_draws_its_artifact() -> None:
         drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
         assert "gaps left out: 2 (1.5 h)" in drawn
         assert FLAG_TEXT in drawn
+    finally:
+        plt.close(fig)
+
+
+def _panel(scored: SimpleNamespace) -> object:
+    return panel_data_of(
+        scored.fit,
+        scored.carve,
+        kaplan_meier_of(scored.carve, conf_level=CONF_LEVEL),
+        shape_min_reads=5,
+        xi_seed=XI_SEED,
+        k=1.0,
+        use_uncertainty=True,
+        thresholds=tuple(T2STAR_THRESHOLDS),
+    )
+
+
+def _panel_drawn_rungs(panel: object) -> tuple[list[str], str]:
+    """The rungs today's within-calibration panel draws on its 2-state timeline, read off
+    its figure, and that axes' title."""
+    fig = WithinCalibrationPanel("panel").build_matplotlib(panel)
+    try:
+        (ax,) = [
+            a for a in fig.axes if a.get_title().startswith("Compliance by threshold")
+        ]
+        return [t.get_text() for t in ax.get_yticklabels()][::-1], ax.get_title()
+    finally:
+        plt.close(fig)
+
+
+@pytest.mark.unit
+def test_the_timeline_block_draws_the_rungs_todays_panel_draws(scored) -> None:
+    """Oracle: today's within-calibration panel, drawn on the same panel data. The block
+    draws exactly the rungs the panel's timelines draw, in ladder order, on the record as
+    carved (one rung culled) and on a copy whose occupancy is edited to 0.07, 0.03 and
+    unmeasured at three rungs; each drawn rung's states and first read out of spec are the
+    panel data's own."""
+    panel = _panel(scored)
+    block = build_timeline_block(panel, record=RECORD, flag="")
+    drawn, _title = _panel_drawn_rungs(panel)
+    assert list(block.drawn) == drawn
+    assert block.culled_below, "premise: the synthetic record culls a rung"
+    for label in block.drawn:
+        assert block.states_4[label] == tuple(
+            panel.distinguish.state_series_per_threshold[label]
+        )
+        assert block.states_2[label] == tuple(
+            panel.reliability.compliance_state_series[label]
+        )
+        assert block.first_out_h[label] == panel.reliability.ttf_per_threshold.get(
+            label
+        )
+    edited = copy.deepcopy(panel)
+    first, second, third = (label for label, _, _ in T2STAR_THRESHOLDS[:3])
+    edited.reliability.occupancy.update(
+        {first: 0.07, second: 0.03, third: float("nan")}
+    )
+    block = build_timeline_block(edited, record=RECORD, flag="")
+    drawn, title = _panel_drawn_rungs(edited)
+    assert list(block.drawn) == drawn and first in drawn
+    assert second in block.culled_below and block.culled_unmeasured == (third,)
+    assert "1 not measured" in title
+
+
+@pytest.mark.unit
+def test_the_timeline_block_draws_its_artifact(scored) -> None:
+    """Oracle: the artifact read back off the figure. Both timelines hold the drawn rungs
+    top down in ladder order, each rung's bars its own states in their colours, the four
+    states above and the two below; each rung's first read out of spec sits beside it; the
+    culled rungs are named on the title when they fit and listed under the lower axes when
+    they do not."""
+    block = build_timeline_block(_panel(scored), record=RECORD, flag=FLAG_TEXT)
+    fig = TimelineBlockPlot("timelines").build_matplotlib(block)
+    try:
+        upper, lower = [
+            a for a in fig.axes if a.get_yticklabels() and a.get_xlim()[1] > 1
+        ]
+        for ax, states in ((upper, block.states_4), (lower, block.states_2)):
+            assert [t.get_text() for t in ax.get_yticklabels()][::-1] == list(
+                block.drawn
+            )
+            for label in block.drawn:
+                bars = [p for p in ax.patches if p.get_gid() == f"state:{label}"]
+                assert [(b.get_x(), b.get_x() + b.get_width()) for b in bars] == [
+                    (pytest.approx(t0), pytest.approx(t1))
+                    for t0, t1, _ in states[label]
+                ]
+                assert [b.get_facecolor() for b in bars] == [
+                    to_rgba(state_color(state)) for _, _, state in states[label]
+                ]
+        drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
+        for label in block.drawn:
+            hour = block.first_out_h[label]
+            assert (f"{hour:.1f} h" if hour is not None else "never") in drawn
+        assert (
+            f"(culled, below 5% in spec: {', '.join(block.culled_below)})"
+            in upper.get_title(loc="left")
+        )
+        assert FLAG_TEXT in drawn
+    finally:
+        plt.close(fig)
+    many = TimelineBlockData(
+        dataset_id=RECORD, flag="", failure="", ladder=tuple("abcdefghijklmnop"),
+        drawn=("a",), culled_below=tuple(f"rung {c}" for c in "bcdefghijklm"),
+        culled_unmeasured=("rung n", "rung o", "rung p"), states_4={"a": ((0.0, 1.0, "in_spec"),)},
+        states_2={"a": ((0.0, 1.0, "in_spec"),)}, first_out_h={"a": None}, t_min_h=0.0,
+        t_max_h=1.0,
+    )  # fmt: skip
+    fig = TimelineBlockPlot("timelines").build_matplotlib(many)
+    try:
+        drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
+        assert "(15 culled, listed below)" in drawn
+        assert (
+            "Culled, below 5% in spec: rung b" in drawn
+            and "not measured: rung n" in drawn
+        )
     finally:
         plt.close(fig)
 

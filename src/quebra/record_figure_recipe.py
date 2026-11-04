@@ -49,11 +49,13 @@ from quebra.analyzers.record_figure import (
     build_record_summaries,
     build_resolvability_block,
     build_survival_block,
+    build_timeline_block,
     cross_check_carve,
     curve_summaries_of,
     kaplan_meier_of,
     ledger_run_set,
     nelson_aalen_of,
+    panel_data_of,
     summaries_table,
 )
 from quebra.analyzers.t2star import T2StarResult
@@ -74,8 +76,9 @@ from quebra.plots.record_figure_plot import (
     ResolvabilityBlockPlot,
     SummariesTablePlot,
     SurvivalBlockPlot,
+    TimelineBlockPlot,
 )
-from quebra.recipes import wire_t2star_carve
+from quebra.recipes import XI_SEED, wire_t2star_carve
 from quebra.tellability_recipe import (
     TELLABILITY_PERMUTATIONS,
     TELLABILITY_SEED,
@@ -84,6 +87,9 @@ from quebra.tellability_recipe import (
 
 TARGETS = ["static", "academic"]
 TABLE_TARGETS = ["table"]
+# The T2* panel data's shape statistic needs this many reads per window, the value
+# `recipes.configure_t2star_job` uses, so the timelines read the T2* panels' own states.
+SHAPE_MIN_READS = 5
 # The carve kwargs a ledger job's windows node carries, which the figure job carves with.
 CARVE_KWARGS = ("gap_mult", "k", "use_uncertainty", "thresholds")
 # The metrics a record figure draws, as `tellability` names them.
@@ -290,11 +296,48 @@ def wire_resolvability_block(job: Job, nodes: RecordNodes) -> None:
     )
 
 
+def wire_timeline_block(job: Job, nodes: RecordNodes) -> None:
+    """The timeline block: read state by rung from the record's T2* panel data, built as
+    the T2* jobs build it on the carve held to the ledger, the culled rungs named."""
+    km = job.step(
+        kaplan_meier_of,
+        nodes.carve,
+        name=f"kaplan_meier_panel_{nodes.record}",
+        conf_level=CONF_LEVEL,
+    )
+    panel = job.step(
+        panel_data_of,
+        nodes.fit,
+        nodes.carve,
+        km,
+        name=f"panel_data_{nodes.record}",
+        shape_min_reads=SHAPE_MIN_READS,
+        xi_seed=XI_SEED,
+        k=nodes.carve_kwargs["k"],
+        use_uncertainty=nodes.carve_kwargs["use_uncertainty"],
+        thresholds=tuple(
+            (str(lb), float(v), bool(b))
+            for lb, v, b in nodes.carve_kwargs["thresholds"]
+        ),
+    )
+    block = job.step(
+        build_timeline_block,
+        panel,
+        name=f"timeline_block_{nodes.record}",
+        record=nodes.record,
+        flag=nodes.flag,
+    )
+    job.figure(
+        TimelineBlockPlot, block, targets=TARGETS, title=f"{nodes.record} timelines"
+    )
+
+
 BLOCKS: tuple[Callable[[Job, RecordNodes], None], ...] = (
     wire_survival_block,
     wire_hazard_block,
     wire_fraction_block,
     wire_resolvability_block,
+    wire_timeline_block,
 )
 
 
