@@ -49,11 +49,18 @@ A window table can become a renewal process two ways, and they ask different que
 
 - **Side clock** (`CLOCK_SIDE`): an event is a window ended by the crossing that leaves its
   side (`down_crossing` in spec, `up_crossing` out of spec), `x` is its duration, `tau` is
-  the segment's total time on that side. Asks whether successive lifetimes on the side look
-  renewal.
+  the segment's total time on that side after any leading window whose start was not seen.
+  Asks whether successive lifetimes on the side look renewal.
 - **Calendar clock** (`CLOCK_CALENDAR`): an event is a window BIRTH, `x` is wall-clock time
-  between births, `tau` is the observed length. Asks whether failures arrive as a renewal
-  process in real time - the question a maintenance schedule poses.
+  between births, `tau` is the observed length from the first birth seen. Asks whether
+  failures arrive as a renewal process in real time - the question a maintenance schedule
+  poses.
+
+On both clocks a duration whose start was not observed is not an event spacing, as in the
+event table and the cycles path. A segment's first window born by `scan_start` or
+`gap_resume` has only a residual for its duration: the side clock leaves it out and starts
+`tau` at its death, and the calendar clock starts at the first birth seen. Every ledger row
+of the bag counts these in its notes, those of segments then dropped as short included.
 
 Both clocks run on both bags, the in-spec and the out-of-spec windows, by one rule
 (`checks/_multiprocess.segments_from_windows`), and a ledger row names its bag (`side`) and

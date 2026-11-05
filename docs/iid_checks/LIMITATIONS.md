@@ -31,14 +31,15 @@ the 1 to 10 µs ladder (commit 44c1d78); not re-measured on the 2 to 5 µs ladde
 
 ## 2. Multiplicity across the ladder is not corrected
 
-A ledger runs 5 checks x 2 calibrations x 2 clocks over up to 7 thresholds. Nothing
-corrects for that. The group rows (`check_ledger.GROUPS`) correct only within one group at
-one (threshold, bag, clock); nothing corrects across rungs, bags, clocks or the two groups.
-The thresholds are nested (a read in spec at 4 µs is in spec at 3 µs),
-so the tests are strongly positively dependent and a Bonferroni correction would be far too
-conservative - but "far too conservative" is not "unnecessary". **Read the ladder as a
-pattern, not as ~140 independent decisions.** A single isolated rejection at one threshold
-is much weaker evidence than a monotone trend down the ladder.
+A ledger runs the five permutation rows (`battery.ROW_KEYS`) and the two group rows on
+2 bags x 2 clocks at every rung of its ladder. Nothing corrects for that. The group rows
+(`check_ledger.GROUPS`) correct only within one group at one (threshold, bag, clock);
+nothing corrects across rungs, bags, clocks or the two groups. The thresholds are nested (a
+read in spec at 4 µs is in spec at 3 µs), so the tests are strongly positively dependent
+and a Bonferroni correction would be far too conservative - but "far too conservative" is
+not "unnecessary". **Read the ladder as a pattern, not as one independent decision per
+row.** A single isolated rejection at one threshold is much weaker evidence than a monotone
+trend down the ladder.
 
 ## 3. The two clocks can disagree, and neither is wrong
 
@@ -117,6 +118,19 @@ would this check do on a record of this shape and size", not "what is this recor
 The one place that gap is visible: after segments began splitting at read gaps, the real
 record moved into an m > 1 regime that the bench measured only OUTSIDE its censoring
 envelope. That regime has no in-envelope bench support.
+
+The bench cells were measured before a segment's leading window whose start was not seen was
+left out (`segments_from_windows`). The carved arms kept it: on the side clock its residual
+duration sat in `x` as if it were complete, and on the calendar clock the interval from the
+start of watching to the first birth seen sat in `x` as a spacing. Under Arm B's iid reads
+the runs are geometric, so that residual has the law of a complete one: either rule gives an
+iid sample of one law, the new one with one event fewer in each segment it touches. Arm C
+carves AR(1) reads, whose runs are not memoryless at `rho > 0`, so its cells there were
+measured with a leading residual whose law is not a complete run's. Those cells are power
+cells only (`power_table.csv`): every carved size cell, the only cells a ledger's acceptance
+reads (`calibration_summary.bench_acceptance_at_n` on `size_table.csv`), is Arm B or Arm C at
+`rho = 0`, where the reads are iid. No cell measures the checks with that window left out on
+a non-memoryless arm. The bench was not re-run.
 
 ## 9. A level difference between segments is part of the null
 

@@ -126,9 +126,10 @@ A1_RENEWAL_DURATIONS = Assumption(
         "The six checks in `analyzers/checks/`, scored into verdicts by "
         "`analyzers/check_ledger.py`. Read the diagnostic's SAMPLE before transferring its "
         "verdict: `segments_from_windows` on the side clock uses a bag's complete-window "
-        "durations and folds its censored window into tau, and on the calendar clock the "
-        "events are window BIRTHS, while `kaplan_meier.make_inputs_from_windows` keeps "
-        "observed-birth windows and retains the censored ones as censored observations. A "
+        "durations whose start was seen and folds its censored window into tau, and on "
+        "the calendar clock the events are window BIRTHS from the first one seen, while "
+        "`kaplan_meier.make_inputs_from_windows` keeps observed-birth windows and retains "
+        "the censored ones as censored observations. A "
         "verdict about one of those samples is not automatically a verdict about the other, "
         "and whether the transfer is valid is UNRESOLVED."
     ),

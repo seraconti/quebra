@@ -45,7 +45,7 @@ from quebra.analyzers.checks._multiprocess import (
 )
 from quebra.analyzers import windows
 from quebra.analyzers.windows import SIDE_IN_SPEC, SIDE_OUT_OF_SPEC
-from quebra.analyzers.checks._multiprocess import segments_from_windows
+from quebra.analyzers.checks._multiprocess import n_unseen_starts, segments_from_windows
 from quebra.analyzers.checks._permutation import (
     PermutationSet,
     block_permutations,
@@ -920,15 +920,145 @@ def test_the_merged_calendar_segment_contains_a_fabricated_inter_event_gap():
 
 @pytest.mark.unit
 def test_interior_segments_are_truncated_at_the_gap_start_not_at_an_event():
-    """`tau` for an interior segment is when watching STOPPED. Taking it from the last
-    window's death is the event-determined boundary eq (7) forbids."""
+    """`tau` for an interior segment is when watching STOPPED, counted from its first birth
+    seen. Taking it from the last window's death is the event-determined boundary eq (7)
+    forbids."""
     frame, gaps = _gapped_record()
     split, _ = segments_from_windows(frame, clock=CLOCK_CALENDAR, gap_spans_s=gaps)
     gap_start_s = gaps[0][0]
-    first_births = frame["t_birth_s"].to_numpy(dtype=float)
-    assert split[0].tau == pytest.approx(gap_start_s - first_births[0]), (
+    first_seen_s = float(frame.loc[frame["birth_observed"], "t_birth_s"].iloc[0])
+    assert split[0].tau == pytest.approx(gap_start_s - first_seen_s), (
         "the interior segment must be truncated at the gap start"
     )
+
+
+# On the bag's side (True) or off it, read by read; ends on the side, so the final window is
+# censored.
+OPENING = [
+    1,
+    1,
+    1,
+    0,
+    0,
+    1,
+    0,
+    0,
+    0,
+    1,
+    1,
+    0,
+    1,
+    1,
+    1,
+    1,
+    0,
+    0,
+    1,
+    1,
+    0,
+    0,
+    0,
+    1,
+    0,
+    1,
+    1,
+    0,
+    1,
+]
+
+
+def _opening_bag(side: str, *, on_side_first: bool, gap: bool):
+    """One bag's window table from a read series that opens on the bag's side (its first
+    window's start unseen, `scan_start`) or off it (born by a crossing); with `gap`, the
+    series repeats after a read gap, so the bag's first window there is born by `gap_resume`
+    or by a crossing the same way."""
+    on = np.asarray(OPENING, dtype=bool)
+    if not on_side_first:
+        on = np.concatenate([[False, False], on])
+    t = np.arange(len(on), dtype=float)
+    if gap:
+        on = np.concatenate([on, on])
+        t = np.concatenate([t, 500.0 + t])
+    in_spec = on if side == SIDE_IN_SPEC else ~on
+    result = windows.run(
+        windows.WindowsInputs(
+            t_rel_s=t,
+            values=np.where(in_spec, 1.0, -1.0),
+            thresholds=[("thr", 0.0, True)],
+        )
+    )
+    table = (
+        result.windows_in_spec if side == SIDE_IN_SPEC else result.windows_out_of_spec
+    )
+    gaps = result.diagnostics.get("gap_spans_s") or []
+    assert bool(gaps) == gap, "premise: the gap is detected exactly when there is one"
+    return table, gaps
+
+
+def _blocks(table, gaps) -> list[tuple[int, int]]:
+    """Row ranges of the segments: split where the reads resume after each gap."""
+    births = table["t_birth_s"].to_numpy(dtype=float)
+    cuts = [int(np.searchsorted(births, after, side="left")) for _before, after in gaps]
+    bounds = [0, *cuts, len(table)]
+    return list(zip(bounds[:-1], bounds[1:]))
+
+
+def _expected(table, gaps, lo: int, hi: int, clock: str, skip: int):
+    """The segment the rule gives for rows `lo:hi`, read off the window table: on the side
+    clock the complete durations and their total time, on the calendar clock the spacings
+    of the births and the time from the first one to when watching stopped; `skip` leading
+    rows left out."""
+    rows = table.iloc[lo + skip : hi]
+    if clock == CLOCK_SIDE:
+        durations = rows["duration_s"].to_numpy(dtype=float)
+        complete = ~rows["censored"].to_numpy(dtype=bool)
+        return durations[complete], float(durations.sum())
+    births = rows["t_birth_s"].to_numpy(dtype=float)
+    last_death = float(table["t_death_s"].iloc[hi - 1])
+    stops = [before for before, _after in gaps if before >= last_death]
+    end = float(stops[0]) if hi < len(table) and stops else last_death
+    return np.diff(births), float(end - births[0])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("gap", [False, True], ids=["one segment", "across a gap"])
+@pytest.mark.parametrize("clock", [CLOCK_SIDE, CLOCK_CALENDAR])
+@pytest.mark.parametrize("side", [SIDE_IN_SPEC, SIDE_OUT_OF_SPEC])
+def test_a_segment_that_opens_mid_window_leaves_the_unseen_start_out(side, clock, gap):
+    """Oracle: the window table, read by hand. A segment's first window born by
+    `scan_start` or `gap_resume` is left out: on the side clock `x` drops it and `tau` starts
+    at its death, on the calendar clock the origin is the first birth seen; the bag counts
+    one such window per segment."""
+    table, gaps = _opening_bag(side, on_side_first=True, gap=gap)
+    segments, _ = segments_from_windows(table, clock=clock, side=side, gap_spans_s=gaps)
+    blocks = _blocks(table, gaps)
+    assert len(segments) == len(blocks) == (2 if gap else 1)
+    assert n_unseen_starts(table) == len(blocks)
+    for segment, (lo, hi) in zip(segments, blocks):
+        assert not table["birth_observed"].iloc[lo], "premise: the start is unseen"
+        want_x, want_tau = _expected(table, gaps, lo, hi, clock, skip=1)
+        assert np.array_equal(segment.x, want_x), (lo, segment.x, want_x)
+        assert segment.tau == want_tau, (lo, segment.tau, want_tau)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("gap", [False, True], ids=["one segment", "across a gap"])
+@pytest.mark.parametrize("clock", [CLOCK_SIDE, CLOCK_CALENDAR])
+@pytest.mark.parametrize("side", [SIDE_IN_SPEC, SIDE_OUT_OF_SPEC])
+def test_a_segment_that_opens_on_a_crossing_is_unchanged_bit_for_bit(side, clock, gap):
+    """Oracle: the window table, read by hand with every window kept. A segment whose first
+    window was born by a crossing keeps it, so `x` and `tau` are what they were before
+    unseen starts were left out, bit for bit, and it counts nothing."""
+    table, gaps = _opening_bag(side, on_side_first=False, gap=gap)
+    segments, _ = segments_from_windows(table, clock=clock, side=side, gap_spans_s=gaps)
+    blocks = _blocks(table, gaps)
+    assert len(segments) == len(blocks) == (2 if gap else 1)
+    assert n_unseen_starts(table) == 0
+    for segment, (lo, hi) in zip(segments, blocks):
+        assert table["birth_observed"].iloc[lo], "premise: the start is a crossing"
+        want_x, want_tau = _expected(table, gaps, lo, hi, clock, skip=0)
+        assert np.array_equal(segment.x, want_x), (lo, segment.x, want_x)
+        assert segment.tau == want_tau, (lo, segment.tau, want_tau)
 
 
 @pytest.mark.unit

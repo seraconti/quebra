@@ -412,7 +412,110 @@ def test_with_no_rscript_the_r_fields_read_absent_and_every_row_is_still_built(
     c3_rows = ledger.rows[ledger.rows["check_id"] == c3.CHECK_NAME]
     assert set(c3_rows["clock"]) == {CLOCK_SIDE, CLOCK_CALENDAR}
     assert set(c3_rows["verdict"]) == {VERDICT_NOT_COMPUTED}
-    assert set(c3_rows["notes"]) == {"R unavailable"}
+    # The carve opens in spec, so every row also names the leading window left out.
+    assert set(c3_rows["notes"]) == {
+        "R unavailable; 1 leading window(s) whose start was not seen left out"
+    }
+
+
+def test_every_row_names_the_leading_windows_whose_start_was_not_seen():
+    """Oracle: the carve's own `birth_observed` column. `_varied_result` opens in spec at
+    3 µs, so on both clocks the in-spec bag's one segment leaves out its first window, and
+    the out-of-spec bag opens on a crossing: every in-spec row, the group rows included,
+    names that one window beside the other segment counts, and no out-of-spec row does."""
+    import quebra.analyzers.check_ledger as ledger_module
+
+    result = _varied_result()
+    assert not result.windows_in_spec["birth_observed"].iloc[0], "premise: unseen start"
+    assert result.windows_out_of_spec["birth_observed"].iloc[0], "premise: a crossing"
+    rows = ledger_module.run(
+        ledger_module.make_inputs_from_windows(
+            result,
+            _bench_table(),
+            thresholds=[("3 µs", 3.0, True)],
+            alpha=0.05,
+            min_events_pass=35,
+            tie_cutoff_distinct=5,
+            lag_max=5,
+            n_permutations=19,
+            seed=7,
+        )
+    ).rows
+    note = "1 leading window(s) whose start was not seen left out"
+    in_spec = rows[rows["side"] == SIDE_IN_SPEC]
+    assert set(in_spec["clock"]) == {CLOCK_SIDE, CLOCK_CALENDAR}
+    assert set(ledger_module.GROUPS) <= set(in_spec["check_id"])
+    assert all(note in text for text in in_spec["notes"]), in_spec["notes"].tolist()
+    assert not any(
+        note in text for text in rows.loc[rows["side"] != SIDE_IN_SPEC, "notes"]
+    )
+
+
+def _rows_of(values: list[float], t_rel_s: np.ndarray) -> pd.DataFrame:
+    """The 3 µs ledger rows of a read series, both bags and clocks."""
+    import quebra.analyzers.check_ledger as ledger_module
+
+    result = windows.run(
+        windows.WindowsInputs(
+            t_rel_s=np.asarray(t_rel_s, dtype=float),
+            values=np.asarray(values, dtype=float),
+            thresholds=[("3 µs", 3.0, True)],
+            dataset_id="unit",
+        )
+    )
+    return ledger_module.run(
+        ledger_module.make_inputs_from_windows(
+            result,
+            _bench_table(),
+            thresholds=[("3 µs", 3.0, True)],
+            alpha=0.05,
+            min_events_pass=35,
+            tie_cutoff_distinct=5,
+            lag_max=5,
+            n_permutations=19,
+            seed=7,
+        )
+    ).rows
+
+
+def test_a_segment_dropped_as_short_still_counts_its_unseen_start():
+    """Oracle: the carve's birth types. After a read gap the reads resume in spec for one
+    window, born by `gap_resume`, so with that window left out its segment is too short and
+    is dropped: every in-spec row still counts both leading windows, the scan start's and
+    the gap's, and no out-of-spec row counts any."""
+    rng = np.random.default_rng(3)
+    values: list[float] = []
+    for _ in range(60):
+        values += [5.0] * int(rng.integers(2, 12))
+        values += [1.0] * int(rng.integers(2, 8))
+    t_rel_s = np.arange(len(values), dtype=float) * 60.0
+    after_gap_s = t_rel_s[-1] + 36000.0 + np.arange(3, dtype=float) * 60.0
+    rows = _rows_of([*values, 5.0, 5.0, 1.0], np.concatenate([t_rel_s, after_gap_s]))
+    note = "2 leading window(s) whose start was not seen left out"
+    in_spec = rows[rows["side"] == SIDE_IN_SPEC]
+    assert set(in_spec["clock"]) == {CLOCK_SIDE, CLOCK_CALENDAR}
+    assert all(note in text for text in in_spec["notes"]), in_spec["notes"].tolist()
+    assert not any(
+        "leading window" in text for text in rows["notes"][rows["side"] != SIDE_IN_SPEC]
+    )
+
+
+def test_a_cell_with_no_segment_left_names_the_unseen_start_beside_the_short_count():
+    """Oracle: the carve, by hand. Ten reads opening in spec give three in-spec windows,
+    the first born at the scan start; with it left out one complete window remains on
+    either clock, below the two events a segment needs, so the cell's one row names the
+    short drop and the window left out. The out-of-spec bag opens on a crossing."""
+    reads = [5.0, 5.0, 1.0, 1.0, 5.0, 5.0, 1.0, 1.0, 5.0, 5.0]
+    rows = _rows_of(reads, np.arange(len(reads), dtype=float) * 60.0)
+    in_spec = rows[rows["side"] == SIDE_IN_SPEC]
+    assert set(in_spec["clock"]) == {CLOCK_SIDE, CLOCK_CALENDAR}
+    assert set(in_spec["notes"]) == {
+        "no segment reached 2 events (1 dropped), "
+        "1 leading window(s) whose start was not seen left out"
+    }
+    assert not any(
+        "leading window" in text for text in rows["notes"][rows["side"] != SIDE_IN_SPEC]
+    )
 
 
 def test_c3_n_null_sim_reaches_the_artifact_as_the_caller_set_it(monkeypatch, tmp_path):

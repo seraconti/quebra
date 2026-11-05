@@ -215,6 +215,21 @@ def gamma_hat_batch(
     return np.sqrt(var) / mean
 
 
+# Births that are the start of watching, not a crossing: the window's start was not seen.
+# Each one starts a segment (`_segment_starts`), and `segments_from_windows` leaves that
+# window out.
+UNSEEN_START_BIRTHS = (BIRTH_SCAN_START, BIRTH_GAP_RESUME)
+
+
+def n_unseen_starts(windows: pd.DataFrame) -> int:
+    """The leading windows `segments_from_windows` leaves out of one bag's table, kept
+    segments and dropped ones alike: one per window born by an `UNSEEN_START_BIRTHS` birth,
+    since each such birth starts a segment of its own."""
+    if not len(windows):
+        return 0
+    return int(windows["birth_type"].astype(str).isin(UNSEEN_START_BIRTHS).sum())
+
+
 def _segment_starts(
     birth_types: list[str],
     t_birth_s: np.ndarray | None = None,
@@ -235,11 +250,7 @@ def _segment_starts(
     segment at the first window born after it. Birth types remain a second source: they
     catch `scan_start` and agree with the gap list wherever the carve did record one.
     """
-    starts = {
-        i
-        for i, birth in enumerate(birth_types)
-        if birth in (BIRTH_SCAN_START, BIRTH_GAP_RESUME)
-    }
+    starts = {i for i, birth in enumerate(birth_types) if birth in UNSEEN_START_BIRTHS}
     if gap_spans_s and t_birth_s is not None and len(t_birth_s):
         births = np.asarray(t_birth_s, dtype=float)
         for _t_before_s, t_after_s in gap_spans_s:
@@ -277,17 +288,27 @@ def segments_from_windows(
     `CLOCK_SIDE`: an event is a window ended by the crossing that leaves its side (a
     `down_crossing` death in spec, an `up_crossing` out of spec; `windows.SIDE_CROSSINGS`),
     `x` is its duration, and `tau` is the segment's TOTAL time on that side (complete
-    windows plus the trailing censored one). Time advances only while on the side, so this
-    asks whether successive lifetimes on it look like a renewal process. A window whose
-    death is that crossing must be exactly a window not `censored`; a table where the two
-    disagree raises ValueError.
+    windows after any leading unseen-start one, plus the trailing censored one). Time
+    advances only while on the side, so this asks whether successive lifetimes on it look
+    like a renewal process. A window whose death is that crossing must be exactly a window
+    not `censored`; a table where the two disagree raises ValueError.
 
     `CLOCK_CALENDAR`: an event is a window BIRTH, `x` is the wall-clock time between
-    consecutive births, and `tau` is the segment's observed length. On the in-spec bag a
-    birth is an entry into spec, on the out-of-spec bag an exit from it. This asks whether
-    failures arrive as a renewal process in real time, which is the question a
-    maintenance schedule actually poses. It is honest only within a segment - across a
-    gap, wall-clock time passed unobserved, which is why segments exist.
+    consecutive births, and `tau` is the segment's observed length from its first birth
+    seen.
+    On the in-spec bag a birth is an entry into spec, on the out-of-spec bag an exit from
+    it. This asks whether failures arrive as a renewal process in real time, which is the
+    question a maintenance schedule actually poses. It is honest only within a segment -
+    across a gap, wall-clock time passed unobserved, which is why segments exist.
+
+    A duration whose start was not observed is not an event spacing, on either clock and
+    either bag, as `event_table` and `cycles.battery_segments` already hold. A segment's
+    first window born by `scan_start` or `gap_resume` (read from `birth_type`, which the
+    bench carve carries too) has only a residual for its duration, and its birth is the
+    start of watching, not a crossing. The side clock leaves it out of `x` and starts `tau`
+    at its death; the calendar clock starts the origin at the first birth seen and leaves
+    out the partial interval before it. `n_unseen_starts` counts these windows, those of
+    segments then dropped as short included.
 
     `observation_end_s` is when watching STOPPED, and it applies to the final segment
     only (interior segments stop at the read gap that ends them, which is already in the
@@ -369,7 +390,9 @@ def segments_from_windows(
         if not len(block):
             continue
         is_final_block = position == n_blocks - 1
-        complete = leaves[lo:hi]
+        # Only a block's first window can have an unseen start: those births start blocks.
+        first = int(births[lo] in UNSEEN_START_BIRTHS)
+        complete = leaves[lo + first : hi]
         t_birth = block["t_birth_s"].to_numpy(dtype=float)
         t_death = block["t_death_s"].to_numpy(dtype=float)
         # When observation of THIS block stopped. For an interior block that is the start
@@ -403,19 +426,21 @@ def segments_from_windows(
             # `diagnostics.get(...)`, so a caller that omits it splits on birth types alone.
             # `Segment` documents `n_censored_dropped` as 0 or 1 and nothing enforces it.
             interior_censored = int((~complete[:-1]).sum())
-            x = durations[complete]
+            x = durations[first:][complete]
             # Time on the side does not accrue during a gap, so an interior block's tau is
-            # its own accumulated time on the side regardless of when the gap started.
-            tau = float(durations.sum())
+            # its own accumulated time on the side regardless of when the gap started; it
+            # starts at the death of a window whose start was not seen.
+            tau = float(durations[first:].sum())
             n_censored = int((~complete).sum())
         else:
             # Not applicable on this clock: the guard below is side-clock only, because what
             # the calendar clock's tau should be when a block ends at a gap is an open
             # question.
             interior_censored = 0
-            x = np.diff(t_birth)
+            x = np.diff(t_birth[first:])
             end_s = float(t_death[-1]) if block_end_s is None else block_end_s
-            tau = float(end_s - t_birth[0])
+            # From the first birth seen; a block with none left is dropped below.
+            tau = float(end_s - t_birth[first]) if len(t_birth) > first else 0.0
             # On this clock the final window is always the residual, censored or not.
             n_censored = 1
         if len(x) < min_events:

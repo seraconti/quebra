@@ -81,7 +81,7 @@ from quebra.analyzers.calibration_summary import (
     bench_acceptance_at_n,
     nearest_bracketing_n,
 )
-from quebra.analyzers.checks._multiprocess import segments_from_windows
+from quebra.analyzers.checks._multiprocess import n_unseen_starts, segments_from_windows
 from quebra.analyzers.checks._permutation import block_permutations
 from quebra.analyzers.checks._rank_serial import MAX_LAG_CAP
 from quebra.analyzers.checks.battery import (
@@ -607,6 +607,7 @@ def _rows_for(
         segments,
         n_dropped=n_dropped + n_short,
         n_degenerate=n_degenerate,
+        n_unseen_start=n_unseen_starts(table),
         n_used=len(table),
         label=label,
         side=side,
@@ -653,6 +654,7 @@ def score_segments(
     c3_n_null_sim: int,
     side: str = NO_SIDE,
     groups: bool = False,
+    n_unseen_start: int = 0,
 ) -> list[dict[str, object]]:
     """Ledger rows for durations already cut into segments, on one label, side and clock.
 
@@ -666,10 +668,13 @@ def score_segments(
     with its own segments and the same rule. `n_dropped` and `n_degenerate` count the
     segments the caller dropped through `battery.drop_unusable_segments`, as short and as
     degenerate, and `n_used` is what the `n_windows_used` column records. A nonzero
-    `n_degenerate` is named in every row's notes. A check undefined on the segments that
-    remain reads `not computed` with its own reason, and the others still answer, C1 and C2
-    included. With no segment left it returns one `not computed` row with its reason and
-    never raises.
+    `n_degenerate` is named in every row's notes, and so is `n_unseen_start`, the leading
+    windows whose start was not seen that `segments_from_windows` left out
+    (`n_unseen_starts`, those of segments then dropped as short included); the row of a
+    cell with no segment left names both beside the short count. A check undefined on the
+    segments that remain reads `not computed` with its own reason, and the others still
+    answer, C1 and C2 included. With no segment left it returns one `not computed` row with
+    its reason and never raises.
 
     C1, C2 and CvM read `n - 1` events of a segment that ends at an event
     (`EVENT_TIME_CHECKS`): their rows' `n_events`, event floor and bench n count the events
@@ -678,6 +683,11 @@ def score_segments(
     `groups=True` appends the two group rows (`group_rows`): the window ledgers ask for
     them, and calibration cycles do not.
     """
+    unseen_note = (
+        f"{n_unseen_start} leading window(s) whose start was not seen left out"
+        if n_unseen_start
+        else ""
+    )
     if not segments:
         note = (
             f"no segment left: {n_dropped} below {min_events_per_segment} events, "
@@ -686,12 +696,17 @@ def score_segments(
             else f"no segment reached {min_events_per_segment} events "
             f"({n_dropped} dropped)"
         )
+        # After a comma: the survey reads a note's first clause as the cell's message
+        # (`independence_survey._message`), and that must stay the reason, not the count.
+        note = ", ".join(part for part in (note, unseen_note) if part)
         return [_blank_row(label, side, clock, dataset_id, note, n_used)]
     degenerate_note = (
         f"{n_degenerate} segment(s) with every duration identical dropped"
         if n_degenerate
         else ""
     )
+    # What preparing the segments left out, named on every row, groups included.
+    segment_note = "; ".join(part for part in (unseen_note, degenerate_note) if part)
 
     durations = np.concatenate([s.x for s in segments])
     n_distinct, tie_fraction = _tie_stats(durations)
@@ -804,7 +819,7 @@ def score_segments(
         if at_event_note and cell:
             at_event_note += "; the bench cell was measured without the n - 1 form"
         notes = "; ".join(
-            part for part in (reason, at_event_note, degenerate_note) if part
+            part for part in (reason, at_event_note, segment_note) if part
         )
         out.append(
             {
@@ -852,7 +867,7 @@ def score_segments(
                 include_tau_checks=include_tau_checks,
                 n_segments=len(segments),
                 n_censored_dropped=int(sum(s.n_censored_dropped for s in segments)),
-                degenerate_note=degenerate_note,
+                segment_note=segment_note,
             )
         )
     return out
@@ -957,7 +972,7 @@ def group_rows(
     n_segments: int,
     n_censored_dropped: int,
     read_note: str = "",
-    degenerate_note: str = "",
+    segment_note: str = "",
 ) -> list[dict[str, object]]:
     """The two group rows of one (threshold, side, clock), from its check results.
 
@@ -1016,7 +1031,7 @@ def group_rows(
                 + ", ".join(f"{m} {v:.3g}" for m, v in outcome.member_p_values.items())
                 + f"; smallest {', '.join(outcome.argmin_labels)}"
             )
-        parts += [reason, read_note if reads_n_minus_1 else "", degenerate_note]
+        parts += [reason, read_note if reads_n_minus_1 else "", segment_note]
         rows.append(
             {
                 "dataset_id": dataset_id,
