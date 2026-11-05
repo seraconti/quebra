@@ -29,6 +29,12 @@ states over both and each rung's first read out of spec beside the lower one. Th
 rungs are named on the upper title when they fit on one line, otherwise counted there and
 listed under the lower axes.
 
+**Record figure** (`RecordFigurePlot`). One page per record: one constrained `SubFigure`
+per block, in the page's order, each drawn by the block's own `draw_*` function at the
+height its own figure has (`<block>_size`), the width the widest block's. One subfigure per
+row, rather than one gridspec shared across rows, which collapsed constrained layout on a
+measured prototype of this page.
+
 **Curve summaries** (`SummariesTablePlot`). No drawing: `build_table` hands the step-built
 frame to the `table` target unchanged.
 
@@ -47,6 +53,7 @@ tables to the `table` target unchanged.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -61,6 +68,7 @@ from quebra.analyzers.record_figure import (
     LIMIT_SMOOTH,
     OCCUPANCY_DRAWN,
     FractionBlockData,
+    RecordFigureData,
     HazardBlockData,
     ResolvabilityBlockData,
     SurvivalBlockData,
@@ -287,6 +295,13 @@ def draw_survival(fig: Figure | SubFigure, data: SurvivalBlockData, style: str) 
     fig.supxlabel(_caption(data), wrap=True, **caption)
 
 
+def survival_size(data: SurvivalBlockData) -> tuple[float, float]:
+    """The survival block's size in inches, its own figure's and its page row's."""
+    n = max(len(data.ladder), 1)
+    bag_h = _CURVE_H + _GRID_BASE_H + _GRID_ROW_H * len(data.run_set)
+    return _COLUMN_W * n + _KEY_W, bag_h * len(data.sides) + 1.2
+
+
 class SurvivalBlockPlot(BasePlot):
     """The survival block of one record: both bags' curves at every rung, each band with
     its check outcome under it."""
@@ -298,13 +313,9 @@ class SurvivalBlockPlot(BasePlot):
                 f"{type(result).__name__}"
             )
         data = result
-        n = max(len(data.ladder), 1)
-        bag_h = _CURVE_H + _GRID_BASE_H + _GRID_ROW_H * len(data.run_set)
         with theme.style_context(style):
             fig = plt.figure(
-                figsize=(_COLUMN_W * n + _KEY_W, bag_h * len(data.sides) + 1.2),
-                layout="constrained",
-                facecolor="white",
+                figsize=survival_size(data), layout="constrained", facecolor="white"
             )
             draw_survival(fig, data, style)
         return fig
@@ -473,6 +484,20 @@ def draw_hazard(fig: Figure | SubFigure, data: HazardBlockData, style: str) -> N
     )
 
 
+def hazard_size(data: HazardBlockData) -> tuple[float, float]:
+    """The hazard block's size in inches, its own figure's and its page row's."""
+    n = max(len(data.ladder), 1)
+    bag_w = max(_HAZARD_MIN_W, _HAZARD_CELL_W * len(data.clocks) * n)
+    height = (
+        _HAZARD_H
+        + _HAZARD_LEGEND_ROW_H * math.ceil(n / 2)
+        + _HAZARD_GRID_BASE_H
+        + _GRID_ROW_H * len(data.run_set)
+        + 0.9
+    )
+    return bag_w * len(data.sides) + _KEY_W, height
+
+
 class HazardBlockPlot(BasePlot):
     """The hazard block of one record: both bags' cumulative hazards at every rung, each
     band with its check outcome under its bag."""
@@ -484,20 +509,9 @@ class HazardBlockPlot(BasePlot):
                 f"{type(result).__name__}"
             )
         data = result
-        n = max(len(data.ladder), 1)
-        bag_w = max(_HAZARD_MIN_W, _HAZARD_CELL_W * len(data.clocks) * n)
-        height = (
-            _HAZARD_H
-            + _HAZARD_LEGEND_ROW_H * math.ceil(n / 2)
-            + _HAZARD_GRID_BASE_H
-            + _GRID_ROW_H * len(data.run_set)
-            + 0.9
-        )
         with theme.style_context(style):
             fig = plt.figure(
-                figsize=(bag_w * len(data.sides) + _KEY_W, height),
-                layout="constrained",
-                facecolor="white",
+                figsize=hazard_size(data), layout="constrained", facecolor="white"
             )
             draw_hazard(fig, data, style)
         return fig
@@ -599,6 +613,12 @@ def draw_fraction(fig: Figure | SubFigure, data: FractionBlockData, style: str) 
     )
 
 
+def fraction_size(data: FractionBlockData) -> tuple[float, float]:
+    """The fraction block's size in inches, its own figure's and its page row's."""
+    width = max(_FRACTION_RUNG_W * max(len(data.ladder), 1) + 1.5, 6.0)
+    return width, _FRACTION_H + 1.2
+
+
 class FractionBlockPlot(BasePlot):
     """The fraction block of one record: the in-spec fraction at every rung with its
     bounds."""
@@ -610,12 +630,9 @@ class FractionBlockPlot(BasePlot):
                 f"{type(result).__name__}"
             )
         data = result
-        width = max(_FRACTION_RUNG_W * max(len(data.ladder), 1) + 1.5, 6.0)
         with theme.style_context(style):
             fig = plt.figure(
-                figsize=(width, _FRACTION_H + 1.2),
-                layout="constrained",
-                facecolor="white",
+                figsize=fraction_size(data), layout="constrained", facecolor="white"
             )
             draw_fraction(fig, data, style)
         return fig
@@ -775,6 +792,12 @@ def draw_timelines(
     fig.supxlabel(caption, wrap=True, **theme.scaled_text(theme.CAPTION, style))
 
 
+def timeline_size(data: TimelineBlockData) -> tuple[float, float]:
+    """The timeline block's size in inches, its own figure's and its page row's."""
+    rows = _TIMELINE_ROW_H * max(len(data.drawn), 1) + _TIMELINE_FRAME_H
+    return _TIMELINE_W, _TIMELINE_KEY_H + 2 * rows + 1.2
+
+
 class TimelineBlockPlot(BasePlot):
     """The timeline block of one record: read state by rung, four states and two."""
 
@@ -785,12 +808,9 @@ class TimelineBlockPlot(BasePlot):
                 f"{type(result).__name__}"
             )
         data = result
-        rows = _TIMELINE_ROW_H * max(len(data.drawn), 1) + _TIMELINE_FRAME_H
         with theme.style_context(style):
             fig = plt.figure(
-                figsize=(_TIMELINE_W, _TIMELINE_KEY_H + 2 * rows + 1.2),
-                layout="constrained",
-                facecolor="white",
+                figsize=timeline_size(data), layout="constrained", facecolor="white"
             )
             draw_timelines(fig, data, style)
         return fig
@@ -1084,3 +1104,62 @@ class ResolvabilityTablePlot(BasePlot):
                 f"{type(self).__name__} writes a DataFrame; got {type(result).__name__}"
             )
         return result
+
+
+def resolvability_size(data: ResolvabilityBlockData) -> tuple[float, float]:
+    """The resolvability block's size in inches, as `ResolvabilityBlockPlot` draws it."""
+    return 3 * _PANEL_W, _PANEL_H + 1.2
+
+
+# The page's rows: each block's artifact type, the function that draws it, and its size.
+_PAGE_ROWS: dict[
+    type, tuple[Callable[..., None], Callable[..., tuple[float, float]]]
+] = {
+    SurvivalBlockData: (draw_survival, survival_size),
+    HazardBlockData: (draw_hazard, hazard_size),
+    FractionBlockData: (draw_fraction, fraction_size),
+    ResolvabilityBlockData: (draw_resolvability, resolvability_size),
+    TimelineBlockData: (draw_timelines, timeline_size),
+}
+# Inches the page adds above its rows for its own title.
+_PAGE_TITLE_H = 0.5
+
+
+def _page_row(
+    block: object,
+) -> tuple[Callable[..., None], Callable[..., tuple[float, float]]]:
+    if type(block) not in _PAGE_ROWS:
+        raise TypeError(f"no page row draws a {type(block).__name__}")
+    return _PAGE_ROWS[type(block)]
+
+
+def page_size(data: RecordFigureData) -> tuple[float, float]:
+    """The page's size in inches: the widest block's width, every block's height summed."""
+    sizes = [_page_row(block)[1](block) for block in data.blocks]
+    return max(w for w, _h in sizes), sum(h for _w, h in sizes) + _PAGE_TITLE_H
+
+
+def draw_record_figure(fig: Figure, data: RecordFigureData, style: str) -> None:
+    """One record's page on `fig` (module docstring)."""
+    heights = [_page_row(block)[1](block)[1] for block in data.blocks]
+    rows = fig.subfigures(len(data.blocks), 1, height_ratios=heights)
+    for row, block in zip(np.atleast_1d(rows), data.blocks, strict=True):
+        _page_row(block)[0](row, block, style)
+    fig.suptitle(f"Record figure, {data.dataset_id}")
+
+
+class RecordFigurePlot(BasePlot):
+    """One record's page: every block, one row each, in the page's order."""
+
+    def build_matplotlib(self, result: object, style: str = "default") -> plt.Figure:
+        if not isinstance(result, RecordFigureData):
+            raise TypeError(
+                f"{type(self).__name__} draws a RecordFigureData; got "
+                f"{type(result).__name__}"
+            )
+        with theme.style_context(style):
+            fig = plt.figure(
+                figsize=page_size(result), layout="constrained", facecolor="white"
+            )
+            draw_record_figure(fig, result, style)
+        return fig

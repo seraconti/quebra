@@ -16,6 +16,7 @@ import dataclasses
 import io
 import json
 import pickle
+import warnings
 from pathlib import Path
 from statistics import NormalDist
 from types import SimpleNamespace
@@ -41,6 +42,7 @@ from quebra.analyzers.kaplan_meier import CONF_LEVEL
 from quebra.analyzers.event_table import EventTable, event_tables_from_carve
 from quebra.analyzers.independence_survey import CHECK_LABELS
 from quebra.analyzers.compliance_survey import record_compliance
+from quebra.analyzers.record_figure import assemble_record_figure
 from quebra.analyzers.record_figure import (
     ALL_ROWS,
     COUNT_COLUMNS,
@@ -90,16 +92,20 @@ from quebra.plots.record_figure_plot import (
     LIMIT_DASHES,
     NOT_COMPUTED_GID,
     NO_BOUNDS_GID,
+    RecordFigurePlot,
     ResolvabilityBlockPlot,
     SummariesTablePlot,
     SurvivalBlockPlot,
     ZERO_RATIO_GID,
 )
 from quebra.panels.within_calibration import WithinCalibrationPanel
+from quebra.plots import record_figure_plot
 from quebra.plots.targets import render_table
 from quebra.plots.theme import state_color
 from quebra.plots.theme import verdict_color
 from quebra.record_figure_recipe import (
+    BLOCKS,
+    PAGE_ORDER,
     RecordNodes,
     check_tellability_kwargs,
     configure_record_figure_job,
@@ -1466,3 +1472,100 @@ def test_a_figure_job_runs_its_ledger_job_once_and_draws_each_record(
             2 * len(T2STAR_THRESHOLDS) if part == "per_threshold" else 2
         )
         pd.testing.assert_frame_equal(written, expected)
+
+
+def _five_blocks(scored: SimpleNamespace, told: SimpleNamespace) -> dict[str, object]:
+    """The five blocks of the synthetic record, by name, in the page's reading order."""
+    km = kaplan_meier_of(scored.carve, conf_level=CONF_LEVEL)
+    return {
+        "resolvability": build_resolvability_block(told.tellability, flag=""),
+        "timeline": build_timeline_block(_panel(scored), record=RECORD, flag=""),
+        "fraction": build_fraction_block(
+            record_compliance(scored.carve, T2STAR_THRESHOLDS), scored.carve, flag=""
+        ),
+        "survival": _block(km, scored.ledger),
+        "hazard": _hazard_block(scored.carve, scored.ledger),
+    }
+
+
+# Each block's figure size in inches on the synthetic record, measured on the block plots
+# before their sizes moved into `<block>_size` (commit 65883e9), and by hand: survival
+# 1.9 x 7 rungs + 1.7 wide, (2.4 + 0.3 + 0.19 x 5 checks) x 2 bags + 1.2 high; hazard
+# max(4.5, 0.34 x 2 clocks x 7) x 2 + 1.7 wide, 3.0 + 0.17 x 4 + 0.55 + 0.19 x 5 + 0.9 high;
+# fraction max(0.75 x 7 + 1.5, 6) wide, 3.2 + 1.2 high; resolvability 3 x 3.4 wide, 2.8 + 1.2
+# high; timeline 12 wide, 0.45 + 2 x (0.28 x 6 drawn + 0.8) + 1.2 high.
+_SIZES_BEFORE = {
+    "survival": (15.0, 8.5),
+    "hazard": (11.22, 6.08),
+    "fraction": (6.75, 4.4),
+    "resolvability": (10.2, 4.0),
+    "timeline": (12.0, 6.61),
+}
+_SIZE_OF = {
+    "survival": (record_figure_plot.survival_size, SurvivalBlockPlot),
+    "hazard": (record_figure_plot.hazard_size, HazardBlockPlot),
+    "fraction": (record_figure_plot.fraction_size, FractionBlockPlot),
+    "resolvability": (record_figure_plot.resolvability_size, ResolvabilityBlockPlot),
+    "timeline": (record_figure_plot.timeline_size, TimelineBlockPlot),
+}
+
+
+@pytest.mark.unit
+def test_each_blocks_size_is_the_size_its_figure_had_before_the_page(
+    scored, told
+) -> None:
+    """Oracle: the sizes measured on the block plots before the refactor, which the hand
+    formulas above give. Each block's size function, and the figure its own plot now
+    draws, are those sizes; the resolvability block's plot, which keeps its own formula,
+    agrees with `resolvability_size`, the page's reading of it."""
+    for name, block in _five_blocks(scored, told).items():
+        size_of, plot = _SIZE_OF[name]
+        assert size_of(block) == pytest.approx(_SIZES_BEFORE[name], rel=1e-12), name
+        fig = plot(name).build_matplotlib(block)
+        try:
+            assert tuple(fig.get_size_inches()) == pytest.approx(
+                _SIZES_BEFORE[name], rel=1e-12
+            ), name
+        finally:
+            plt.close(fig)
+
+
+@pytest.mark.unit
+def test_the_page_stacks_each_block_once_in_reading_order(scored, told) -> None:
+    """Oracle: each block's own figure. The page has one constrained row per block in the
+    reading order it was handed, each row holding as many axes as that block's own figure,
+    its width the widest block's and its height every block's plus its title; drawing it
+    raises no layout warning. Every figure job hands its page each record's five blocks in
+    `PAGE_ORDER`."""
+    blocks = _five_blocks(scored, told)
+    page = assemble_record_figure(*blocks.values(), record=RECORD)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        fig = RecordFigurePlot("page").build_matplotlib(page)
+        try:
+            fig.canvas.draw()
+            assert type(fig.get_layout_engine()).__name__ == "ConstrainedLayoutEngine"
+            assert len(fig.subfigs) == len(blocks)
+            for row, (name, block) in zip(fig.subfigs, blocks.items(), strict=True):
+                own = _SIZE_OF[name][1](name).build_matplotlib(block)
+                try:
+                    assert len(row.axes) == len(own.axes), name
+                finally:
+                    plt.close(own)
+            width = max(w for w, _ in _SIZES_BEFORE.values())
+            height = sum(h for _, h in _SIZES_BEFORE.values()) + 0.5
+            assert tuple(fig.get_size_inches()) == pytest.approx((width, height))
+        finally:
+            plt.close(fig)
+    assert not [w for w in caught if "layout" in str(w.message).lower()], caught
+    with pytest.raises(ValueError, match="handed blocks of"):
+        assemble_record_figure(*blocks.values(), record="q9_010101")
+    assert set(BLOCKS) == set(PAGE_ORDER) and len(PAGE_ORDER) == len(set(PAGE_ORDER))
+    job = _import_job(FIGURE_JOBS[3])
+    pages = [n for n in job.dag.values() if n.fn is assemble_record_figure]
+    assert pages
+    for node in pages:
+        assert [job.dag[i.node_id].fn_name.rsplit("_", 2)[0] for i in node.inputs] == [
+            "resolvability_block", "timeline_block", "fraction_block", "survival_block",
+            "hazard_block",
+        ]  # fmt: skip

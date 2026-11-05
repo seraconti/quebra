@@ -65,6 +65,10 @@ Which rungs are drawn is data: a rung is drawn when its in-spec fraction (the pa
 `occupancy`) is at least `OCCUPANCY_DRAWN`, the rule today's within-calibration panel
 applies; a rung below it, and one with no observed time to measure it on, are named as
 culled. Beside each drawn rung, the scan-clock hour of its first read out of spec.
+
+**Record figure** (`assemble_record_figure`). The page that stacks one record's blocks, in
+the reading order `record_figure_recipe.PAGE_ORDER` declares; each row is drawn by the same
+function as that block's own figure. It computes nothing.
 """
 
 from __future__ import annotations
@@ -1070,3 +1074,22 @@ def resolvability_table(*blocks: ResolvabilityBlockData, part: str) -> pd.DataFr
             )
         rows.extend(frame.to_dict("records"))
     return pd.DataFrame(rows, columns=columns)
+
+
+@dataclass
+class RecordFigureData(StaleArtifactGuard):
+    """One record's block artifacts in page order, each the one its own figure draws."""
+
+    dataset_id: str
+    blocks: tuple[object, ...]
+
+
+def assemble_record_figure(*blocks: object, record: str) -> RecordFigureData:
+    """The blocks of one record, in the order given, for the page that stacks them. Raises
+    if a block belongs to another record."""
+    others = sorted(
+        {str(getattr(block, "dataset_id", None)) for block in blocks} - {record}
+    )
+    if others:
+        raise ValueError(f"the page of {record!r} was handed blocks of {others}")
+    return RecordFigureData(dataset_id=record, blocks=tuple(blocks))

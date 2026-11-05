@@ -15,12 +15,13 @@ listed record of this ledger job's qubits that the job does not hold raises.
 
 **Blocks.** `BLOCKS` is the one registration point: each entry wires one block of one
 record, its builder step from `analyzers/record_figure.py` and its figure from
-`plots/record_figure_plot.py`, off the record's `RecordNodes`. A new block is one function
-appended there; it returns the node its job table reads, or None. The job's tables are
-wired after the records, each written by the `table` target: the curve summaries, one row
-per record, rung and bag, with the records outside the tables as `excluded=`, and the two
-resolvability tables, every drawn record stacked (`wire_resolvability_tables`). A record
-names its metric (`RecordNodes.metric`, one of
+`plots/record_figure_plot.py`, off the record's `RecordNodes`, and returns its block's node.
+A new block is one function appended there, and given its row in `PAGE_ORDER`: after the
+blocks, one page per record stacks them in that reading order (`RecordFigurePlot`). The
+job's tables are wired after the records, each written by the `table` target: the curve
+summaries, one row per record, rung and bag, with the records outside the tables as
+`excluded=`, and the two resolvability tables, every drawn record stacked
+(`wire_resolvability_tables`). A record names its metric (`RecordNodes.metric`, one of
 `METRICS`).
 
 **Tellability.** Each record's tellability is wired once, on the carve's own fit and
@@ -47,6 +48,7 @@ from quebra.analyzers.check_outcome import RowKey
 from quebra.analyzers.kaplan_meier import CONF_LEVEL
 from quebra.analyzers.record_figure import (
     RESOLVABILITY_TABLES,
+    assemble_record_figure,
     build_fraction_block,
     build_hazard_block,
     build_record_summaries,
@@ -75,6 +77,7 @@ from quebra.ledger_recipe import (
     ledger_step,
 )
 from quebra.plots.record_figure_plot import (
+    RecordFigurePlot,
     FractionBlockPlot,
     HazardBlockPlot,
     ResolvabilityBlockPlot,
@@ -149,7 +152,7 @@ def checked_carve(
     return carve
 
 
-def wire_survival_block(job: Job, nodes: RecordNodes) -> None:
+def wire_survival_block(job: Job, nodes: RecordNodes) -> object:
     """The survival block: Kaplan-Meier per rung and bag, each band with its check
     outcome."""
     km = job.step(
@@ -170,9 +173,10 @@ def wire_survival_block(job: Job, nodes: RecordNodes) -> None:
     job.figure(
         SurvivalBlockPlot, block, targets=TARGETS, title=f"{nodes.record} survival"
     )
+    return block
 
 
-def wire_hazard_block(job: Job, nodes: RecordNodes) -> None:
+def wire_hazard_block(job: Job, nodes: RecordNodes) -> object:
     """The hazard block: Nelson-Aalen per rung and bag, each item with its band's check
     outcome in its `checks` field."""
     hazards = job.step(
@@ -196,9 +200,10 @@ def wire_hazard_block(job: Job, nodes: RecordNodes) -> None:
         targets=TARGETS,
         title=f"{nodes.record} cumulative hazard",
     )
+    return block
 
 
-def wire_fraction_block(job: Job, nodes: RecordNodes) -> None:
+def wire_fraction_block(job: Job, nodes: RecordNodes) -> object:
     """The fraction block: `record_compliance` on the checked carve, the compliance
     survey's numbers for this record, drawn rung by rung."""
     compliance = job.step(
@@ -223,6 +228,7 @@ def wire_fraction_block(job: Job, nodes: RecordNodes) -> None:
         targets=TARGETS,
         title=f"{nodes.record} in-spec fraction",
     )
+    return block
 
 
 def t2star_tellability_of(
@@ -303,7 +309,7 @@ def wire_resolvability_block(job: Job, nodes: RecordNodes) -> object:
     return block
 
 
-def wire_timeline_block(job: Job, nodes: RecordNodes) -> None:
+def wire_timeline_block(job: Job, nodes: RecordNodes) -> object:
     """The timeline block: read state by rung from the record's T2* panel data, built as
     the T2* jobs build it on the carve held to the ledger, the culled rungs named."""
     km = job.step(
@@ -337,6 +343,7 @@ def wire_timeline_block(job: Job, nodes: RecordNodes) -> None:
     job.figure(
         TimelineBlockPlot, block, targets=TARGETS, title=f"{nodes.record} timelines"
     )
+    return block
 
 
 def wire_resolvability_tables(job: Job, blocks: Sequence[object]) -> None:
@@ -360,12 +367,22 @@ def wire_resolvability_tables(job: Job, blocks: Sequence[object]) -> None:
         )
 
 
-BLOCKS: tuple[Callable[[Job, RecordNodes], object | None], ...] = (
+BLOCKS: tuple[Callable[[Job, RecordNodes], object], ...] = (
     wire_survival_block,
     wire_hazard_block,
     wire_fraction_block,
     wire_resolvability_block,
     wire_timeline_block,
+)
+# The page's rows, top to bottom, in the method's reading order: can the reads resolve the
+# crossings, what the reads did, how much time was in spec, how long windows last, how the
+# hazard grows. Every block of `BLOCKS` has its place here.
+PAGE_ORDER: tuple[Callable[[Job, RecordNodes], object], ...] = (
+    wire_resolvability_block,
+    wire_timeline_block,
+    wire_fraction_block,
+    wire_survival_block,
+    wire_hazard_block,
 )
 
 
@@ -512,10 +529,21 @@ def configure_record_figure_job(
             metric="t2star",
             tellability=tellability,
         )
-        for block in BLOCKS:
-            built = block(job, nodes)
-            if block is wire_resolvability_block:
-                resolvability.append(built)
+        wired = {block: block(job, nodes) for block in BLOCKS}
+        if wire_resolvability_block in wired:
+            resolvability.append(wired[wire_resolvability_block])
+        # `BLOCKS` and `PAGE_ORDER` hold the same blocks (tests/test_record_figure.py); a
+        # registry swapped for a test draws no page.
+        if all(block in wired for block in PAGE_ORDER):
+            page = job.step(
+                assemble_record_figure,
+                *(wired[block] for block in PAGE_ORDER),  # type: ignore[arg-type]
+                name=f"record_figure_{record}",
+                record=record,
+            )
+            job.figure(
+                RecordFigurePlot, page, targets=TARGETS, title=f"{record} record figure"
+            )
         summaries.append(wire_record_summaries(job, nodes))
     table = job.step(
         summaries_table,
