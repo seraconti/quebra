@@ -38,7 +38,10 @@ floor (dashed) and the top decade G10 reads (shaded), and no fitted line. The co
 each rung across the decimation ladder, with its two limits as labelled guides. The crossing
 placement counts of each rung at k = 1 and 2, stacked by kind. A group the tellability did
 not compute shows its status instead: a panel in its place; a mark of the spectrum in the
-caption, which names only the marks drawn and gives the status of each one not drawn.
+caption, which names only the marks drawn and gives the status of each one not drawn. A
+count ratio of exactly 0 has no place on the log axis: it is drawn as a down triangle on the
+axis floor and named in the caption. `ResolvabilityTablePlot` hands the job's two stacked
+tables to the `table` target unchanged.
 """
 
 from __future__ import annotations
@@ -813,6 +816,8 @@ CROSSING_KINDS = ("clean", "merged", "unbracketed")
 CROSSING_GID = "crossing_bar"
 # The dash of each count-ratio limit, so the two guides differ in more than their label.
 LIMIT_DASHES = {LIMIT_INDEPENDENT: "--", LIMIT_SMOOTH: "-."}
+# The id the marker of each count ratio of exactly 0 carries, so a test can find it.
+ZERO_RATIO_GID = "zero_ratio"
 
 
 def _status_text(ax: plt.Axes, text: str, style: str) -> None:
@@ -885,6 +890,22 @@ def _draw_spectrum(ax: plt.Axes, data: ResolvabilityBlockData, style: str) -> No
     theme.apply_common_style(ax)
 
 
+def _zero_ratios(data: ResolvabilityBlockData) -> list[tuple[str, list[int]]]:
+    """Each rung with a count ratio of exactly 0, and the decimations it is 0 at."""
+    zeros = []
+    for label in data.ladder:
+        ms = [
+            m
+            for m, r in zip(
+                data.decimation_ladder, data.count_ratio[label], strict=False
+            )
+            if r == 0.0
+        ]
+        if ms:
+            zeros.append((label, ms))
+    return zeros
+
+
 def _draw_counts(ax: plt.Axes, data: ResolvabilityBlockData, style: str) -> None:
     m = np.asarray(data.decimation_ladder, dtype=float)
     drawn = [label for label in data.ladder if data.count_ratio[label]]
@@ -904,7 +925,9 @@ def _draw_counts(ax: plt.Axes, data: ResolvabilityBlockData, style: str) -> None
         ratio = data.count_ratio[label]
         if not ratio:
             continue
-        kept = [(mm, r) for mm, r in zip(m, ratio, strict=True) if r is not None]
+        kept = [
+            (mm, r) for mm, r in zip(m, ratio, strict=True) if r is not None and r > 0
+        ]
         ax.plot(
             [mm for mm, _ in kept],
             [r for _, r in kept],
@@ -914,6 +937,21 @@ def _draw_counts(ax: plt.Axes, data: ResolvabilityBlockData, style: str) -> None
         )
     ax.set_xscale("log")
     ax.set_yscale("log")
+    zeros = _zero_ratios(data)
+    if zeros:
+        # Held where the positive values put it, so the markers sit on the floor.
+        floor, top = ax.get_ylim()
+        ax.set_ylim(floor, top)
+        for label, ms in zeros:
+            ax.plot(
+                ms,
+                [floor] * len(ms),
+                marker="v",
+                linestyle="none",
+                color=theme.threshold_color(data.ladder.index(label), n),
+                clip_on=False,
+                gid=ZERO_RATIO_GID,
+            )
     ax.set_xlabel("Decimation m")
     ax.set_ylabel("Count ratio per kept pair")
     ax.set_title("Detection: crossings as reads thin")
@@ -981,6 +1019,15 @@ def _resolvability_caption(data: ResolvabilityBlockData) -> str:
     ]
     if notes:
         parts.append(f"Not drawn on the spectrum: {_listed(notes)}.")
+    zeros = _zero_ratios(data)
+    if zeros:
+        where = "; ".join(
+            f"{label} at m = {', '.join(str(m) for m in ms)}" for label, ms in zeros
+        )
+        parts.append(
+            "A count ratio of 0, no down-crossing between kept reads, sits on the axis "
+            f"floor as a down triangle: {where}."
+        )
     if data.flag:
         parts.append(f"This record is {data.flag}.")
     return " ".join(parts)
@@ -1026,3 +1073,14 @@ class ResolvabilityBlockPlot(BasePlot):
             )
             draw_resolvability(fig, result, style)
         return fig
+
+
+class ResolvabilityTablePlot(BasePlot):
+    """One of the job's two stacked resolvability tables, for the `table` target only."""
+
+    def build_table(self, result: object) -> pd.DataFrame:
+        if not isinstance(result, pd.DataFrame):
+            raise TypeError(
+                f"{type(self).__name__} writes a DataFrame; got {type(result).__name__}"
+            )
+        return result

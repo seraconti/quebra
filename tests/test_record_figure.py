@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import io
 import json
+import pickle
 from pathlib import Path
 from statistics import NormalDist
 from types import SimpleNamespace
@@ -91,6 +93,7 @@ from quebra.plots.record_figure_plot import (
     ResolvabilityBlockPlot,
     SummariesTablePlot,
     SurvivalBlockPlot,
+    ZERO_RATIO_GID,
 )
 from quebra.panels.within_calibration import WithinCalibrationPanel
 from quebra.plots.targets import render_table
@@ -1256,7 +1259,9 @@ def test_the_resolvability_figure_draws_the_artifacts_values(told) -> None:
     )
     for label in block.ladder:
         ratio = block.count_ratio[label]
-        kept = [(x, r) for x, r in zip(m, ratio, strict=True) if r is not None]
+        kept = [
+            (x, r) for x, r in zip(m, ratio, strict=True) if r is not None and r > 0
+        ]
         assert list(lines[label].get_xdata()) == [x for x, _ in kept]
         assert list(lines[label].get_ydata()) == [r for _, r in kept]
     # One slot per (rung, k), left to right in ladder order and increasing k, each a stack
@@ -1278,6 +1283,45 @@ def test_the_resolvability_figure_draws_the_artifacts_values(told) -> None:
         assert sorted(slots[centre]) == sorted(
             [(0, clean), (clean, merged), (clean + merged, count.unbracketed)]
         )
+    plt.close(fig)
+
+
+@pytest.mark.unit
+def test_a_count_ratio_of_zero_sits_on_the_axis_floor_and_the_caption_names_it(
+    told,
+) -> None:
+    """Oracle: the artifact. A count ratio of exactly 0, which a log axis cannot place, is
+    drawn as one marker at its decimation on the axis floor in its rung's colour, left off
+    its rung's line, and named in the caption with its rung and m."""
+    tellability = told.tellability
+    thresholds = list(tellability.thresholds)
+    rung = thresholds[1]
+    assert rung.status["count_exponent"] == "computed", "premise: the rung is counted"
+    ratio = list(rung.count_ratio)
+    ratio[3] = 0.0
+    thresholds[1] = dataclasses.replace(rung, count_ratio=tuple(ratio))
+    block = build_resolvability_block(
+        dataclasses.replace(tellability, thresholds=tuple(thresholds)), flag=""
+    )
+    zero_m = block.decimation_ladder[3]
+    fig = ResolvabilityBlockPlot("zero").build_matplotlib(block)
+    counts_ax = fig.axes[1]
+    (marker,) = [
+        line for line in counts_ax.get_lines() if line.get_gid() == ZERO_RATIO_GID
+    ]
+    assert list(marker.get_xdata()) == [zero_m]
+    assert list(marker.get_ydata()) == [counts_ax.get_ylim()[0]]
+    lines = {line.get_label(): line for line in counts_ax.get_lines()}
+    assert marker.get_color() == lines[rung.threshold_label].get_color()
+    assert zero_m not in list(lines[rung.threshold_label].get_xdata())
+    caption = fig._supxlabel.get_text()
+    assert f"{rung.threshold_label} at m = {zero_m}" in caption, caption
+    plt.close(fig)
+    fig = ResolvabilityBlockPlot("none").build_matplotlib(
+        build_resolvability_block(tellability, flag="")
+    )
+    assert not [ln for ln in fig.axes[1].get_lines() if ln.get_gid() == ZERO_RATIO_GID]
+    assert "count ratio of 0" not in fig._supxlabel.get_text()
     plt.close(fig)
 
 
@@ -1353,8 +1397,10 @@ configure_check_ledger_job(
 def test_a_figure_job_runs_its_ledger_job_once_and_draws_each_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Oracle: the run directory. A figure job over an invented two-record ledger job
-    runs that job once, through its one ref, and renders every block per record."""
+    """Oracle: the run directory and the blocks it persisted. A figure job over an invented
+    two-record ledger job runs that job once, through its one ref, renders every block per
+    record, and writes the curve summaries and the two resolvability tables, each table
+    the drawn records' blocks stacked."""
     a = _track912_csv(tmp_path / "010423_r.csv", seed=1, gap=False)
     b = _track912_csv(tmp_path / "020423_r.csv", seed=3, gap=True)
     ledger_py = tmp_path / "ledger_probe.py"
@@ -1393,3 +1439,30 @@ def test_a_figure_job_runs_its_ledger_job_once_and_draws_each_record(
     summaries = pd.read_csv(run_dir / "figures_probe_curve_summaries.csv")
     assert len(summaries) == 2 * len(T2STAR_THRESHOLDS) * len(SIDES)
     assert set(summaries["record"]) == {"q1_010423", "q1_020423"}
+    # The two resolvability CSVs are every drawn record's tables, stacked, as the blocks
+    # hold them (the persisted figure inputs); read as text, so no dtype is guessed.
+    blocks = []
+    for record in ("q1_010423", "q1_020423"):
+        with (run_dir / f"resolvability_block_{record}.pkl").open("rb") as handle:
+            blocks.append(pickle.load(handle))
+    for part in ("per_threshold", "per_record"):
+        written = pd.read_csv(
+            run_dir / f"figures_probe_resolvability_{part}.csv",
+            dtype=str,
+            keep_default_na=False,
+        )
+        expected = pd.concat(
+            [
+                pd.read_csv(
+                    io.StringIO(getattr(b, part).to_csv(index=False)),
+                    dtype=str,
+                    keep_default_na=False,
+                )
+                for b in blocks
+            ],
+            ignore_index=True,
+        )
+        assert len(expected) == (
+            2 * len(T2STAR_THRESHOLDS) if part == "per_threshold" else 2
+        )
+        pd.testing.assert_frame_equal(written, expected)

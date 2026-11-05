@@ -16,9 +16,11 @@ listed record of this ledger job's qubits that the job does not hold raises.
 **Blocks.** `BLOCKS` is the one registration point: each entry wires one block of one
 record, its builder step from `analyzers/record_figure.py` and its figure from
 `plots/record_figure_plot.py`, off the record's `RecordNodes`. A new block is one function
-appended there. The job's tables are wired after the records: the curve summaries, one row
-per record, rung and bag, with the records outside the tables as `excluded=`, written by
-the `table` target. A record names its metric (`RecordNodes.metric`, one of
+appended there; it returns the node its job table reads, or None. The job's tables are
+wired after the records, each written by the `table` target: the curve summaries, one row
+per record, rung and bag, with the records outside the tables as `excluded=`, and the two
+resolvability tables, every drawn record stacked (`wire_resolvability_tables`). A record
+names its metric (`RecordNodes.metric`, one of
 `METRICS`).
 
 **Tellability.** Each record's tellability is wired once, on the carve's own fit and
@@ -44,6 +46,7 @@ from quebra.analyzers.compliance_survey import record_compliance
 from quebra.analyzers.check_outcome import RowKey
 from quebra.analyzers.kaplan_meier import CONF_LEVEL
 from quebra.analyzers.record_figure import (
+    RESOLVABILITY_TABLES,
     build_fraction_block,
     build_hazard_block,
     build_record_summaries,
@@ -56,6 +59,7 @@ from quebra.analyzers.record_figure import (
     ledger_run_set,
     nelson_aalen_of,
     panel_data_of,
+    resolvability_table,
     summaries_table,
 )
 from quebra.analyzers.t2star import T2StarResult
@@ -74,6 +78,7 @@ from quebra.plots.record_figure_plot import (
     FractionBlockPlot,
     HazardBlockPlot,
     ResolvabilityBlockPlot,
+    ResolvabilityTablePlot,
     SummariesTablePlot,
     SurvivalBlockPlot,
     TimelineBlockPlot,
@@ -279,9 +284,10 @@ def check_tellability_kwargs(
         )
 
 
-def wire_resolvability_block(job: Job, nodes: RecordNodes) -> None:
+def wire_resolvability_block(job: Job, nodes: RecordNodes) -> object:
     """The resolvability block: the record's tellability read for whether its reads resolve
-    the events the windows count. Draws either metric."""
+    the events the windows count. Draws either metric; returns the block node, which the
+    job's resolvability tables read."""
     block = job.step(
         build_resolvability_block,
         nodes.tellability,
@@ -294,6 +300,7 @@ def wire_resolvability_block(job: Job, nodes: RecordNodes) -> None:
         targets=TARGETS,
         title=f"{nodes.record} resolvability",
     )
+    return block
 
 
 def wire_timeline_block(job: Job, nodes: RecordNodes) -> None:
@@ -332,7 +339,28 @@ def wire_timeline_block(job: Job, nodes: RecordNodes) -> None:
     )
 
 
-BLOCKS: tuple[Callable[[Job, RecordNodes], None], ...] = (
+def wire_resolvability_tables(job: Job, blocks: Sequence[object]) -> None:
+    """The job's two resolvability tables (`RESOLVABILITY_TABLES`), every drawn record's
+    block stacked, written by the `table` target beside the curve summaries. Nothing is
+    wired when no block was."""
+    if not blocks:
+        return
+    for part in RESOLVABILITY_TABLES:
+        table = job.step(
+            resolvability_table,
+            *blocks,  # type: ignore[arg-type]
+            name=f"resolvability_{part}_table",
+            part=part,
+        )
+        job.figure(
+            ResolvabilityTablePlot,
+            table,
+            targets=TABLE_TARGETS,
+            title=f"{job.name} resolvability {part.replace('_', ' ')}",
+        )
+
+
+BLOCKS: tuple[Callable[[Job, RecordNodes], object | None], ...] = (
     wire_survival_block,
     wire_hazard_block,
     wire_fraction_block,
@@ -442,6 +470,7 @@ def configure_record_figure_job(
             f"{ledger_job}: the paper's tables list {missing}, which it does not hold"
         )
     summaries: list[object] = []
+    resolvability: list[object] = []
     for record, held in records.items():
         if record not in listed:
             continue
@@ -484,7 +513,9 @@ def configure_record_figure_job(
             tellability=tellability,
         )
         for block in BLOCKS:
-            block(job, nodes)
+            built = block(job, nodes)
+            if block is wire_resolvability_block:
+                resolvability.append(built)
         summaries.append(wire_record_summaries(job, nodes))
     table = job.step(
         summaries_table,
@@ -498,3 +529,4 @@ def configure_record_figure_job(
         targets=TABLE_TARGETS,
         title=f"{job.name} curve summaries",
     )
+    wire_resolvability_tables(job, resolvability)

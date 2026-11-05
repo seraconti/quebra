@@ -55,7 +55,8 @@ with its two limits, and the crossing placement counts (Q3.4). Each group is dra
 the tellability computed it; elsewhere its status is shown. G10 and its halves are numbers
 with their statuses in the per-record table, with the one sentence they are read by: no
 slope, no reference level. The tables keep every value unrounded, keyed on
-`threshold_label`. A record whose carve or tellability failed draws the failure's note.
+`threshold_label`; the job stacks each across its records (`resolvability_table`). A record
+whose carve or tellability failed draws the failure's note.
 
 **Timeline block** (`build_timeline_block`). Read state along the scan clock at each rung,
 twice: the four states with uncertainty, and the two states the carve used, from the T2*
@@ -1042,3 +1043,30 @@ def build_timeline_block(
         t_min_h=float(np.nanmin(t_h)),
         t_max_h=float(np.nanmax(t_h)),
     )
+
+
+# The two tables of a resolvability block, by field name; the job writes each as one CSV.
+RESOLVABILITY_TABLES = ("per_threshold", "per_record")
+
+
+def resolvability_table(*blocks: ResolvabilityBlockData, part: str) -> pd.DataFrame:
+    """The `part` table (`RESOLVABILITY_TABLES`) of every block, stacked in the job's record
+    order, unrounded. A record whose carve or tellability failed has its one per-record row,
+    with the failure, and no per-threshold row."""
+    if part not in RESOLVABILITY_TABLES:
+        raise ValueError(f"part must be one of {RESOLVABILITY_TABLES}, got {part!r}")
+    columns = (
+        list(PER_RECORD_COLUMNS)
+        if part == "per_record"
+        else _per_threshold_columns(tuple(int(m) for m in DECIMATION_LADDER))
+    )
+    rows: list[dict[str, object]] = []
+    for block in blocks:
+        frame = getattr(block, part)
+        if list(frame.columns) != columns:
+            raise ValueError(
+                f"{block.dataset_id}: its {part} table has columns "
+                f"{list(frame.columns)}, not {columns}"
+            )
+        rows.extend(frame.to_dict("records"))
+    return pd.DataFrame(rows, columns=columns)
