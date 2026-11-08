@@ -77,7 +77,12 @@ from quebra.analyzers.survival import (
 from quebra.core.job import Job, _import_job
 from quebra.core.reference import ArtifactRef
 from quebra.core.runner import run_job
-from quebra.analyzers.tellability import METRIC_GROUPS, THRESHOLD_GROUPS
+from quebra.analyzers.tellability import (
+    COMPUTED,
+    MAX_AUTOCORR_LAG,
+    METRIC_GROUPS,
+    THRESHOLD_GROUPS,
+)
 from quebra.core.types import RecordFailure
 from quebra.ledger_recipe import LEDGER_KNOBS, ledger_step
 from quebra.paper_tables import FLAG_TEXT, PAPER_RECORDS, SHADED
@@ -1095,6 +1100,39 @@ def test_the_block_and_its_tables_carry_the_tellability_it_reads(told) -> None:
                 assert table.loc[label, f"{kind}_k{count.k:g}"] == getattr(count, kind)
         assert table.loc[label, "count_exponent"] == row.count_exponent
         assert table.loc[label, "clean_fraction_k1"] == row.clean_fraction_k1
+        # The rows the block does not draw: the table is the only place a reader gets them.
+        groups = ("count_exponent", "run_length", "bounds", "autocorr")
+        assert all(row.status[g] == COMPUTED for g in groups), "premise: computed"
+        for i, m in enumerate(row.decimation_ladder):
+            assert table.loc[label, f"down_crossings_m{m}"] == row.down_crossings[i]
+            assert table.loc[label, f"kept_pairs_m{m}"] == row.kept_pairs[i]
+        for name in (
+            "read_fraction_in_spec",
+            "mean_in_spec_run_reads",
+            "run_length_ratio",
+            "in_spec_fraction_lower",
+            "in_spec_fraction_upper",
+            "unsure_k",
+        ):
+            assert table.loc[label, name] == getattr(row, name), name
+        for group in ("run_length", "bounds", "autocorr"):
+            assert table.loc[label, f"{group}_status"] == row.status[group]
+        lags = row.in_spec_autocorr
+        assert 0 < len(lags) <= MAX_AUTOCORR_LAG
+        for lag in range(1, MAX_AUTOCORR_LAG + 1):
+            cell = table.loc[label, f"in_spec_autocorr_lag{lag}"]
+            assert (cell == lags[lag - 1]) if lag <= len(lags) else pd.isna(cell)
+    # An autocorrelation that stops early leaves the later lags blank, not shifted.
+    first = tellability.thresholds[0]
+    short = dataclasses.replace(first, in_spec_autocorr=first.in_spec_autocorr[:3])
+    table = build_resolvability_block(
+        dataclasses.replace(tellability, thresholds=(short,)), flag=""
+    ).per_threshold
+    assert [table.loc[0, f"in_spec_autocorr_lag{lag}"] for lag in (1, 2, 3)] == list(
+        short.in_spec_autocorr
+    )
+    later = [f"in_spec_autocorr_lag{x}" for x in range(4, MAX_AUTOCORR_LAG + 1)]
+    assert table.loc[0, later].isna().all()
 
 
 def _not_computed(
@@ -1149,7 +1187,11 @@ def test_a_group_the_tellability_did_not_compute_shows_its_status(told) -> None:
     )
     assert block.count_ratio[counted.threshold_label] == ()
     assert block.count_status[counted.threshold_label] == uncounted
-    ratio_cells = [f"count_ratio_m{x}" for x in block.decimation_ladder]
+    ratio_cells = [
+        f"{name}_m{x}"
+        for name in ("count_ratio", "down_crossings", "kept_pairs")
+        for x in block.decimation_ladder
+    ]
     assert (
         table.loc[counted.threshold_label, [*ratio_cells, "rungs_excluded"]]
         .isna()

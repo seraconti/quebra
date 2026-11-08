@@ -22,7 +22,8 @@ job's tables are wired after the records, each written by the `table` target: th
 summaries, one row per record, rung and bag, with the records outside the tables as
 `excluded=`, and the two resolvability tables, every drawn record stacked
 (`wire_resolvability_tables`). A record names its metric (`RecordNodes.metric`, one of
-`METRICS`).
+`METRICS`). A single-record job writes the same two tables for its own tellability with
+`wire_tellability_tables`, and no figure.
 
 **Tellability.** Each record's tellability is wired once, on the carve's own fit and
 windows, with the carve's kwargs and the standalone jobs' permutation count and seed
@@ -365,6 +366,17 @@ def wire_resolvability_tables(job: Job, blocks: Sequence[object]) -> None:
             targets=TABLE_TARGETS,
             title=f"{job.name} resolvability {part.replace('_', ' ')}",
         )
+
+
+def wire_tellability_tables(job: Job, tellability: object) -> object:
+    """The resolvability tables of a single-record job's tellability, as the figure jobs
+    write them: the block built on `tellability` (a `wire_*_tellability` node), then its two
+    tables by the `table` target. No figure is drawn. Returns the block node."""
+    block = job.step(
+        build_resolvability_block, tellability, name="resolvability_block", flag=""
+    )
+    wire_resolvability_tables(job, [block])
+    return block
 
 
 BLOCKS: tuple[Callable[[Job, RecordNodes], object], ...] = (

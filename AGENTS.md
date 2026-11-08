@@ -275,7 +275,10 @@ plots/       base.py, targets.py, theme.py, *_plot.py   targets: static, academi
              RecordFigurePlot the page that stacks one record's blocks, one row each,
              in the recipe's PAGE_ORDER
 jobs/active/ ramsey_*.py, ramsey_2x2_*.py, t2star_*.py, mtbf_*.py, check_calibration.py,
-             check_ledger_6d2s_q*.py (checks only: per-record ledgers + per-qubit survey)
+             check_ledger_6d2s_q*.py (checks only: per-record ledgers + per-qubit survey),
+             freq_*.py and fid_2x2_*.py (one per ledger record: the frequency, and the
+             infidelity at the declared Rabi frequency, each with its tellability and
+             the resolvability tables as CSVs)
 jobs/composite/ compare_*.py, independence_survey.py, record_figures_6d2s_q*.py
              composites across datasets, by job.include + .ref or, for the
              compare_r*.py comparisons, by carving each record through

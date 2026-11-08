@@ -54,9 +54,13 @@ top decade G10 reads, shaded; per rung, the count ratio across the decimation la
 with its two limits, and the crossing placement counts (Q3.4). Each group is drawn only where
 the tellability computed it; elsewhere its status is shown. G10 and its halves are numbers
 with their statuses in the per-record table, with the one sentence they are read by: no
-slope, no reference level. The tables keep every value unrounded, keyed on
-`threshold_label`; the job stacks each across its records (`resolvability_table`). A record
-whose carve or tellability failed draws the failure's note.
+slope, no reference level. The per-threshold table also carries the rung's rows the block
+does not draw: the down-crossings and kept pairs per decimation, the run-length row, the
+in-spec bounds with their k, and the in-spec autocorrelation per lag, each group with its
+status. The tables keep every value unrounded, keyed on `threshold_label`; the job stacks
+each across its records (`resolvability_table`). A metric with no thresholds has a
+per-threshold table with no row. A record whose carve or tellability failed draws the
+failure's note.
 
 **Timeline block** (`build_timeline_block`). Read state along the scan clock at each rung,
 twice: the four states with uncertainty, and the two states the carve used, from the T2*
@@ -112,6 +116,7 @@ from quebra.analyzers.tellability import (
     COMPUTED,
     CONFIDENCE_LEVELS,
     DECIMATION_LADDER,
+    MAX_AUTOCORR_LAG,
     CrossingCounts,
     TellabilityResult,
 )
@@ -763,7 +768,28 @@ def _per_threshold_columns(ladder: tuple[int, ...]) -> list[str]:
             for kind in ("clean", "merged", "unbracketed")
         ),
         "clean_fraction_k1",
+        *(f"down_crossings_m{m}" for m in ladder),
+        *(f"kept_pairs_m{m}" for m in ladder),
+        "run_length_status",
+        "read_fraction_in_spec",
+        "mean_in_spec_run_reads",
+        "run_length_ratio",
+        "bounds_status",
+        "in_spec_fraction_lower",
+        "in_spec_fraction_upper",
+        "unsure_k",
+        "autocorr_status",
+        *(f"in_spec_autocorr_lag{lag}" for lag in range(1, MAX_AUTOCORR_LAG + 1)),
     ]
+
+
+def _per_lag(values: tuple[float, ...] | None) -> dict[str, float | None]:
+    """The in-spec autocorrelation by lag, None past the last lag the record reaches."""
+    held = tuple(values or ())
+    return {
+        f"in_spec_autocorr_lag{lag}": (held[lag - 1] if lag <= len(held) else None)
+        for lag in range(1, MAX_AUTOCORR_LAG + 1)
+    }
 
 
 def build_resolvability_block(
@@ -896,6 +922,28 @@ def build_resolvability_block(
                     for kind in ("clean", "merged", "unbracketed")
                 },
                 "clean_fraction_k1": row.clean_fraction_k1,
+                **{
+                    f"down_crossings_m{m}": (
+                        row.down_crossings[i] if counted else None  # type: ignore[index]
+                    )
+                    for i, m in enumerate(decimation)
+                },
+                **{
+                    f"kept_pairs_m{m}": (
+                        row.kept_pairs[i] if counted else None  # type: ignore[index]
+                    )
+                    for i, m in enumerate(decimation)
+                },
+                "run_length_status": row.status["run_length"],
+                "read_fraction_in_spec": row.read_fraction_in_spec,
+                "mean_in_spec_run_reads": row.mean_in_spec_run_reads,
+                "run_length_ratio": row.run_length_ratio,
+                "bounds_status": row.status["bounds"],
+                "in_spec_fraction_lower": row.in_spec_fraction_lower,
+                "in_spec_fraction_upper": row.in_spec_fraction_upper,
+                "unsure_k": row.unsure_k,
+                "autocorr_status": row.status["autocorr"],
+                **_per_lag(row.in_spec_autocorr),
             }
         )
     return ResolvabilityBlockData(

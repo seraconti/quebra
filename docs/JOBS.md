@@ -7,7 +7,7 @@ Every job declares a `JOB_ID` (the logical name `job.include` resolves) and a
 `JOB_FAMILY` (its category). Neither is its directory: a job can move without
 breaking any composite, and recategorising costs one string edit.
 
-36 jobs in 9 families.
+108 jobs in 11 families.
 
 ## check_ledger
 
@@ -29,6 +29,88 @@ breaking any composite, and recategorising costs one string edit.
 | JOB_ID | file | datasets | includes | parameters |
 |---|---|---|---|---|
 | `compliance_survey` | `jobs/composite/compliance_survey.py` | — | `check_ledger_2x2_q1`<br>`check_ledger_2x2_q2`<br>`check_ledger_2x2_q3`<br>`check_ledger_2x2_q4`<br>`check_ledger_6d2s_q1`<br>`check_ledger_6d2s_q2`<br>`check_ledger_6d2s_q3`<br>`check_ledger_6d2s_q4`<br>`check_ledger_6d2s_q5`<br>`check_ledger_6d2s_q6` | `PREFIX='compliance_survey'` |
+
+## fid
+
+| JOB_ID | file | datasets | includes | parameters |
+|---|---|---|---|---|
+| `fid_2x2_q1_030723` | `jobs/active/fid_2x2_q1_030723.py` | `data/real_private/2x2/030723_2x2_qubit1.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q1_030723'` |
+| `fid_2x2_q1_050723` | `jobs/active/fid_2x2_q1_050723.py` | `data/real_private/2x2/050723_2x2_qubit1.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q1_050723'` |
+| `fid_2x2_q1_070723` | `jobs/active/fid_2x2_q1_070723.py` | `data/real_private/2x2/070723_2x2_qubit1.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q1_070723'` |
+| `fid_2x2_q1_090623` | `jobs/active/fid_2x2_q1_090623.py` | `data/real_private/2x2/090623_2x2_qubit1.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q1_090623'` |
+| `fid_2x2_q1_100623` | `jobs/active/fid_2x2_q1_100623.py` | `data/real_private/2x2/100623_2x2_qubit1.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q1_100623'` |
+| `fid_2x2_q1_100723` | `jobs/active/fid_2x2_q1_100723.py` | `data/real_private/2x2/100723_2x2_qubit1.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q1_100723'` |
+| `fid_2x2_q1_200623` | `jobs/active/fid_2x2_q1_200623.py` | `data/real_private/2x2/200623_2x2_qubit1.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q1_200623'` |
+| `fid_2x2_q1_220823` | `jobs/active/fid_2x2_q1_220823.py` | `data/real_private/2x2/220823_2x2_qubit1.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q1_220823'` |
+| `fid_2x2_q1_250623` | `jobs/active/fid_2x2_q1_250623.py` | `data/real_private/2x2/250623_2x2_qubit1.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q1_250623'` |
+| `fid_2x2_q1_300623` | `jobs/active/fid_2x2_q1_300623.py` | `data/real_private/2x2/300623_2x2_qubit1.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q1_300623'` |
+| `fid_2x2_q2_030723` | `jobs/active/fid_2x2_q2_030723.py` | `data/real_private/2x2/030723_2x2_qubit2.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q2_030723'` |
+| `fid_2x2_q2_040723` | `jobs/active/fid_2x2_q2_040723.py` | `data/real_private/2x2/040723_2x2_qubit2.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q2_040723'` |
+| `fid_2x2_q2_090623` | `jobs/active/fid_2x2_q2_090623.py` | `data/real_private/2x2/090623_2x2_qubit2.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q2_090623'` |
+| `fid_2x2_q2_120723` | `jobs/active/fid_2x2_q2_120723.py` | `data/real_private/2x2/120723_2x2_qubit2.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q2_120723'` |
+| `fid_2x2_q2_220823` | `jobs/active/fid_2x2_q2_220823.py` | `data/real_private/2x2/220823_2x2_qubit2.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q2_220823'` |
+| `fid_2x2_q3_040723` | `jobs/active/fid_2x2_q3_040723.py` | `data/real_private/2x2/040723_2x2_qubit3.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q3_040723'` |
+| `fid_2x2_q3_090623` | `jobs/active/fid_2x2_q3_090623.py` | `data/real_private/2x2/090623_2x2_qubit3.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q3_090623'` |
+| `fid_2x2_q3_110723` | `jobs/active/fid_2x2_q3_110723.py` | `data/real_private/2x2/110723_2x2_qubit3.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q3_110723'` |
+| `fid_2x2_q3_220823` | `jobs/active/fid_2x2_q3_220823.py` | `data/real_private/2x2/220823_2x2_qubit3.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q3_220823'` |
+| `fid_2x2_q3_260623` | `jobs/active/fid_2x2_q3_260623.py` | `data/real_private/2x2/260623_2x2_qubit3.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q3_260623'` |
+| `fid_2x2_q3_300623` | `jobs/active/fid_2x2_q3_300623.py` | `data/real_private/2x2/300623_2x2_qubit3.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q3_300623'` |
+| `fid_2x2_q4_220823` | `jobs/active/fid_2x2_q4_220823.py` | `data/real_private/2x2/220823_2x2_qubit4.pickle`<br>`data/real_private/declared/rabi_frequencies_2x2.csv` | — | `PREFIX='fid_2x2_q4_220823'` |
+
+## freq
+
+| JOB_ID | file | datasets | includes | parameters |
+|---|---|---|---|---|
+| `freq_2x2_q1_030723` | `jobs/active/freq_2x2_q1_030723.py` | `data/real_private/2x2/030723_2x2_qubit1.pickle` | — | `PREFIX='freq_2x2_q1_030723'` |
+| `freq_2x2_q1_050723` | `jobs/active/freq_2x2_q1_050723.py` | `data/real_private/2x2/050723_2x2_qubit1.pickle` | — | `PREFIX='freq_2x2_q1_050723'` |
+| `freq_2x2_q1_070723` | `jobs/active/freq_2x2_q1_070723.py` | `data/real_private/2x2/070723_2x2_qubit1.pickle` | — | `PREFIX='freq_2x2_q1_070723'` |
+| `freq_2x2_q1_090623` | `jobs/active/freq_2x2_q1_090623.py` | `data/real_private/2x2/090623_2x2_qubit1.pickle` | — | `PREFIX='freq_2x2_q1_090623'` |
+| `freq_2x2_q1_100623` | `jobs/active/freq_2x2_q1_100623.py` | `data/real_private/2x2/100623_2x2_qubit1.pickle` | — | `PREFIX='freq_2x2_q1_100623'` |
+| `freq_2x2_q1_100723` | `jobs/active/freq_2x2_q1_100723.py` | `data/real_private/2x2/100723_2x2_qubit1.pickle` | — | `PREFIX='freq_2x2_q1_100723'` |
+| `freq_2x2_q1_200623` | `jobs/active/freq_2x2_q1_200623.py` | `data/real_private/2x2/200623_2x2_qubit1.pickle` | — | `PREFIX='freq_2x2_q1_200623'` |
+| `freq_2x2_q1_220823` | `jobs/active/freq_2x2_q1_220823.py` | `data/real_private/2x2/220823_2x2_qubit1.pickle` | — | `PREFIX='freq_2x2_q1_220823'` |
+| `freq_2x2_q1_250623` | `jobs/active/freq_2x2_q1_250623.py` | `data/real_private/2x2/250623_2x2_qubit1.pickle` | — | `PREFIX='freq_2x2_q1_250623'` |
+| `freq_2x2_q1_300623` | `jobs/active/freq_2x2_q1_300623.py` | `data/real_private/2x2/300623_2x2_qubit1.pickle` | — | `PREFIX='freq_2x2_q1_300623'` |
+| `freq_2x2_q2_030723` | `jobs/active/freq_2x2_q2_030723.py` | `data/real_private/2x2/030723_2x2_qubit2.pickle` | — | `PREFIX='freq_2x2_q2_030723'` |
+| `freq_2x2_q2_040723` | `jobs/active/freq_2x2_q2_040723.py` | `data/real_private/2x2/040723_2x2_qubit2.pickle` | — | `PREFIX='freq_2x2_q2_040723'` |
+| `freq_2x2_q2_090623` | `jobs/active/freq_2x2_q2_090623.py` | `data/real_private/2x2/090623_2x2_qubit2.pickle` | — | `PREFIX='freq_2x2_q2_090623'` |
+| `freq_2x2_q2_120723` | `jobs/active/freq_2x2_q2_120723.py` | `data/real_private/2x2/120723_2x2_qubit2.pickle` | — | `PREFIX='freq_2x2_q2_120723'` |
+| `freq_2x2_q2_220823` | `jobs/active/freq_2x2_q2_220823.py` | `data/real_private/2x2/220823_2x2_qubit2.pickle` | — | `PREFIX='freq_2x2_q2_220823'` |
+| `freq_2x2_q3_040723` | `jobs/active/freq_2x2_q3_040723.py` | `data/real_private/2x2/040723_2x2_qubit3.pickle` | — | `PREFIX='freq_2x2_q3_040723'` |
+| `freq_2x2_q3_090623` | `jobs/active/freq_2x2_q3_090623.py` | `data/real_private/2x2/090623_2x2_qubit3.pickle` | — | `PREFIX='freq_2x2_q3_090623'` |
+| `freq_2x2_q3_110723` | `jobs/active/freq_2x2_q3_110723.py` | `data/real_private/2x2/110723_2x2_qubit3.pickle` | — | `PREFIX='freq_2x2_q3_110723'` |
+| `freq_2x2_q3_220823` | `jobs/active/freq_2x2_q3_220823.py` | `data/real_private/2x2/220823_2x2_qubit3.pickle` | — | `PREFIX='freq_2x2_q3_220823'` |
+| `freq_2x2_q3_260623` | `jobs/active/freq_2x2_q3_260623.py` | `data/real_private/2x2/260623_2x2_qubit3.pickle` | — | `PREFIX='freq_2x2_q3_260623'` |
+| `freq_2x2_q3_300623` | `jobs/active/freq_2x2_q3_300623.py` | `data/real_private/2x2/300623_2x2_qubit3.pickle` | — | `PREFIX='freq_2x2_q3_300623'` |
+| `freq_2x2_q4_220823` | `jobs/active/freq_2x2_q4_220823.py` | `data/real_private/2x2/220823_2x2_qubit4.pickle` | — | `PREFIX='freq_2x2_q4_220823'` |
+| `freq_6d2s_q1_040423` | `jobs/active/freq_6d2s_q1_040423.py` | `data/real_private/6D2S/040423_6D2S_qubit1.pickle` | — | `PREFIX='freq_6d2s_q1_040423'` |
+| `freq_6d2s_q1_050423` | `jobs/active/freq_6d2s_q1_050423.py` | `data/real_private/6D2S/050423_6D2S_qubit1.pickle` | — | `PREFIX='freq_6d2s_q1_050423'` |
+| `freq_6d2s_q1_070423` | `jobs/active/freq_6d2s_q1_070423.py` | `data/real_private/6D2S/070423_6D2S_qubit1.pickle` | — | `PREFIX='freq_6d2s_q1_070423'` |
+| `freq_6d2s_q1_100423` | `jobs/active/freq_6d2s_q1_100423.py` | `data/real_private/6D2S/100423_6D2S_qubit1.pickle` | — | `PREFIX='freq_6d2s_q1_100423'` |
+| `freq_6d2s_q1_120423` | `jobs/active/freq_6d2s_q1_120423.py` | `data/real_private/6D2S/120423_6D2S_qubit1.pickle` | — | `PREFIX='freq_6d2s_q1_120423'` |
+| `freq_6d2s_q1_210423` | `jobs/active/freq_6d2s_q1_210423.py` | `data/real_private/6D2S/210423_6D2S_qubit1.pickle` | — | `PREFIX='freq_6d2s_q1_210423'` |
+| `freq_6d2s_q1_220423` | `jobs/active/freq_6d2s_q1_220423.py` | `data/real_private/6D2S/220423_6D2S_qubit1.pickle` | — | `PREFIX='freq_6d2s_q1_220423'` |
+| `freq_6d2s_q1_280623` | `jobs/active/freq_6d2s_q1_280623.py` | `data/real_private/6D2S/280623_6D2S_qubit1.pickle` | — | `PREFIX='freq_6d2s_q1_280623'` |
+| `freq_6d2s_q2_210423` | `jobs/active/freq_6d2s_q2_210423.py` | `data/real_private/6D2S/210423_6D2S_qubit2.pickle` | — | `PREFIX='freq_6d2s_q2_210423'` |
+| `freq_6d2s_q2_270623` | `jobs/active/freq_6d2s_q2_270623.py` | `data/real_private/6D2S/270623_6D2S_qubit2.pickle` | — | `PREFIX='freq_6d2s_q2_270623'` |
+| `freq_6d2s_q2_280623` | `jobs/active/freq_6d2s_q2_280623.py` | `data/real_private/6D2S/280623_6D2S_qubit2.pickle` | — | `PREFIX='freq_6d2s_q2_280623'` |
+| `freq_6d2s_q3_110723` | `jobs/active/freq_6d2s_q3_110723.py` | `data/real_private/6D2S/110723_6D2S_qubit3.pickle` | — | `PREFIX='freq_6d2s_q3_110723'` |
+| `freq_6d2s_q3_210423` | `jobs/active/freq_6d2s_q3_210423.py` | `data/real_private/6D2S/210423_6D2S_qubit3.pickle` | — | `PREFIX='freq_6d2s_q3_210423'` |
+| `freq_6d2s_q4_070723` | `jobs/active/freq_6d2s_q4_070723.py` | `data/real_private/6D2S/070723_6D2S_qubit4.pickle` | — | `PREFIX='freq_6d2s_q4_070723'` |
+| `freq_6d2s_q4_100723` | `jobs/active/freq_6d2s_q4_100723.py` | `data/real_private/6D2S/100723_6D2S_qubit4.pickle` | — | `PREFIX='freq_6d2s_q4_100723'` |
+| `freq_6d2s_q4_290623` | `jobs/active/freq_6d2s_q4_290623.py` | `data/real_private/6D2S/290623_6D2S_qubit4.pickle` | — | `PREFIX='freq_6d2s_q4_290623'` |
+| `freq_6d2s_q5_070623` | `jobs/active/freq_6d2s_q5_070623.py` | `data/real_private/6D2S/070623_6D2S_qubit5.pickle` | — | `PREFIX='freq_6d2s_q5_070623'` |
+| `freq_6d2s_q5_070723` | `jobs/active/freq_6d2s_q5_070723.py` | `data/real_private/6D2S/070723_6D2S_qubit5.pickle` | — | `PREFIX='freq_6d2s_q5_070723'` |
+| `freq_6d2s_q5_080623` | `jobs/active/freq_6d2s_q5_080623.py` | `data/real_private/6D2S/080623_6D2S_qubit5.pickle` | — | `PREFIX='freq_6d2s_q5_080623'` |
+| `freq_6d2s_q5_090623` | `jobs/active/freq_6d2s_q5_090623.py` | `data/real_private/6D2S/090623_6D2S_qubit5.pickle` | — | `PREFIX='freq_6d2s_q5_090623'` |
+| `freq_6d2s_q5_120423` | `jobs/active/freq_6d2s_q5_120423.py` | `data/real_private/6D2S/120423_6D2S_qubit5.pickle` | — | `PREFIX='freq_6d2s_q5_120423'` |
+| `freq_6d2s_q5_290623` | `jobs/active/freq_6d2s_q5_290623.py` | `data/real_private/6D2S/290623_6D2S_qubit5.pickle` | — | `PREFIX='freq_6d2s_q5_290623'` |
+| `freq_6d2s_q6_070623` | `jobs/active/freq_6d2s_q6_070623.py` | `data/real_private/6D2S/070623_6D2S_qubit6.pickle` | — | `PREFIX='freq_6d2s_q6_070623'` |
+| `freq_6d2s_q6_070723` | `jobs/active/freq_6d2s_q6_070723.py` | `data/real_private/6D2S/070723_6D2S_qubit6.pickle` | — | `PREFIX='freq_6d2s_q6_070723'` |
+| `freq_6d2s_q6_080623` | `jobs/active/freq_6d2s_q6_080623.py` | `data/real_private/6D2S/080623_6D2S_qubit6.pickle` | — | `PREFIX='freq_6d2s_q6_080623'` |
+| `freq_6d2s_q6_090623` | `jobs/active/freq_6d2s_q6_090623.py` | `data/real_private/6D2S/090623_6D2S_qubit6.pickle` | — | `PREFIX='freq_6d2s_q6_090623'` |
+| `freq_6d2s_q6_120423` | `jobs/active/freq_6d2s_q6_120423.py` | `data/real_private/6D2S/120423_6D2S_qubit6.pickle` | — | `PREFIX='freq_6d2s_q6_120423'` |
+| `freq_6d2s_q6_290623` | `jobs/active/freq_6d2s_q6_290623.py` | `data/real_private/6D2S/290623_6D2S_qubit6.pickle` | — | `PREFIX='freq_6d2s_q6_290623'` |
 
 ## independence
 
