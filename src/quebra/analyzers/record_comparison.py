@@ -101,6 +101,9 @@ NO_WINDOWS = "no windows at this threshold and side"
 ZERO_VARIANCE = "no death before tau: zero variance, not pooled"
 MIN_POOLED = 3
 NO_DEATHS = "no deaths in either record"
+# Why a descriptive comparison (`compare_pair(test=False)`) has no log-rank and no SE for
+# its difference.
+NO_TEST = "descriptive comparison: no test between the records"
 ZERO_LOGRANK_VARIANCE = (
     "zero log-rank variance: at every death age one record had no window at risk, "
     "or every window at risk died"
@@ -223,7 +226,9 @@ class PairComparison:
 
     The point difference is descriptive; the p and the SE rest on exchangeability.
     `checks_a` / `checks_b` are each record's check-outcome field; no step here fills them,
-    so they read NOT ASSESSED.
+    so they read NOT ASSESSED. `tested` is False for a descriptive comparison
+    (`compare_pair(test=False)`): no log-rank and no SE for the difference, each None with
+    the reason `NO_TEST`.
     """
 
     record_a: str
@@ -249,6 +254,7 @@ class PairComparison:
     interval_standing: str = RESTS_ON_EXCHANGEABILITY
     checks_a: CheckAttachment = field(default_factory=CheckAttachment)
     checks_b: CheckAttachment = field(default_factory=CheckAttachment)
+    tested: bool = True
 
     def check_summary(self) -> str:
         return (
@@ -286,6 +292,7 @@ def compare_pair(
     *,
     tau_rule: str,
     conf_level: float = CONF_LEVEL,
+    test: bool = True,
 ) -> PairComparison:
     """Log-rank test and restricted-mean difference of two records, up to the comparison tau.
 
@@ -297,6 +304,10 @@ def compare_pair(
     comparison tau; the difference's variance is the sum of the two, which holds for
     independent records. Reference: no source located for the test (usually credited to
     Mantel, not opened here).
+
+    With `test=False` the comparison is descriptive: no log-rank and no SE for the
+    difference, each None with the reason `NO_TEST`. Each record's restricted mean and its
+    own interval, and the point difference, are computed as with the test.
 
     Validity assumptions
 
@@ -319,6 +330,7 @@ def compare_pair(
         n_deaths_a=table_a.n_deaths,
         n_windows_b=table_b.n_windows,
         n_deaths_b=table_b.n_deaths,
+        tested=test,
     )
     if tau.excluded:
         reason: str | None = "; ".join(f"{r}: {why}" for r, why in tau.excluded)
@@ -340,7 +352,7 @@ def compare_pair(
     summary_b = curve_summaries(
         table_b, rmst_tau_s=tau.rmst_tau_s, conf_level=conf_level
     )
-    z, p, reason = _logrank(table_a, table_b)
+    z, p, reason = _logrank(table_a, table_b) if test else (None, None, NO_TEST)
     return PairComparison(
         **common,  # type: ignore[arg-type]
         summary_a=summary_a,
@@ -349,7 +361,9 @@ def compare_pair(
         logrank_chi2=None if z is None else z * z,
         logrank_p=p,
         rmst_difference_s=summary_a.rmst_s - summary_b.rmst_s,
-        rmst_difference_se_s=math.hypot(summary_a.rmst_se_s, summary_b.rmst_se_s),
+        rmst_difference_se_s=(
+            math.hypot(summary_a.rmst_se_s, summary_b.rmst_se_s) if test else None
+        ),
         not_computed_reason=None,
         logrank_not_computed_reason=reason,
         checks_a=summary_a.checks,
@@ -938,8 +952,18 @@ def pair_table(
             if record in flags:
                 cells.append((record, "flag", None, flags[record]))
         cells += [
-            (both, quantity, getattr(pair, quantity), pair.not_computed_reason)
-            for quantity in ("rmst_difference_s", "rmst_difference_se_s")
+            (
+                both,
+                "rmst_difference_s",
+                pair.rmst_difference_s,
+                pair.not_computed_reason,
+            ),
+            (
+                both,
+                "rmst_difference_se_s",
+                pair.rmst_difference_se_s,
+                pair.not_computed_reason or (None if pair.tested else NO_TEST),
+            ),
         ]
         cells += [
             (

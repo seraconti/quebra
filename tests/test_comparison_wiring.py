@@ -172,6 +172,8 @@ def test_a_pair_resolves_at_every_rung_and_side_and_its_table_holds_every_number
         for quantity in PAIR_QUANTITIES[1:-1]:
             assert _cell(rows, both, quantity)[0] == getattr(pair, quantity), quantity
         assert _cell(rows, both, "logrank_p")[1] == record_comparison.UNADJUSTED
+        # A tested pair's SE carries no note: only a descriptive pair's says why it is None.
+        assert _cell(rows, both, "rmst_difference_se_s")[1] is None
         for record, summary in (("r1", pair.summary_a), ("r2", pair.summary_b)):
             for quantity in RECORD_QUANTITIES:
                 assert _cell(rows, record, quantity)[0] == getattr(summary, quantity)

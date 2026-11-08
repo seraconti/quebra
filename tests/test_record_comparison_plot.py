@@ -140,6 +140,47 @@ def test_a_pair_figure_has_a_panel_per_rung_and_side_and_says_where_nothing_was_
         plt.close(fig)
 
 
+def test_a_descriptive_pair_draws_its_difference_with_no_se_and_says_why_there_is_no_p() -> (
+    None
+):
+    """Oracle: specification. A descriptive pair (`compare_pair(test=False)`) has no SE and
+    no log-rank; each computed panel prints the difference alone and the reason."""
+    a, b = _carve("a", 0.0), _carve("b", 1.0)
+    tables_a = event_table.event_tables_from_carve(a)
+    tables_b = event_table.event_tables_from_carve(b)
+    pairs = ByThresholdSide(
+        ladder=tables_a.ladder,
+        items={
+            (label, side): record_comparison.compare_pair(
+                tables_a.table(label, side),
+                tables_b.table(label, side),
+                tau_rule=RULE,
+                test=False,
+            )
+            for label in tables_a.ladder
+            for side in event_table.SIDES
+        },
+    )
+    data = record_comparison.build_pair_ladder_data(
+        pairs, a, b, comparison="d", evidence="one synthetic run"
+    )
+    fig = _draw(plot.PairLadderPlot, data)
+    try:
+        panels = {ax.get_title(): ax for ax in fig.axes if ax.get_title()}
+        for (label, side), panel in data.panels.items():
+            words = "in spec" if side == SIDE_IN_SPEC else "out of spec"
+            text = _flat(
+                " ".join(t.get_text() for t in panels[f"{words}, {label}"].texts)
+            )
+            pair = panel.pair
+            assert pair.not_computed_reason is None, (label, side)
+            assert f"a - b = {pair.rmst_difference_s / 60.0:.3g} min" in text, text
+            assert ", SE" not in text, text
+            assert _flat(f"log-rank not computed: {record_comparison.NO_TEST}") in text
+    finally:
+        plt.close(fig)
+
+
 def test_a_pair_caption_says_each_p_is_unadjusted_and_carries_evidence_and_checks(
     pair_data: record_comparison.PairLadderData,
 ) -> None:

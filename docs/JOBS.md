@@ -7,7 +7,7 @@ Every job declares a `JOB_ID` (the logical name `job.include` resolves) and a
 `JOB_FAMILY` (its category). Neither is its directory: a job can move without
 breaking any composite, and recategorising costs one string edit.
 
-108 jobs in 11 families.
+109 jobs in 11 families.
 
 ## check_ledger
 
@@ -123,6 +123,7 @@ breaking any composite, and recategorising costs one string edit.
 
 | JOB_ID | file | datasets | includes | parameters |
 |---|---|---|---|---|
+| `compare_a2_tuna17_tuna9` | `jobs/composite/compare_a2_tuna17_tuna9.py` | — | `cycles_tuna17`<br>`cycles_tuna9` | `COMPARISON='A2 cycles: Tuna-17 vs Tuna-9, restricted means to the shared tau'`<br>`CONF_LEVEL=0.95`<br>`EVIDENCE='two Quantum Inspire devices, each read from its own status export by one cycle rule (analyzers/cycles.py); nothing else is held fixed between them'`<br>`TAU_RULE='min_largest_age'` |
 | `cycles_tuna17` | `jobs/active/cycles_tuna17.py` | `data/real_private/qinspire/Tuna-17_status_history1.csv`<br>`jobs/bench/results/size_table.csv` | — | `PREFIX='cycles_tuna17'`<br>`SEED=20261101`<br>`SPACING_S=30.0` |
 | `cycles_tuna9` | `jobs/active/cycles_tuna9.py` | `data/real_private/qinspire/Tuna-9_status_history1.csv`<br>`jobs/bench/results/size_table.csv` | — | `PREFIX='cycles_tuna9'`<br>`SEED=20261102`<br>`SPACING_S=30.0` |
 | `mtbc_q6` | `jobs/active/mtbc_q6.py` | `data/real_private/calibration_logs/6D2S_qubit6_freq_log.pickle` | — | `PREFIX='mtbc_q6'` |

@@ -113,6 +113,31 @@ def _records() -> list[EventTable]:
     ]
 
 
+def test_a_descriptive_comparison_drops_only_the_inference() -> None:
+    """Oracle: the tested comparison of the same pair. `test=False` leaves out the log-rank
+    and the SE of the difference, with the reason, and changes nothing else: tau, each
+    record's restricted mean and interval, the point difference and the counts."""
+    a, b = _records()[:2]
+    tested = record_comparison.compare_pair(a, b, tau_rule=RULE)
+    plain = record_comparison.compare_pair(a, b, tau_rule=RULE, test=False)
+    assert tested.tested and tested.logrank_p is not None
+    assert not plain.tested
+    for name in ("logrank_z", "logrank_chi2", "logrank_p", "rmst_difference_se_s"):
+        assert getattr(plain, name) is None, name
+    assert plain.logrank_not_computed_reason == record_comparison.NO_TEST
+    left_out = {
+        "logrank_z",
+        "logrank_chi2",
+        "logrank_p",
+        "rmst_difference_se_s",
+        "logrank_not_computed_reason",
+        "tested",
+    }
+    for name in tested.__dataclass_fields__:
+        if name not in left_out:
+            assert getattr(plain, name) == getattr(tested, name), name
+
+
 def test_each_record_interval_is_its_restricted_mean_plus_or_minus_z_se() -> None:
     """Oracle: closed form, rmst +/- z se with z = 1.959963984540054 at 0.95."""
     summary = record_comparison.random_effects_summary(_records(), tau_rule=RULE)

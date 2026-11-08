@@ -123,10 +123,11 @@ def _pair_lines(panel: PairPanel) -> list[str]:
     if pair.not_computed_reason is not None:
         lines.append(f"not computed: {pair.not_computed_reason}")
     else:
-        lines.append(
-            f"a - b = {_minutes(pair.rmst_difference_s)} min, "
-            f"SE {_minutes(pair.rmst_difference_se_s)}"
-        )
+        # A descriptive pair has no SE; its log-rank line below says why.
+        difference = f"a - b = {_minutes(pair.rmst_difference_s)} min"
+        if pair.rmst_difference_se_s is not None:
+            difference += f", SE {_minutes(pair.rmst_difference_se_s)}"
+        lines.append(difference)
         lines.append(
             f"log-rank p = {pair.logrank_p:.2g}"
             if pair.logrank_p is not None
