@@ -7,7 +7,7 @@ Every job declares a `JOB_ID` (the logical name `job.include` resolves) and a
 `JOB_FAMILY` (its category). Neither is its directory: a job can move without
 breaking any composite, and recategorising costs one string edit.
 
-109 jobs in 11 families.
+110 jobs in 11 families.
 
 ## check_ledger
 
@@ -140,6 +140,7 @@ breaking any composite, and recategorising costs one string edit.
 
 | JOB_ID | file | datasets | includes | parameters |
 |---|---|---|---|---|
+| `record_figures_2x2_q1_030723_infidelity` | `jobs/composite/record_figures_2x2_q1_030723_infidelity.py` | `jobs/bench/results/size_table.csv` | `ramsey_2x2_q1_030723` | — |
 | `record_figures_6d2s_q1` | `jobs/composite/record_figures_6d2s_q1.py` | — | `check_ledger_6d2s_q1` | — |
 | `record_figures_6d2s_q2` | `jobs/composite/record_figures_6d2s_q2.py` | — | `check_ledger_6d2s_q2` | — |
 | `record_figures_6d2s_q3` | `jobs/composite/record_figures_6d2s_q3.py` | — | `check_ledger_6d2s_q3` | — |

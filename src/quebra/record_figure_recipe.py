@@ -1,4 +1,5 @@
-"""Record-figure jobs: the figures of every record of one ledger job, one PDF per block.
+"""Record-figure jobs: the figures of every record of one ledger job, one PDF per block,
+and the figures of the infidelity record of one Ramsey job.
 
 A record-figure job includes exactly one ledger job and takes one ref into it, the ledger
 bundle (`ledger_recipe.included_ledger_set`): a composite run without reuse runs an
@@ -22,8 +23,20 @@ job's tables are wired after the records, each written by the `table` target: th
 summaries, one row per record, rung and bag, with the records outside the tables as
 `excluded=`, and the two resolvability tables, every drawn record stacked
 (`wire_resolvability_tables`). A record names its metric (`RecordNodes.metric`, one of
-`METRICS`). A single-record job writes the same two tables for its own tellability with
-`wire_tellability_tables`, and no figure.
+`METRICS`), and every figure prints `RecordNodes.display`, its name in the paper's tables
+and its metric. A single-record job writes the same two tables for its own tellability with
+`wire_tellability_tables`, and no figure; it names its record and metric the same way, read
+off its own graph.
+
+**Infidelity.** `configure_infidelity_record_figure_job` draws every block of the one
+infidelity record of a Ramsey job with fidelity. It includes that job and wires its carve
+through `infidelity_recipe.wire_infidelity_carve`: one ref, to the fidelity result, and the
+|x| windows recomputed with the job's own carve kwargs. The check rows are the battery run
+here on those windows (`ledger_step` with `LEDGER_KNOBS`), materialized: the Ramsey job runs
+no ledger. The record's name in the paper's tables, read off the job's declared Rabi row,
+must equal the name the figure job declares. Whether the bench's size cells, measured on
+synthetic duration arms keyed by event count and clock, transfer to an |x| carve is not
+measured; the rows say which cell they read, as for T2*.
 
 **Tellability.** Each record's tellability is wired once, on the carve's own fit and
 windows, with the carve's kwargs and the standalone jobs' permutation count and seed
@@ -41,12 +54,14 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from quebra.analyzers.check_ledger import CheckLedger
 from quebra.analyzers.compliance_survey import record_compliance
 from quebra.analyzers.check_outcome import RowKey
-from quebra.analyzers.kaplan_meier import CONF_LEVEL
+from quebra.analyzers.fidelity import FidelityResult
+from quebra.analyzers.kaplan_meier import CONF_LEVEL, KaplanMeierSet
 from quebra.analyzers.record_figure import (
     RESOLVABILITY_TABLES,
     assemble_record_figure,
@@ -67,11 +82,14 @@ from quebra.analyzers.record_figure import (
 )
 from quebra.analyzers.t2star import T2StarResult
 from quebra.analyzers.tellability import TellabilityResult
+from quebra.analyzers.within_calibration_data import WithinCalibrationPanelData
 from quebra.analyzers.windows import WindowsResult
 from quebra.core.dataset import Dataset
 from quebra.core.job import Job
 from quebra.core.types import RecordFailure
 from quebra.ledger_recipe import (
+    LEDGER_DATA_SUFFIX,
+    LEDGER_KNOBS,
     CheckLedgers,
     collect_carves,
     included_ledger_set,
@@ -87,10 +105,21 @@ from quebra.plots.record_figure_plot import (
     SurvivalBlockPlot,
     TimelineBlockPlot,
 )
-from quebra.recipes import XI_SEED, wire_t2star_carve
+from quebra.infidelity_recipe import (
+    CARVE_KWARGS,
+    paper_record_name,
+    wire_infidelity_carve,
+)
+from quebra.recipes import (
+    XI_SEED,
+    _fidelity_panel_data,
+    wire_t2star_carve,
+)
 from quebra.tellability_recipe import (
     TELLABILITY_PERMUTATIONS,
     TELLABILITY_SEED,
+    _frequency_tellability,
+    _infidelity_tellability,
     _t2star_tellability,
 )
 
@@ -99,26 +128,29 @@ TABLE_TARGETS = ["table"]
 # The T2* panel data's shape statistic needs this many reads per window, the value
 # `recipes.configure_t2star_job` uses, so the timelines read the T2* panels' own states.
 SHAPE_MIN_READS = 5
-# The carve kwargs a ledger job's windows node carries, which the figure job carves with.
-CARVE_KWARGS = ("gap_mult", "k", "use_uncertainty", "thresholds")
 # The metrics a record figure draws, as `tellability` names them.
 METRICS = ("t2star", "infidelity")
+# How a figure names each metric in its titles and captions (`RecordNodes.display`).
+METRIC_LABELS = {"t2star": "T2*", "frequency": "frequency", "infidelity": "infidelity"}
 
 
 @dataclass(frozen=True)
 class RecordNodes:
-    """What every block of one record is wired from: the record's run name, its carve held
-    to its ledger, its ledger, the run-set the ledger ran, and its flag text (empty unless
-    the paper's tables shade it).
+    """What every block of one record is wired from: the record's name in the paper's
+    tables, which names its nodes and figures; its run name, the `dataset_id` its artifacts
+    carry (the same string for a 6D2S record); its carve held to its ledger, its ledger, the
+    run-set the ledger ran, and its flag text (empty unless the paper's tables shade it).
 
     `fit` and `windows` are the carve's own fit and windows nodes, and `carve_kwargs` the
     kwargs it was carved with. A step that must trace to observed reads alone, as
     `tests/test_windows_not_interpolated.py` holds a tellability step to, is wired on these:
     `carve` descends from the ledger bundle too. The cross-check still stands behind it,
     since the runner computes every node before any sink. `metric` names what the record
-    measures (`METRICS`) and `tellability` is its one tellability node."""
+    measures (`METRICS`) and `tellability` is its one tellability node. `display` is what
+    every figure prints: the record's name and its metric's label (`METRIC_LABELS`)."""
 
     record: str
+    run_name: str
     carve: object
     ledger: object
     run_set: tuple[RowKey, ...]
@@ -134,6 +166,10 @@ class RecordNodes:
             raise ValueError(
                 f"{self.record}: metric {self.metric!r} is not one of {METRICS}"
             )
+
+    @property
+    def display(self) -> str:
+        return f"{self.record}, {METRIC_LABELS[self.metric]}"
 
 
 def ledger_of(ledgers: CheckLedgers, *, record: str) -> CheckLedger:
@@ -170,6 +206,7 @@ def wire_survival_block(job: Job, nodes: RecordNodes) -> object:
         run_set=nodes.run_set,
         conf_level=CONF_LEVEL,
         flag=nodes.flag,
+        display=nodes.display,
     )
     job.figure(
         SurvivalBlockPlot, block, targets=TARGETS, title=f"{nodes.record} survival"
@@ -194,6 +231,7 @@ def wire_hazard_block(job: Job, nodes: RecordNodes) -> object:
         run_set=nodes.run_set,
         conf_level=CONF_LEVEL,
         flag=nodes.flag,
+        display=nodes.display,
     )
     job.figure(
         HazardBlockPlot,
@@ -222,6 +260,7 @@ def wire_fraction_block(job: Job, nodes: RecordNodes) -> object:
         nodes.carve,
         name=f"fraction_block_{nodes.record}",
         flag=nodes.flag,
+        display=nodes.display,
     )
     job.figure(
         FractionBlockPlot,
@@ -267,6 +306,38 @@ def t2star_tellability_of(
         )
 
 
+def infidelity_tellability_of(
+    result: FidelityResult | RecordFailure,
+    windows: WindowsResult | RecordFailure,
+    *,
+    thresholds: Sequence[Sequence[object]],
+    gap_mult: float,
+    n_permutations: int,
+    seed: int,
+) -> TellabilityResult | RecordFailure:
+    """The tellability of an infidelity record (`tellability_recipe._infidelity_tellability`,
+    which reads k off the windows, so it takes no `unsure_k`). Failures pass through and a
+    ValueError becomes a `RecordFailure` of the stage `tellability`, as for T2*."""
+    for upstream in (windows, result):
+        if isinstance(upstream, RecordFailure):
+            return upstream
+    try:
+        return _infidelity_tellability(
+            result,
+            windows,
+            thresholds=thresholds,
+            gap_mult=gap_mult,
+            n_permutations=n_permutations,
+            seed=seed,
+        )
+    except ValueError as exc:
+        return RecordFailure(
+            dataset_id=str(windows.meta["dataset_id"]),
+            stage="tellability",
+            reason=f"{type(exc).__name__}: {exc}"[:300],
+        )
+
+
 def check_tellability_kwargs(
     record: str, carve_kwargs: Mapping[str, Any], *, n_permutations: int, seed: int
 ) -> None:
@@ -300,6 +371,8 @@ def wire_resolvability_block(job: Job, nodes: RecordNodes) -> object:
         nodes.tellability,
         name=f"resolvability_block_{nodes.record}",
         flag=nodes.flag,
+        display=nodes.display,
+        paper_name=nodes.record,
     )
     job.figure(
         ResolvabilityBlockPlot,
@@ -310,36 +383,79 @@ def wire_resolvability_block(job: Job, nodes: RecordNodes) -> object:
     return block
 
 
+def fidelity_panel_data_of(
+    result: FidelityResult | RecordFailure,
+    carve: WindowsResult | RecordFailure,
+    km: KaplanMeierSet | RecordFailure,
+    *,
+    xi_seed: int,
+    thresholds: tuple[tuple[str, float, bool], ...],
+) -> WithinCalibrationPanelData | RecordFailure:
+    """The record's infidelity panel data, built as the Ramsey jobs build it
+    (`recipes._fidelity_panel_data`, which reads k and use_uncertainty off the carve); the
+    first failure of its inputs passes through."""
+    for upstream in (result, carve, km):
+        if isinstance(upstream, RecordFailure):
+            return upstream
+    if not (
+        isinstance(result, FidelityResult)
+        and isinstance(carve, WindowsResult)
+        and isinstance(km, KaplanMeierSet)
+    ):
+        raise TypeError(
+            "infidelity panel data needs a fidelity result, its carve and its "
+            "Kaplan-Meier set"
+        )
+    return _fidelity_panel_data(
+        result, carve, km, xi_seed=xi_seed, thresholds=list(thresholds)
+    )
+
+
 def wire_timeline_block(job: Job, nodes: RecordNodes) -> object:
-    """The timeline block: read state by rung from the record's T2* panel data, built as
-    the T2* jobs build it on the carve held to the ledger, the culled rungs named."""
+    """The timeline block: read state by rung from the record's panel data, built as the
+    record's own metric job builds it (`panel_data_of` for T2*, `fidelity_panel_data_of`
+    for the infidelity) on the carve held to the ledger, the culled rungs named."""
     km = job.step(
         kaplan_meier_of,
         nodes.carve,
         name=f"kaplan_meier_panel_{nodes.record}",
         conf_level=CONF_LEVEL,
     )
-    panel = job.step(
-        panel_data_of,
-        nodes.fit,
-        nodes.carve,
-        km,
-        name=f"panel_data_{nodes.record}",
-        shape_min_reads=SHAPE_MIN_READS,
-        xi_seed=XI_SEED,
-        k=nodes.carve_kwargs["k"],
-        use_uncertainty=nodes.carve_kwargs["use_uncertainty"],
-        thresholds=tuple(
-            (str(lb), float(v), bool(b))
-            for lb, v, b in nodes.carve_kwargs["thresholds"]
-        ),
+    thresholds = tuple(
+        (str(lb), float(v), bool(b)) for lb, v, b in nodes.carve_kwargs["thresholds"]
     )
+    if nodes.metric == "t2star":
+        panel = job.step(
+            panel_data_of,
+            nodes.fit,
+            nodes.carve,
+            km,
+            name=f"panel_data_{nodes.record}",
+            shape_min_reads=SHAPE_MIN_READS,
+            xi_seed=XI_SEED,
+            k=nodes.carve_kwargs["k"],
+            use_uncertainty=nodes.carve_kwargs["use_uncertainty"],
+            thresholds=thresholds,
+        )
+    elif nodes.metric == "infidelity":
+        panel = job.step(
+            fidelity_panel_data_of,
+            nodes.fit,
+            nodes.carve,
+            km,
+            name=f"panel_data_{nodes.record}",
+            xi_seed=XI_SEED,
+            thresholds=thresholds,
+        )
+    else:
+        raise ValueError(f"{nodes.record}: no panel data step for {nodes.metric!r}")
     block = job.step(
         build_timeline_block,
         panel,
         name=f"timeline_block_{nodes.record}",
-        record=nodes.record,
+        record=nodes.run_name,
         flag=nodes.flag,
+        display=nodes.display,
     )
     job.figure(
         TimelineBlockPlot, block, targets=TARGETS, title=f"{nodes.record} timelines"
@@ -368,12 +484,49 @@ def wire_resolvability_tables(job: Job, blocks: Sequence[object]) -> None:
         )
 
 
+# The metric of each tellability step a single-record job writes tables for.
+_TELLABILITY_METRIC = {
+    _t2star_tellability: "t2star",
+    _frequency_tellability: "frequency",
+    _infidelity_tellability: "infidelity",
+}
+
+
+def _single_record_names(job: Job, tellability: object) -> tuple[str, str]:
+    """The `display` and `paper_name` of a single-record job's tables, read off its graph:
+    the metric of its tellability step, and the paper's name for the record its Dataset
+    declares (device, qubit and `run_date`, by `infidelity_recipe.paper_record_name`)."""
+    node = job.dag[tellability.node_id]  # type: ignore[attr-defined]
+    if node.fn not in _TELLABILITY_METRIC:
+        raise ValueError(f"{node.node_id!r} is not a tellability step")
+    load = node
+    while "dataset" not in load.kwargs:
+        load = job.dag[load.inputs[0].node_id]
+    dataset = load.kwargs["dataset"]
+    if "run_date" not in dataset.extra:
+        raise ValueError(f"{job.name}: its record's Dataset declares no run_date")
+    name = paper_record_name(
+        str(dataset.device),
+        int(dataset.qubit),
+        date.fromisoformat(str(dataset.extra["run_date"])),
+    )
+    return f"{name}, {METRIC_LABELS[_TELLABILITY_METRIC[node.fn]]}", name
+
+
 def wire_tellability_tables(job: Job, tellability: object) -> object:
     """The resolvability tables of a single-record job's tellability, as the figure jobs
     write them: the block built on `tellability` (a `wire_*_tellability` node), then its two
-    tables by the `table` target. No figure is drawn. Returns the block node."""
+    tables by the `table` target. No figure is drawn. The block's `display` and
+    `paper_name` are read off the job's graph (`_single_record_names`). Returns the block
+    node."""
+    display, paper_name = _single_record_names(job, tellability)
     block = job.step(
-        build_resolvability_block, tellability, name="resolvability_block", flag=""
+        build_resolvability_block,
+        tellability,
+        name="resolvability_block",
+        flag="",
+        display=display,
+        paper_name=paper_name,
     )
     wire_resolvability_tables(job, [block])
     return block
@@ -415,7 +568,54 @@ def wire_record_summaries(job: Job, nodes: RecordNodes) -> object:
         run_set=nodes.run_set,
         conf_level=CONF_LEVEL,
         flag=nodes.flag,
+        paper_name=nodes.record,
     )
+
+
+def _wire_record(job: Job, nodes: RecordNodes) -> tuple[object, object | None]:
+    """Every block of one record, its page, then its curve summaries; returns the summaries
+    node and the resolvability block node, which the job's tables read."""
+    wired = {block: block(job, nodes) for block in BLOCKS}
+    # `BLOCKS` and `PAGE_ORDER` hold the same blocks (tests/test_record_figure.py); a
+    # registry swapped for a test draws no page.
+    if all(block in wired for block in PAGE_ORDER):
+        page = job.step(
+            assemble_record_figure,
+            *(wired[block] for block in PAGE_ORDER),  # type: ignore[arg-type]
+            name=f"record_figure_{nodes.record}",
+            record=nodes.run_name,
+        )
+        job.figure(
+            RecordFigurePlot,
+            page,
+            targets=TARGETS,
+            title=f"{nodes.record} record figure",
+        )
+    return wire_record_summaries(job, nodes), wired.get(wire_resolvability_block)
+
+
+def _wire_job_tables(
+    job: Job,
+    summaries: Sequence[object],
+    resolvability: Sequence[object | None],
+    *,
+    excluded: tuple[str, ...],
+) -> None:
+    """The job's tables: the curve summaries of its records, then the records outside the
+    paper's tables as `excluded`, and the two resolvability tables."""
+    table = job.step(
+        summaries_table,
+        *summaries,  # type: ignore[arg-type]
+        name="curve_summaries_table",
+        excluded=excluded,
+    )
+    job.figure(
+        SummariesTablePlot,
+        table,
+        targets=TABLE_TARGETS,
+        title=f"{job.name} curve summaries",
+    )
+    wire_resolvability_tables(job, [node for node in resolvability if node is not None])
 
 
 @dataclass(frozen=True)
@@ -531,6 +731,7 @@ def configure_record_figure_job(
         )
         nodes = RecordNodes(
             record=record,
+            run_name=record,
             carve=carve,
             ledger=ledger,
             run_set=run_set,
@@ -541,32 +742,89 @@ def configure_record_figure_job(
             metric="t2star",
             tellability=tellability,
         )
-        wired = {block: block(job, nodes) for block in BLOCKS}
-        if wire_resolvability_block in wired:
-            resolvability.append(wired[wire_resolvability_block])
-        # `BLOCKS` and `PAGE_ORDER` hold the same blocks (tests/test_record_figure.py); a
-        # registry swapped for a test draws no page.
-        if all(block in wired for block in PAGE_ORDER):
-            page = job.step(
-                assemble_record_figure,
-                *(wired[block] for block in PAGE_ORDER),  # type: ignore[arg-type]
-                name=f"record_figure_{record}",
-                record=record,
-            )
-            job.figure(
-                RecordFigurePlot, page, targets=TARGETS, title=f"{record} record figure"
-            )
-        summaries.append(wire_record_summaries(job, nodes))
-    table = job.step(
-        summaries_table,
-        *summaries,  # type: ignore[arg-type]
-        name="curve_summaries_table",
+        summary, block = _wire_record(job, nodes)
+        summaries.append(summary)
+        resolvability.append(block)
+    _wire_job_tables(
+        job,
+        summaries,
+        resolvability,
         excluded=tuple(record for record in records if record not in listed),
     )
-    job.figure(
-        SummariesTablePlot,
-        table,
-        targets=TABLE_TARGETS,
-        title=f"{job.name} curve summaries",
+
+
+def configure_infidelity_record_figure_job(
+    job: Job,
+    *,
+    included: Any,
+    record: str,
+    paper_records: Sequence[tuple[str, str]],
+    shaded: Sequence[str],
+    flag_text: str,
+    bench_size_table: Dataset,
+    ledger_knobs: Mapping[str, object] = LEDGER_KNOBS,
+    tellability_permutations: int = TELLABILITY_PERMUTATIONS,
+) -> None:
+    """Every block of the infidelity record of the Ramsey job `included` (the return of
+    `job.include`), one figure per block, and the job's tables (module docstring). `record`
+    is the record's name in the paper's tables; it must be the name the job's declared Rabi
+    row gives and a row of `paper_records`. `ledger_knobs` and `tellability_permutations`
+    are the ledger jobs' and the standalone jobs' unless a test lowers them."""
+    if set(ledger_knobs) != set(LEDGER_KNOBS):
+        raise ValueError(
+            f"ledger_knobs must name {sorted(LEDGER_KNOBS)}, got {sorted(ledger_knobs)}"
+        )
+    infidelity = wire_infidelity_carve(job, included)
+    if infidelity.paper_name != record:
+        raise ValueError(
+            f"{included.alias}: its declared Rabi row names the record "
+            f"{infidelity.paper_name!r}, not {record!r}"
+        )
+    if (infidelity.device, record) not in set(paper_records):
+        raise ValueError(
+            f"{record!r} is not a {infidelity.device} record of the paper's tables"
+        )
+    result, windows = infidelity.result, infidelity.windows
+    carve_kwargs = infidelity.carve_kwargs
+    run_name = infidelity.run_name
+    ledger = job.step(
+        ledger_step,
+        windows,
+        job.load_df(bench_size_table),
+        name=f"check_ledger_{record}",
+        thresholds=carve_kwargs["thresholds"],
+        **ledger_knobs,
     )
-    wire_resolvability_tables(job, resolvability)
+    job.materialize(ledger, name=f"{record}{LEDGER_DATA_SUFFIX}")
+    carve = job.step(checked_carve, windows, ledger, name=f"checked_carve_{record}")
+    check_tellability_kwargs(
+        record,
+        carve_kwargs,
+        n_permutations=tellability_permutations,
+        seed=TELLABILITY_SEED,
+    )
+    tellability = job.step(
+        infidelity_tellability_of,
+        result,
+        windows,
+        name=f"tellability_infidelity_{record}",
+        thresholds=carve_kwargs["thresholds"],
+        gap_mult=carve_kwargs["gap_mult"],
+        n_permutations=tellability_permutations,
+        seed=TELLABILITY_SEED,
+    )
+    nodes = RecordNodes(
+        record=record,
+        run_name=run_name,
+        carve=carve,
+        ledger=ledger,
+        run_set=ledger_run_set(include_c3=bool(ledger_knobs["include_c3"])),
+        flag=flag_text if record in shaded else "",
+        fit=result,
+        windows=windows,
+        carve_kwargs=carve_kwargs,
+        metric="infidelity",
+        tellability=tellability,
+    )
+    summary, block = _wire_record(job, nodes)
+    _wire_job_tables(job, [summary], [block], excluded=())

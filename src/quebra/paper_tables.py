@@ -3,8 +3,10 @@
 Capannelli et al., Supplementary notes, Supplementary Fig. 10 (6D2S, p. 10) and
 Supplementary Fig. 11 (2x2, p. 11) list the released records and shade some of them. A leaf
 that imports nothing, so any layer can import it. Jobs import it and pass the flag text, the
-record list and the shaded rows to their steps as kwargs. Records are named by run name,
-the ledger's `dataset_id`.
+record list and the shaded rows to their steps as kwargs. Records are named as the ledger
+jobs name them, each ledger's `dataset_id`. A job that names a record otherwise, as the 2x2
+Ramsey jobs do with their run names, maps it to its table name
+(`infidelity_recipe.paper_record_name`).
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ TABLE_SOURCE = (
     "Supplementary Fig. 11 (2x2, p. 11)"
 )
 
-# The paper's dataset tables as (device, run name), table order. Supplementary Fig. 10 for
+# The paper's dataset tables as (device, record name), table order. Supplementary Fig. 10 for
 # 6D2S, 24 rows; Supplementary Fig. 11 for 2x2, 22 rows. All dates are 2023.
 PAPER_RECORDS = (
     ("6D2S", "q1_040423"), ("6D2S", "q1_050423"), ("6D2S", "q1_070423"),

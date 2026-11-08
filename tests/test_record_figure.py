@@ -74,6 +74,7 @@ from quebra.analyzers.survival import (
     curve_summaries_set,
     nelson_aalen_set,
 )
+from quebra.core.dataset import Dataset
 from quebra.core.job import Job, _import_job
 from quebra.core.reference import ArtifactRef
 from quebra.core.runner import run_job
@@ -82,26 +83,33 @@ from quebra.analyzers.tellability import (
     MAX_AUTOCORR_LAG,
     METRIC_GROUPS,
     THRESHOLD_GROUPS,
+    CrossingCounts,
 )
 from quebra.core.types import RecordFailure
-from quebra.ledger_recipe import LEDGER_KNOBS, ledger_step
+from quebra.ledger_recipe import LEDGER_DATA_SUFFIX, LEDGER_KNOBS, ledger_step
 from quebra.paper_tables import FLAG_TEXT, PAPER_RECORDS, SHADED
 from quebra.plots.record_figure_plot import (
     BOUNDS_GID,
     CELL_GID,
     CROSSING_GID,
+    CROSSING_KINDS,
     FRACTION_GID,
     FractionBlockPlot,
     TimelineBlockPlot,
     HazardBlockPlot,
     LIMIT_DASHES,
     NOT_COMPUTED_GID,
+    NOT_PLACED_GID,
     NO_BOUNDS_GID,
     RecordFigurePlot,
     ResolvabilityBlockPlot,
     SummariesTablePlot,
     SurvivalBlockPlot,
     ZERO_RATIO_GID,
+    _PANEL_H,
+    _PANEL_W,
+    _draw_crossings,
+    _resolvability_caption,
 )
 from quebra.panels.within_calibration import WithinCalibrationPanel
 from quebra.plots import record_figure_plot
@@ -113,16 +121,21 @@ from quebra.record_figure_recipe import (
     PAGE_ORDER,
     RecordNodes,
     check_tellability_kwargs,
+    configure_infidelity_record_figure_job,
     configure_record_figure_job,
+    fidelity_panel_data_of,
+    infidelity_tellability_of,
     t2star_tellability_of,
 )
-from quebra.recipes import T2STAR_THRESHOLDS, XI_SEED
+from quebra.recipes import T2STAR_THRESHOLDS, XI_SEED, _fidelity_windows
 from quebra.tellability_recipe import TELLABILITY_PERMUTATIONS, TELLABILITY_SEED
 from tests.test_compliance_survey import _carve, _track912_csv
 
 REPO = Path(__file__).resolve().parents[1]
 BENCH = REPO / "jobs" / "bench" / "results" / "size_table.csv"
 RECORD = "q1_020423"
+# What every block of RECORD prints (`RecordNodes.display`).
+DISPLAY = f"{RECORD}, T2*"
 FIGURE_JOBS = sorted((REPO / "jobs" / "composite").glob("record_figures_6d2s_q*.py"))
 
 
@@ -150,6 +163,7 @@ def _block(km: object, ledger: CheckLedger, flag: str = "") -> object:
         run_set=ledger_run_set(include_c3=False),
         conf_level=CONF_LEVEL,
         flag=flag,
+        display=DISPLAY,
     )
 
 
@@ -356,7 +370,7 @@ def test_the_survival_block_draws_its_artifact(scored) -> None:
         assert drawn_cells == expected_cells
         drawn = "\n".join(t.get_text() for t in fig.findobj(Text))
         assert FLAG_TEXT in drawn
-        assert f"Window survival by rung, {RECORD}" in drawn
+        assert f"Window survival by rung, {DISPLAY}" in drawn
     finally:
         plt.close(fig)
 
@@ -396,6 +410,7 @@ def _hazard_block(carve: object, ledger: CheckLedger, flag: str = "") -> object:
         run_set=ledger_run_set(include_c3=False),
         conf_level=CONF_LEVEL,
         flag=flag,
+        display=DISPLAY,
     )
 
 
@@ -518,6 +533,7 @@ def _summaries(scored: SimpleNamespace, level: float, flag: str = "") -> object:
         run_set=ledger_run_set(include_c3=False),
         conf_level=level,
         flag=flag,
+        paper_name=RECORD,
     )
 
 
@@ -544,6 +560,7 @@ def test_each_summaries_row_is_its_items_fields(scored) -> None:
         run_set=ledger_run_set(include_c3=False),
         conf_level=CONF_LEVEL,
         flag="",
+        paper_name="q1_030423",
     )
     notes: set[str] = set()
     for level in (0.95, 0.90):
@@ -630,6 +647,7 @@ def test_each_summaries_row_is_its_items_fields(scored) -> None:
     table = summaries_table(
         RecordSummaries(
             dataset_id="hand",
+            paper_name="hand",
             flag="",
             failure="",
             ladder=("a",),
@@ -690,7 +708,7 @@ def test_the_fraction_block_is_the_compliance_surveys_numbers_for_its_record(
     the observed time leaves out are counted; a failed record has every rung not computed
     and no gap count; the compliance of another record is refused."""
     survey = record_compliance(scored.carve, T2STAR_THRESHOLDS)
-    block = build_fraction_block(survey, scored.carve, flag="")
+    block = build_fraction_block(survey, scored.carve, flag="", display=DISPLAY)
     assert block.ladder == tuple(label for label, _, _ in T2STAR_THRESHOLDS)
     for i, rung in enumerate(survey.rungs):
         assert (block.fraction[i], block.lower[i], block.upper[i]) == (
@@ -707,7 +725,7 @@ def test_the_fraction_block_is_the_compliance_surveys_numbers_for_its_record(
     assert block.gap_h == pytest.approx(sum(hi - lo for lo, hi in spans) / 3600.0)
     failure = RecordFailure(dataset_id=RECORD, stage="t2star", reason="ValueError: x")
     failed = build_fraction_block(
-        record_compliance(failure, T2STAR_THRESHOLDS), failure, flag=""
+        record_compliance(failure, T2STAR_THRESHOLDS), failure, flag="", display=DISPLAY
     )
     assert failed.failure == failure.note() and failed.n_gaps is None
     assert set(failed.fraction) == {None}
@@ -716,6 +734,7 @@ def test_the_fraction_block_is_the_compliance_surveys_numbers_for_its_record(
             survey,
             RecordFailure(dataset_id="q9_010101", stage="t2star", reason="x"),
             flag="",
+            display=DISPLAY,
         )
 
 
@@ -727,6 +746,7 @@ def test_the_fraction_block_draws_its_artifact() -> None:
     in the axes and the flag reaches the caption."""
     data = FractionBlockData(
         dataset_id=RECORD,
+        display=DISPLAY,
         flag=FLAG_TEXT,
         failure="",
         ladder=("a", "b", "c"),
@@ -807,7 +827,7 @@ def test_the_timeline_block_draws_the_rungs_todays_panel_draws(scored) -> None:
     unmeasured at three rungs; each drawn rung's states and first read out of spec are the
     panel data's own."""
     panel = _panel(scored)
-    block = build_timeline_block(panel, record=RECORD, flag="")
+    block = build_timeline_block(panel, record=RECORD, flag="", display=DISPLAY)
     drawn, _title = _panel_drawn_rungs(panel)
     assert list(block.drawn) == drawn
     assert block.culled_below, "premise: the synthetic record culls a rung"
@@ -826,7 +846,7 @@ def test_the_timeline_block_draws_the_rungs_todays_panel_draws(scored) -> None:
     edited.reliability.occupancy.update(
         {first: 0.07, second: 0.03, third: float("nan")}
     )
-    block = build_timeline_block(edited, record=RECORD, flag="")
+    block = build_timeline_block(edited, record=RECORD, flag="", display=DISPLAY)
     drawn, title = _panel_drawn_rungs(edited)
     assert list(block.drawn) == drawn and first in drawn
     assert second in block.culled_below and block.culled_unmeasured == (third,)
@@ -840,7 +860,9 @@ def test_the_timeline_block_draws_its_artifact(scored) -> None:
     states above and the two below; each rung's first read out of spec sits beside it; the
     culled rungs are named on the title when they fit and listed under the lower axes when
     they do not."""
-    block = build_timeline_block(_panel(scored), record=RECORD, flag=FLAG_TEXT)
+    block = build_timeline_block(
+        _panel(scored), record=RECORD, flag=FLAG_TEXT, display=DISPLAY
+    )
     fig = TimelineBlockPlot("timelines").build_matplotlib(block)
     try:
         upper, lower = [
@@ -871,7 +893,8 @@ def test_the_timeline_block_draws_its_artifact(scored) -> None:
     finally:
         plt.close(fig)
     many = TimelineBlockData(
-        dataset_id=RECORD, flag="", failure="", ladder=tuple("abcdefghijklmnop"),
+        dataset_id=RECORD, display=DISPLAY, flag="", failure="",
+        ladder=tuple("abcdefghijklmnop"),
         drawn=("a",), culled_below=tuple(f"rung {c}" for c in "bcdefghijklm"),
         culled_unmeasured=("rung n", "rung o", "rung p"), states_4={"a": ((0.0, 1.0, "in_spec"),)},
         states_2={"a": ((0.0, 1.0, "in_spec"),)}, first_out_h={"a": None}, t_min_h=0.0,
@@ -996,6 +1019,102 @@ def test_a_listed_record_its_ledger_job_does_not_hold_raises() -> None:
         )
 
 
+NO_CROSSING = "not computed: no down-crossing at this threshold"
+
+
+def _crossings(counts: dict[str, tuple[CrossingCounts, ...]]) -> SimpleNamespace:
+    """By hand, the fields the crossing panel and the caption read: a rung with no counts
+    reads `not computed` with the tellability's reason."""
+    ladder = tuple(counts)
+    return SimpleNamespace(
+        ladder=ladder,
+        crossing_counts=counts,
+        crossing_status={
+            k: "computed" if c else NO_CROSSING for k, c in counts.items()
+        },
+        confidence_levels=(1.0, 2.0),
+        count_ratio=dict.fromkeys(ladder, ()),
+        decimation_ladder=(1, 2, 3, 5, 8, 13, 20),
+        frequency_hz=np.zeros(0),
+        dataset_id="hand",
+        metric_key="t2star",
+        display="hand, T2*",
+        value_key="t2star_s",
+        threshold_value_key="t2star_s",
+        flag="",
+    )
+
+
+def _pair(
+    k1: tuple[int, int, int], k2: tuple[int, int, int]
+) -> tuple[CrossingCounts, ...]:
+    return (CrossingCounts(1.0, *k1), CrossingCounts(2.0, *k2))
+
+
+@pytest.mark.unit
+def test_the_crossing_legend_names_every_kind_when_the_first_rung_is_not_computed() -> (
+    None
+):
+    """Oracle: the three kinds the bars stack. With the first rung's crossing counts not
+    computed, the legend still names clean, merged and unbracketed, each from the first
+    bar of its kind drawn."""
+    data = _crossings(
+        {"a": (), "b": _pair((3, 2, 1), (2, 2, 2)), "c": _pair((1, 1, 1), (0, 1, 2))}
+    )
+    fig, ax = plt.subplots()
+    try:
+        _draw_crossings(ax, data, "default")  # type: ignore[arg-type]
+        assert [t.get_text() for t in ax.get_legend().get_texts()] == list(
+            CROSSING_KINDS
+        )
+    finally:
+        plt.close(fig)
+
+
+@pytest.mark.unit
+def test_a_rung_whose_crossings_were_not_computed_is_marked_and_named_in_the_caption() -> (
+    None
+):
+    """Oracle: the panel's own text boxes, and the caption. The first rung's counts not
+    computed, under low bars on the left and tall ones on the right (so the legend sits
+    upper left): the rung is marked x on its baseline, no two texts of the panel overlap,
+    and the caption names the rung with its reason."""
+    data = _crossings(
+        {
+            "2 us": (),
+            "3 us": _pair((1, 0, 1), (0, 1, 1)),
+            "4 us": _pair((1, 1, 0), (1, 0, 1)),
+            "5 us": _pair((20, 10, 8), (12, 15, 11)),
+            "6 us": _pair((25, 9, 6), (18, 12, 10)),
+        }
+    )
+    fig = plt.figure(figsize=(_PANEL_W, _PANEL_H), layout="constrained")
+    ax = fig.add_subplot(1, 1, 1)
+    try:
+        _draw_crossings(ax, data, "default")  # type: ignore[arg-type]
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        # The legend is one box, handles included; its own texts sit inside it.
+        legend = ax.get_legend()
+        inside = {id(t) for t in legend.get_texts()}
+        boxes = [
+            (t.get_text(), t.get_window_extent(renderer))
+            for t in ax.findobj(Text)
+            if t.get_visible() and t.get_text() and id(t) not in inside
+        ]
+        boxes.append(("legend", legend.get_window_extent(renderer)))
+        for i, (a, box_a) in enumerate(boxes):
+            for b, box_b in boxes[i + 1 :]:
+                assert not box_a.overlaps(box_b), (a, b)
+        (mark,) = [line for line in ax.get_lines() if line.get_gid() == NOT_PLACED_GID]
+        assert mark.get_visible()
+        assert (list(mark.get_xdata()), list(mark.get_ydata())) == ([0], [0.0])
+        caption = _resolvability_caption(data)  # type: ignore[arg-type]
+        assert "2 us (no down-crossing at this threshold)" in caption, caption
+    finally:
+        plt.close(fig)
+
+
 @pytest.fixture(scope="module")
 def told(tmp_path_factory) -> SimpleNamespace:
     """A synthetic record's T2* fit, real carve and real tellability, at 19 permutations."""
@@ -1040,7 +1159,9 @@ def test_g10_recomputed_from_the_stored_spectrum_and_top_decade_is_the_stored_g1
     """Oracle: G10's definition, written out in the test. The block stores the spectrum and
     the decade G10 reads; G10 recomputed on them equals the G10 in the record's table, and
     the decade is the one below the last grid frequency."""
-    block = build_resolvability_block(told.tellability, flag="")
+    block = build_resolvability_block(
+        told.tellability, flag="", display=DISPLAY, paper_name=RECORD
+    )
     lower, upper = block.top_decade_hz
     assert upper == block.frequency_hz[-1]
     recomputed = _g10_by_definition(block.frequency_hz, block.spectrum_per_hz, lower)
@@ -1059,7 +1180,9 @@ def test_the_block_and_its_tables_carry_the_tellability_it_reads(told) -> None:
     statuses and DEC-12a's one sentence."""
     tellability = told.tellability
     metric = tellability.metric
-    block = build_resolvability_block(tellability, flag="shaded")
+    block = build_resolvability_block(
+        tellability, flag="shaded", display=DISPLAY, paper_name=RECORD
+    )
     np.testing.assert_array_equal(block.frequency_hz, metric.spectrum_frequency_hz)
     np.testing.assert_array_equal(block.spectrum_per_hz, metric.spectrum_per_hz)
     assert block.band_edge_hz == metric.band_edge_hz
@@ -1126,7 +1249,10 @@ def test_the_block_and_its_tables_carry_the_tellability_it_reads(told) -> None:
     first = tellability.thresholds[0]
     short = dataclasses.replace(first, in_spec_autocorr=first.in_spec_autocorr[:3])
     table = build_resolvability_block(
-        dataclasses.replace(tellability, thresholds=(short,)), flag=""
+        dataclasses.replace(tellability, thresholds=(short,)),
+        flag="",
+        display=DISPLAY,
+        paper_name=RECORD,
     ).per_threshold
     assert [table.loc[0, f"in_spec_autocorr_lag{lag}"] for lag in (1, 2, 3)] == list(
         short.in_spec_autocorr
@@ -1174,6 +1300,8 @@ def test_a_group_the_tellability_did_not_compute_shows_its_status(told) -> None:
     block = build_resolvability_block(
         dataclasses.replace(tellability, metric=metric, thresholds=tuple(thresholds)),
         flag="",
+        display=DISPLAY,
+        paper_name=RECORD,
     )
     assert block.spectrum_status == reason and block.g10_status == reason
     assert block.frequency_hz.size == 0 and block.spectrum_per_hz.size == 0
@@ -1206,7 +1334,8 @@ def test_a_group_the_tellability_did_not_compute_shows_its_status(told) -> None:
     fig = ResolvabilityBlockPlot("status").build_matplotlib(block)
     texts = [t.get_text() for t in fig.findobj(Text)]
     assert any("spectrum not computed: zero variance" in t for t in texts)
-    assert any(t == "no down-crossing at this threshold" for t in texts)
+    caption = fig._supxlabel.get_text()
+    assert f"{placed.threshold_label} (no down-crossing at this threshold)" in caption
     drawn = {line.get_label() for line in fig.axes[1].get_lines()}
     assert counted.threshold_label not in drawn and placed.threshold_label in drawn
     plt.close(fig)
@@ -1220,7 +1349,10 @@ def test_a_group_the_tellability_did_not_compute_shows_its_status(told) -> None:
     )
     marks = _not_computed(marks, METRIC_GROUPS, "not declared", "noise_floor")
     block = build_resolvability_block(
-        dataclasses.replace(tellability, metric=marks), flag=""
+        dataclasses.replace(tellability, metric=marks),
+        flag="",
+        display=DISPLAY,
+        paper_name=RECORD,
     )
     assert block.frequency_hz.size and block.top_decade_hz is None
     assert (
@@ -1263,7 +1395,9 @@ def test_a_record_whose_carve_or_tellability_failed_reads_not_computed(told) -> 
     )
     assert isinstance(refused, RecordFailure) and refused.stage == "tellability"
     assert "a reported sigma is negative" in refused.reason
-    block = build_resolvability_block(refused, flag="")
+    block = build_resolvability_block(
+        refused, flag="", display=DISPLAY, paper_name=RECORD
+    )
     assert block.failure == refused.note() and block.ladder == ()
     assert block.per_record.loc[0, "failure"] == refused.note()
     fig = ResolvabilityBlockPlot("failed").build_matplotlib(block)
@@ -1278,7 +1412,9 @@ def test_the_resolvability_figure_draws_the_artifacts_values(told) -> None:
     band edge, edge level and noise floor, each named in the caption; the two limits, each
     in its own dash, and every rung's count ratio at its decimation; and every crossing
     count as one segment of its rung's stack, at k = 1 left of k = 2 as the caption says."""
-    block = build_resolvability_block(told.tellability, flag="")
+    block = build_resolvability_block(
+        told.tellability, flag="", display=DISPLAY, paper_name=RECORD
+    )
     fig = ResolvabilityBlockPlot("values").build_matplotlib(block)
     spectrum_ax, counts_ax, crossings_ax = fig.axes[:3]
     lines = {line.get_label(): line for line in spectrum_ax.get_lines()}
@@ -1349,7 +1485,10 @@ def test_a_count_ratio_of_zero_sits_on_the_axis_floor_and_the_caption_names_it(
     ratio[3] = 0.0
     thresholds[1] = dataclasses.replace(rung, count_ratio=tuple(ratio))
     block = build_resolvability_block(
-        dataclasses.replace(tellability, thresholds=tuple(thresholds)), flag=""
+        dataclasses.replace(tellability, thresholds=tuple(thresholds)),
+        flag="",
+        display=DISPLAY,
+        paper_name=RECORD,
     )
     zero_m = block.decimation_ladder[3]
     fig = ResolvabilityBlockPlot("zero").build_matplotlib(block)
@@ -1366,7 +1505,9 @@ def test_a_count_ratio_of_zero_sits_on_the_axis_floor_and_the_caption_names_it(
     assert f"{rung.threshold_label} at m = {zero_m}" in caption, caption
     plt.close(fig)
     fig = ResolvabilityBlockPlot("none").build_matplotlib(
-        build_resolvability_block(tellability, flag="")
+        build_resolvability_block(
+            tellability, flag="", display=DISPLAY, paper_name=RECORD
+        )
     )
     assert not [ln for ln in fig.axes[1].get_lines() if ln.get_gid() == ZERO_RATIO_GID]
     assert "count ratio of 0" not in fig._supxlabel.get_text()
@@ -1381,6 +1522,7 @@ def test_a_wiring_error_raises_when_the_job_is_built() -> None:
     with pytest.raises(ValueError, match="is not one of"):
         RecordNodes(
             record="r",
+            run_name="r",
             carve=None,
             ledger=None,
             run_set=(),
@@ -1520,10 +1662,17 @@ def _five_blocks(scored: SimpleNamespace, told: SimpleNamespace) -> dict[str, ob
     """The five blocks of the synthetic record, by name, in the page's reading order."""
     km = kaplan_meier_of(scored.carve, conf_level=CONF_LEVEL)
     return {
-        "resolvability": build_resolvability_block(told.tellability, flag=""),
-        "timeline": build_timeline_block(_panel(scored), record=RECORD, flag=""),
+        "resolvability": build_resolvability_block(
+            told.tellability, flag="", display=DISPLAY, paper_name=RECORD
+        ),
+        "timeline": build_timeline_block(
+            _panel(scored), record=RECORD, flag="", display=DISPLAY
+        ),
         "fraction": build_fraction_block(
-            record_compliance(scored.carve, T2STAR_THRESHOLDS), scored.carve, flag=""
+            record_compliance(scored.carve, T2STAR_THRESHOLDS),
+            scored.carve,
+            flag="",
+            display=DISPLAY,
         ),
         "survival": _block(km, scored.ledger),
         "hazard": _hazard_block(scored.carve, scored.ledger),
@@ -1597,11 +1746,15 @@ def test_the_page_stacks_each_block_once_in_reading_order(scored, told) -> None:
             width = max(w for w, _ in _SIZES_BEFORE.values())
             height = sum(h for _, h in _SIZES_BEFORE.values()) + 0.5
             assert tuple(fig.get_size_inches()) == pytest.approx((width, height))
+            assert fig.get_suptitle() == f"Record figure, {DISPLAY}"
         finally:
             plt.close(fig)
     assert not [w for w in caught if "layout" in str(w.message).lower()], caught
     with pytest.raises(ValueError, match="handed blocks of"):
         assemble_record_figure(*blocks.values(), record="q9_010101")
+    other = dataclasses.replace(blocks["hazard"], display=f"{RECORD}, infidelity")
+    with pytest.raises(ValueError, match="not one display"):
+        assemble_record_figure(*blocks.values(), other, record=RECORD)
     assert set(BLOCKS) == set(PAGE_ORDER) and len(PAGE_ORDER) == len(set(PAGE_ORDER))
     job = _import_job(FIGURE_JOBS[3])
     pages = [n for n in job.dag.values() if n.fn is assemble_record_figure]
@@ -1611,3 +1764,236 @@ def test_the_page_stacks_each_block_once_in_reading_order(scored, told) -> None:
             "resolvability_block", "timeline_block", "fraction_block", "survival_block",
             "hazard_block",
         ]  # fmt: skip
+
+
+@pytest.mark.unit
+def test_each_block_prints_its_display_in_its_title(scored, told) -> None:
+    """Oracle: each block's `display` field. Every block of the synthetic record, built
+    with a display that is not its run name alone, prints that display in its own figure's
+    title, never the bare `dataset_id`; an empty display or paper name raises."""
+    for name, block in _five_blocks(scored, told).items():
+        fig = _SIZE_OF[name][1](name).build_matplotlib(block)
+        try:
+            assert f", {DISPLAY}" in fig.get_suptitle(), (name, fig.get_suptitle())
+        finally:
+            plt.close(fig)
+    with pytest.raises(ValueError, match="non-empty display"):
+        build_resolvability_block(
+            told.tellability, flag="", display=" ", paper_name=RECORD
+        )
+    with pytest.raises(ValueError, match="non-empty paper_name"):
+        build_resolvability_block(
+            told.tellability, flag="", display=DISPLAY, paper_name=""
+        )
+
+
+INFIDELITY_JOB = (
+    REPO / "jobs" / "composite" / "record_figures_2x2_q1_030723_infidelity.py"
+)
+INFIDELITY_RECORD = "2x2_q1_030723"
+# The run name `jobs/active/ramsey_2x2_q1_030723.py` declares for that record.
+INFIDELITY_RUN = "q1_2x2_16h_0307_dataset"
+
+
+def _one_node(job: Job, fn: object) -> object:
+    (node,) = [n for n in job.dag.values() if n.fn is fn]
+    return node
+
+
+@pytest.mark.policy
+def test_the_infidelity_figure_job_draws_every_block_on_the_ramsey_jobs_own_carve() -> (
+    None
+):
+    """Oracle: the included Ramsey job's own graph, `LEDGER_KNOBS` and the paper's tables.
+    The infidelity figure job includes `ramsey_2x2_q1_030723` once and takes one ref, to the fidelity
+    result that job persists; its carve is `infidelity_recipe`'s, on that ref;
+    the ledger scores those windows on the same ladder with `LEDGER_KNOBS` and is
+    persisted; the tellability is the Ramsey job's own, kwarg for kwarg; the timeline reads
+    the infidelity panel data; the timeline and the page keep the run name as their record;
+    every block prints the paper's name and the metric and carries the paper's flag."""
+    job = _import_job(INFIDELITY_JOB)
+    (included,) = job.includes
+    ramsey = included.job
+    assert included.alias == "ramsey_2x2_q1_030723"
+    refs = {
+        id(i): i
+        for n in job.dag.values()
+        for i in n.inputs
+        if isinstance(i, ArtifactRef)
+    }
+    assert len(refs) == 1
+    (ref,) = refs.values()
+    own_carve = _one_node(ramsey, _fidelity_windows)
+    # The carve itself is `infidelity_recipe`'s (tests/test_infidelity_recipe.py).
+    carve = _one_node(job, _fidelity_windows)
+    assert carve.inputs == [ref]
+    ledger = _one_node(job, ledger_step)
+    assert job.dag[ledger.inputs[0].node_id] is carve
+    assert ledger.kwargs == {
+        "thresholds": own_carve.kwargs["thresholds"],
+        **LEDGER_KNOBS,
+    }
+    assert f"{INFIDELITY_RECORD}{LEDGER_DATA_SUFFIX}" in [s.name for s in job.sinks]
+    checked = job.dag[f"checked_carve_{INFIDELITY_RECORD}"]
+    assert [i.node_id for i in checked.inputs] == [carve.node_id, ledger.node_id]
+    tellability = _one_node(job, infidelity_tellability_of)
+    own_tellability = ramsey.dag["tellability_infidelity"]
+    assert tellability.inputs[0] is ref
+    assert tellability.inputs[1].node_id == carve.node_id
+    assert tellability.kwargs == own_tellability.kwargs
+    panel = _one_node(job, fidelity_panel_data_of)
+    assert panel.inputs[0] is ref
+    assert not [n for n in job.dag.values() if n.fn is panel_data_of]
+    # Artifacts keep the run name: the timeline's and the page's record is it.
+    for name in ("timeline_block", "record_figure"):
+        node = job.dag[f"{name}_{INFIDELITY_RECORD}"]
+        assert node.kwargs["record"] == INFIDELITY_RUN, name
+    builders = [n for n in job.dag.values() if "display" in n.kwargs]
+    assert len(builders) == len(BLOCKS)
+    for node in builders:
+        assert node.kwargs["display"] == f"{INFIDELITY_RECORD}, infidelity", (
+            node.node_id
+        )
+        assert node.kwargs["flag"] == FLAG_TEXT, node.node_id
+    loads = [n for n in job.dag.values() if "dataset" in n.kwargs]
+    assert [str(n.kwargs["dataset"].path) for n in loads] == [
+        "jobs/bench/results/size_table.csv"
+    ]
+
+
+@pytest.mark.unit
+def test_an_infidelity_figure_job_declaring_another_record_raises() -> None:
+    """Oracle: the Ramsey job's declared Rabi row (2x2, qubit 1, 3 Jul 2023) and the
+    paper's tables. A figure job naming another record, or a record the tables do not
+    list, raises when it is built."""
+    for record, tables, match in (
+        ("2x2_q1_050723", PAPER_RECORDS, "names the record '2x2_q1_030723', not"),
+        (INFIDELITY_RECORD, (), "is not a 2x2 record of the paper's tables"),
+    ):
+        probe = Job("record_figure_probe")
+        with pytest.raises(ValueError, match=match):
+            configure_infidelity_record_figure_job(
+                probe,
+                included=probe.include("ramsey_2x2_q1_030723"),
+                record=record,
+                paper_records=tables,
+                shaded=SHADED,
+                flag_text=FLAG_TEXT,
+                bench_size_table=Dataset(path=str(BENCH), schema=None),
+            )
+
+
+_RAMSEY_JOB = """
+from quebra.core.dataset import Dataset
+from quebra.core.job import Job
+from quebra.recipes import configure_ramsey_job
+from quebra.schemas.track912 import track912Schema
+from quebra.tellability_recipe import wire_infidelity_tellability
+
+job = Job("ramsey_probe")
+refs = configure_ramsey_job(
+    job,
+    Dataset(path="030723_2x2_qubit1.csv", schema=track912Schema, qubit=1, device="2x2",
+            extra={"run_name": "q1_2x2_probe", "run_date": "2023-07-03",
+                   "run_start_unix_s": 1.688e9}),
+    profile="overnight",
+    include_fidelity=True,
+    rabi_table=Dataset(path="rabi.csv"),
+    figure_prefix="q1_2x2_probe",
+)
+wire_infidelity_tellability(job, refs, prefix="q1_2x2_probe", n_permutations=19)
+"""
+
+
+def _two_by_two_csv(path: Path, *, n: int = 1200) -> Path:
+    """A synthetic 2x2 record whose detuning swings 80 kHz either way every 30 minutes
+    under 2 kHz noise: at a declared Rabi frequency of 704 kHz, |x| crosses the 99.9 and
+    99.99% rungs (x_T 0.0548, 0.0173) about twice a period and never the 99% one (0.174)."""
+    rng = np.random.default_rng(23)
+    t_s = np.arange(n) * 30.0 + rng.uniform(-3.0, 3.0, n)
+    f_hz = (
+        2.0e6 + 8.0e4 * np.sin(2.0 * np.pi * t_s / 1800.0) + rng.normal(0.0, 2.0e3, n)
+    )
+    header = (
+        "timestamp,amp,amp error,offset,offset error,T2star,T2star error,frequency,"
+        "frequency error,phase,phase_error,normalised chi-square"
+    )
+    rows = [
+        f"{float(t_s[i])!r},1.0,0.02,0.5,0.005,3e-6,4e-7,{float(f_hz[i])!r},2e3,0.1,0.03,0.1"
+        for i in range(n)
+    ]
+    path.write_text("\n".join([header, *rows]) + "\n")
+    return path
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_the_infidelity_figure_job_runs_its_ramsey_job_once_and_scores_both_bags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Oracle: the run directory and the ledger it persisted. On a synthetic 2x2 record,
+    the infidelity figure job runs the included Ramsey job once, draws every block and the
+    page, persists a ledger with a scored row on both clocks in both bags, and writes
+    tables keyed on the run name with the paper's name beside it."""
+    _two_by_two_csv(tmp_path / "030723_2x2_qubit1.csv")
+    pd.DataFrame(
+        [("2x2", "2023-07-03", 1, 704.0)],
+        columns=["device", "run_date", "qubit", "rabi_khz"],
+    ).to_csv(tmp_path / "rabi.csv", index=False)
+    ramsey_py = tmp_path / "ramsey_probe.py"
+    ramsey_py.write_text(_RAMSEY_JOB)
+    (tmp_path / BENCH.name).write_bytes(BENCH.read_bytes())
+    job = Job("infidelity_probe")
+    job.job_file = (tmp_path / "infidelity_probe.py").resolve()
+    job.job_file.write_text("# synthetic infidelity figure job\n")
+    configure_infidelity_record_figure_job(
+        job,
+        included=job.include(str(ramsey_py)),
+        record=INFIDELITY_RECORD,
+        paper_records=PAPER_RECORDS,
+        shaded=SHADED,
+        flag_text=FLAG_TEXT,
+        bench_size_table=Dataset(path=BENCH.name, schema=None),
+        ledger_knobs={**LEDGER_KNOBS, "n_permutations": 19},
+        tellability_permutations=19,
+    )
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / "out"
+    run_job(job, out, force=True, data_root=tmp_path)
+    (run_dir,) = out.glob("infidelity_probe_*")
+    records = [
+        json.loads(p.read_text()) for p in (run_dir / "provenance").glob("*.prov.json")
+    ]
+    nested = {
+        json.dumps(include, sort_keys=True)
+        for r in records
+        for include in r["includes"]
+    }
+    assert len(nested) == 1, nested
+    for block in (
+        "survival",
+        "cumulative_hazard",
+        "in-spec_fraction",
+        "resolvability",
+        "timelines",
+        "record_figure",
+    ):
+        assert list(run_dir.glob(f"{INFIDELITY_RECORD}_{block}_*.pdf")), block
+    with (run_dir / f"{INFIDELITY_RECORD}{LEDGER_DATA_SUFFIX}.pkl").open(
+        "rb"
+    ) as handle:
+        ledger = pickle.load(handle)
+    assert ledger.dataset_id == "q1_2x2_probe"
+    scored = ledger.rows[
+        (ledger.rows["check_id"] != ALL_ROWS)
+        & (ledger.rows["verdict"] != VERDICT_NOT_COMPUTED)
+    ]
+    for side in SIDES:
+        assert set(scored.loc[scored["side"] == side, "clock"]) == set(CLOCKS), side
+    summaries = pd.read_csv(run_dir / "infidelity_probe_curve_summaries.csv")
+    assert set(summaries["record"]) == {"q1_2x2_probe"}
+    assert set(summaries["paper_name"]) == {INFIDELITY_RECORD}
+    for part in ("per_threshold", "per_record"):
+        table = pd.read_csv(run_dir / f"infidelity_probe_resolvability_{part}.csv")
+        assert set(table["dataset_id"]) == {"q1_2x2_probe"}, part
+        assert set(table["paper_name"]) == {INFIDELITY_RECORD}, part

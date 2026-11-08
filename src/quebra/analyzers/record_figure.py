@@ -4,12 +4,20 @@ One record, one PDF per block. A block is a typed artifact built here, with ever
 draws, and one plot class in `plots/record_figure_plot.py` that draws it; the jobs wire both
 through `record_figure_recipe.BLOCKS`. Nothing here imports `plots/` or `panels/`.
 
-A record's windows are the carve its check ledger scored, recomputed from the ledger job's
-own carve kwargs and held to that ledger by `cross_check_carve`: at every rung and bag the
+A record's windows are the carve its check ledger scored, recomputed with the carve kwargs of
+the job that carved it first (a ledger job's, or for an infidelity record the Ramsey job's,
+whose ledger the figure job runs itself) and held to that ledger by `cross_check_carve`: at
+every rung and bag the
 carve must hold as many windows as the ledger's `n_windows_used` says. A mismatch is a
 wiring error and raises, so nothing is drawn on windows the ledger did not score. The
 builders raise on wiring errors only; an empty bag or a ledger row that gave no answer is
 drawn and labelled.
+
+Every block carries `display`, the label its figure prints in its titles and caption: the
+record's name in the paper's dataset tables and its metric, as in `q1_070423, T2*`. A
+builder raises on an empty one. `dataset_id` stays the record's run name, the name every
+artifact and table is keyed on; the tables carry the paper's name beside it as
+`paper_name`.
 
 **Survival block** (`build_survival_block`). One Kaplan-Meier curve with its band per rung
 and bag, both bags drawn, each band with the check outcome of exactly that band: the ledger
@@ -63,8 +71,10 @@ per-threshold table with no row. A record whose carve or tellability failed draw
 failure's note.
 
 **Timeline block** (`build_timeline_block`). Read state along the scan clock at each rung,
-twice: the four states with uncertainty, and the two states the carve used, from the T2*
-panel data built as the T2* jobs build it (`panel_data_of`, `t2star.make_panel_data`).
+twice: the four states with uncertainty, and the two states the carve used, from the
+record's panel data built as its own metric's jobs build it: `panel_data_of` and
+`t2star.make_panel_data` for T2*, `record_figure_recipe.fidelity_panel_data_of` and
+`fidelity.make_panel_data` for the infidelity.
 Which rungs are drawn is data: a rung is drawn when its in-spec fraction (the panel's
 `occupancy`) is at least `OCCUPANCY_DRAWN`, the rule today's within-calibration panel
 applies; a rung below it, and one with no observed time to measure it on, are named as
@@ -132,6 +142,16 @@ ALL_ROWS = "(all)"
 OCCUPANCY_DRAWN = 0.05
 # The reason a ledger record outside the paper's dataset tables carries in the summaries.
 EXCLUDED_REASON = "not in the paper's dataset tables, so not drawn"
+
+
+def _require_label(value: str, what: str) -> str:
+    """`value`, or raise: an empty `display` would print nothing to tell a record and its
+    metric by, and an empty `paper_name` would key a table row on nothing."""
+    if not str(value).strip():
+        raise ValueError(f"a record-figure block needs a non-empty {what}")
+    return str(value)
+
+
 # `rmst_interval_note` of a restricted mean whose SE is 0, and of one whose interval
 # reaches 0.
 NOTE_NO_WIDTH = "SE 0: no death before tau, so the interval has no width"
@@ -273,6 +293,7 @@ class SurvivalBlockData(StaleArtifactGuard):
     """
 
     dataset_id: str
+    display: str
     flag: str
     failure: str
     ladder: tuple[str, ...]
@@ -293,6 +314,7 @@ def build_survival_block(
     run_set: tuple[RowKey, ...],
     conf_level: float,
     flag: str,
+    display: str,
 ) -> SurvivalBlockData:
     """The survival block of one record: its curves and, per band, the check outcome of
     that rung and bag (module docstring)."""
@@ -315,6 +337,7 @@ def build_survival_block(
     outcomes = _band_outcomes(ledger, ladder, run)
     return SurvivalBlockData(
         dataset_id=record,
+        display=_require_label(display, "display"),
         flag=flag,
         failure=failure,
         ladder=ladder,
@@ -343,6 +366,7 @@ class HazardBlockData(StaleArtifactGuard):
     """
 
     dataset_id: str
+    display: str
     flag: str
     failure: str
     ladder: tuple[str, ...]
@@ -363,6 +387,7 @@ def build_hazard_block(
     run_set: tuple[RowKey, ...],
     conf_level: float,
     flag: str,
+    display: str,
 ) -> HazardBlockData:
     """The hazard block of one record: each Nelson-Aalen item with the check outcome of its
     rung and bag in its `checks` field (module docstring)."""
@@ -394,6 +419,7 @@ def build_hazard_block(
     }
     return HazardBlockData(
         dataset_id=ledger.dataset_id,
+        display=_require_label(display, "display"),
         flag=flag,
         failure=failure,
         ladder=ladder,
@@ -426,6 +452,7 @@ class RecordSummaries(StaleArtifactGuard):
     it carved; a failed record has no item."""
 
     dataset_id: str
+    paper_name: str
     flag: str
     failure: str
     ladder: tuple[str, ...]
@@ -441,6 +468,7 @@ def build_record_summaries(
     run_set: tuple[RowKey, ...],
     conf_level: float,
     flag: str,
+    paper_name: str,
 ) -> RecordSummaries:
     """One record's summaries with their check outcomes and intervals (module docstring)."""
     run, _display = resolve(run_set, run_set)
@@ -471,6 +499,7 @@ def build_record_summaries(
     }
     return RecordSummaries(
         dataset_id=ledger.dataset_id,
+        paper_name=_require_label(paper_name, "paper_name"),
         flag=flag,
         failure=failure,
         ladder=ladder,
@@ -490,6 +519,7 @@ def _quantile_columns(p: float) -> tuple[str, str, str]:
 # The summaries table's columns, in order; the quantiles are `curve_summaries_of`'s.
 SUMMARY_COLUMNS = (
     "record",
+    "paper_name",
     "drawn",
     "reason",
     "flag",
@@ -544,7 +574,12 @@ def summaries_table(
     NaN."""
     rows: list[dict[str, object]] = []
     for record in records:
-        head = {"record": record.dataset_id, "drawn": True, "flag": record.flag}
+        head = {
+            "record": record.dataset_id,
+            "paper_name": record.paper_name,
+            "drawn": True,
+            "flag": record.flag,
+        }
         if record.failure:
             rows.append({**head, "reason": record.failure})
             continue
@@ -591,7 +626,13 @@ def summaries_table(
             )
             rows.append(row)
     rows += [
-        {"record": record, "drawn": False, "flag": "", "reason": EXCLUDED_REASON}
+        {
+            "record": record,
+            "paper_name": "",
+            "drawn": False,
+            "flag": "",
+            "reason": EXCLUDED_REASON,
+        }
         for record in excluded
     ]
     unknown = sorted({key for row in rows for key in row} - set(SUMMARY_COLUMNS))
@@ -613,6 +654,7 @@ class FractionBlockData(StaleArtifactGuard):
     """
 
     dataset_id: str
+    display: str
     flag: str
     failure: str
     ladder: tuple[str, ...]
@@ -632,6 +674,7 @@ def build_fraction_block(
     carve: WindowsResult | RecordFailure,
     *,
     flag: str,
+    display: str,
 ) -> FractionBlockData:
     """The fraction block of one record from its compliance and its carve (module
     docstring). Raises if the two describe different records."""
@@ -655,6 +698,7 @@ def build_fraction_block(
     rungs = compliance.rungs
     return FractionBlockData(
         dataset_id=compliance.dataset_id,
+        display=_require_label(display, "display"),
         flag=flag,
         failure=compliance.record_failure,
         ladder=tuple(r.threshold_label for r in rungs),
@@ -698,6 +742,8 @@ class ResolvabilityBlockData(StaleArtifactGuard):
     """
 
     dataset_id: str
+    display: str
+    paper_name: str
     metric_key: str
     value_key: str
     threshold_value_key: str
@@ -728,6 +774,7 @@ class ResolvabilityBlockData(StaleArtifactGuard):
 
 PER_RECORD_COLUMNS = (
     "dataset_id",
+    "paper_name",
     "metric_key",
     "value_key",
     "failure",
@@ -755,6 +802,7 @@ PER_RECORD_COLUMNS = (
 def _per_threshold_columns(ladder: tuple[int, ...]) -> list[str]:
     return [
         "dataset_id",
+        "paper_name",
         "threshold_label",
         "threshold_value",
         "count_exponent_status",
@@ -793,7 +841,11 @@ def _per_lag(values: tuple[float, ...] | None) -> dict[str, float | None]:
 
 
 def build_resolvability_block(
-    tellability: TellabilityResult | RecordFailure, *, flag: str
+    tellability: TellabilityResult | RecordFailure,
+    *,
+    flag: str,
+    display: str,
+    paper_name: str,
 ) -> ResolvabilityBlockData:
     """The resolvability block of one record (module docstring). Reads each group of the
     tellability only where its status is `computed`."""
@@ -803,9 +855,13 @@ def build_resolvability_block(
         LIMIT_INDEPENDENT: tuple(1.0 for _ in decimation),
         LIMIT_SMOOTH: tuple(float(m) for m in decimation),
     }
+    display = _require_label(display, "display")
+    paper_name = _require_label(paper_name, "paper_name")
     if isinstance(tellability, RecordFailure):
         return ResolvabilityBlockData(
             dataset_id=tellability.dataset_id,
+            display=display,
+            paper_name=paper_name,
             metric_key="",
             value_key="",
             threshold_value_key="",
@@ -835,6 +891,7 @@ def build_resolvability_block(
                 [
                     {
                         "dataset_id": tellability.dataset_id,
+                        "paper_name": paper_name,
                         "failure": tellability.note(),
                     }
                 ],
@@ -856,6 +913,7 @@ def build_resolvability_block(
     stretch = (0.9 * edge, edge) if spectrum_on and edge is not None else None
     per_record = {
         "dataset_id": tellability.dataset_id,
+        "paper_name": paper_name,
         "metric_key": metric.metric_key,
         "value_key": metric.value_key,
         "failure": "",
@@ -900,6 +958,7 @@ def build_resolvability_block(
         rows.append(
             {
                 "dataset_id": tellability.dataset_id,
+                "paper_name": paper_name,
                 "threshold_label": label,
                 "threshold_value": row.threshold_value,
                 "count_exponent_status": row.status["count_exponent"],
@@ -948,6 +1007,8 @@ def build_resolvability_block(
         )
     return ResolvabilityBlockData(
         dataset_id=tellability.dataset_id,
+        display=display,
+        paper_name=paper_name,
         metric_key=metric.metric_key,
         value_key=metric.value_key,
         threshold_value_key=str(tellability.settings["threshold_value_key"]),
@@ -1030,6 +1091,7 @@ class TimelineBlockData(StaleArtifactGuard):
     """
 
     dataset_id: str
+    display: str
     flag: str
     failure: str
     ladder: tuple[str, ...]
@@ -1048,11 +1110,13 @@ def build_timeline_block(
     *,
     record: str,
     flag: str,
+    display: str,
 ) -> TimelineBlockData:
     """The timeline block of one record from its panel data (module docstring)."""
     if isinstance(panel, RecordFailure):
         return TimelineBlockData(
             dataset_id=record,
+            display=_require_label(display, "display"),
             flag=flag,
             failure=panel.note(),
             ladder=(),
@@ -1075,6 +1139,7 @@ def build_timeline_block(
     t_h = np.asarray(panel.signal.t_h, dtype=float)
     return TimelineBlockData(
         dataset_id=record,
+        display=_require_label(display, "display"),
         flag=flag,
         failure="",
         ladder=ladder,
@@ -1126,18 +1191,27 @@ def resolvability_table(*blocks: ResolvabilityBlockData, part: str) -> pd.DataFr
 
 @dataclass
 class RecordFigureData(StaleArtifactGuard):
-    """One record's block artifacts in page order, each the one its own figure draws."""
+    """One record's block artifacts in page order, each the one its own figure draws, and
+    the `display` they all print."""
 
     dataset_id: str
+    display: str
     blocks: tuple[object, ...]
 
 
 def assemble_record_figure(*blocks: object, record: str) -> RecordFigureData:
     """The blocks of one record, in the order given, for the page that stacks them. Raises
-    if a block belongs to another record."""
+    if a block belongs to another record, or if the blocks do not print one `display`."""
     others = sorted(
         {str(getattr(block, "dataset_id", None)) for block in blocks} - {record}
     )
     if others:
         raise ValueError(f"the page of {record!r} was handed blocks of {others}")
-    return RecordFigureData(dataset_id=record, blocks=tuple(blocks))
+    displays = sorted({str(getattr(block, "display", "")) for block in blocks})
+    if len(displays) != 1:
+        raise ValueError(f"the blocks of {record!r} print {displays}, not one display")
+    return RecordFigureData(
+        dataset_id=record,
+        display=_require_label(displays[0], "display"),
+        blocks=tuple(blocks),
+    )

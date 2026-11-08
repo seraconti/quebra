@@ -3,7 +3,11 @@
 Each block draws one typed artifact of `analyzers/record_figure.py` through a function of a
 figure or subfigure (`draw_<block>(fig, data, style)`), so the block's own PDF and any page
 that places it beside others draw it the same way. What is left here is a function of axes
-and theme: limits, ticks, colours and where text sits.
+and theme: limits, ticks, colours and where text sits. Every title and caption names the
+record by its block's `display`, its name in the paper's tables and its metric. The
+resolvability caption says what the noise floor is (`tellability.noise_floor_ratio`): twice
+the mean of sigma squared times the median read spacing, which reads with a large sigma
+raise.
 
 **Survival** (`SurvivalBlockPlot`). Small multiples, one column per rung: for each bag, the
 Kaplan-Meier curves with their bands on one log age axis shared by every column, a line of
@@ -42,7 +46,9 @@ frame to the `table` target unchanged.
 with the band edge (dotted), the edge level over the top tenth of the band (heavy), the noise
 floor (dashed) and the top decade G10 reads (shaded), and no fitted line. The count ratio of
 each rung across the decimation ladder, with its two limits as labelled guides. The crossing
-placement counts of each rung at k = 1 and 2, stacked by kind. A group the tellability did
+placement counts of each rung at k = 1 and 2, stacked by kind, the legend naming each kind
+on the first bar drawn; a rung whose counts were not computed is marked x on the baseline,
+its reason in the caption, so no long label sits in the panel. A group the tellability did
 not compute shows its status instead: a panel in its place; a mark of the spectrum in the
 caption, which names only the marks drawn and gives the status of each one not drawn. A
 count ratio of exactly 0 has no place on the log axis: it is drawn as a down triangle on the
@@ -184,7 +190,7 @@ def _draw_key(
 
 def _caption(data: SurvivalBlockData) -> str:
     parts = [
-        f"Kaplan-Meier survival of the windows of each bag at each rung of {data.dataset_id}, "
+        f"Kaplan-Meier survival of the windows of each bag at each rung of {data.display}, "
         f"with its {data.conf_level:.0%} log-log band; ticks mark censored windows.",
         "Under each band, the check outcome of that rung and bag: checks down, clocks "
         "across.",
@@ -224,7 +230,7 @@ def draw_survival(fig: Figure | SubFigure, data: SurvivalBlockData, style: str) 
     """The survival block of one record on `fig` (module docstring)."""
     caption = theme.scaled_text(theme.CAPTION, style)
     if _draw_failure(fig, data, style):
-        fig.suptitle(f"Window survival by rung, {data.dataset_id}")
+        fig.suptitle(f"Window survival by rung, {data.display}")
         return
     n = len(data.ladder)
     bag_rows = [_CURVE_H, _GRID_BASE_H + _GRID_ROW_H * len(data.run_set)]
@@ -291,7 +297,7 @@ def draw_survival(fig: Figure | SubFigure, data: SurvivalBlockData, style: str) 
                 fig.add_subplot(grid[2 * s + 1, i]), data, label, side, i == 0, style
             )
     _draw_key(fig.add_subplot(grid[:, n]), data, style)
-    fig.suptitle(f"Window survival by rung, {data.dataset_id}")
+    fig.suptitle(f"Window survival by rung, {data.display}")
     fig.supxlabel(_caption(data), wrap=True, **caption)
 
 
@@ -402,7 +408,7 @@ def _draw_hazard_grid(
 def _hazard_caption(data: HazardBlockData) -> str:
     parts = [
         f"Nelson-Aalen cumulative hazard of the windows of each bag at each rung of "
-        f"{data.dataset_id}, with its {data.conf_level:.0%} band symmetric on log H; a "
+        f"{data.display}, with its {data.conf_level:.0%} band symmetric on log H; a "
         "rung with no death draws no line.",
         "Under each bag, the check outcome of each rung's band: checks down, and for each "
         "rung its side clock, then its calendar clock.",
@@ -416,7 +422,7 @@ def _hazard_caption(data: HazardBlockData) -> str:
 
 def draw_hazard(fig: Figure | SubFigure, data: HazardBlockData, style: str) -> None:
     """The hazard block of one record on `fig` (module docstring)."""
-    title = f"Nelson-Aalen cumulative hazard by rung, {data.dataset_id}"
+    title = f"Nelson-Aalen cumulative hazard by rung, {data.display}"
     if _draw_failure(fig, data, style):
         fig.suptitle(title)
         return
@@ -534,7 +540,7 @@ _NO_BOUNDS = {**theme.BOUNDS_WHISKER, "linestyle": ":"}
 def _fraction_caption(data: FractionBlockData) -> str:
     k = f"{data.unsure_k:g}" if data.unsure_k is not None else "the carve's"
     parts = [
-        f"Time-weighted in-spec fraction of the observed time of {data.dataset_id} at "
+        f"Time-weighted in-spec fraction of the observed time of {data.display} at "
         "each rung, the gaps left out.",
         f"The whisker bounds it, counting every stretch the reads cannot settle at {k} "
         "sigma either way; dotted from 0 to 1 where the bounds are not computed, grey "
@@ -547,7 +553,7 @@ def _fraction_caption(data: FractionBlockData) -> str:
 
 def draw_fraction(fig: Figure | SubFigure, data: FractionBlockData, style: str) -> None:
     """The fraction block of one record on `fig` (module docstring)."""
-    title = f"In-spec fraction by rung, {data.dataset_id}"
+    title = f"In-spec fraction by rung, {data.display}"
     if _draw_failure(fig, data, style):
         fig.suptitle(title)
         return
@@ -707,7 +713,7 @@ def draw_timelines(
     fig: Figure | SubFigure, data: TimelineBlockData, style: str
 ) -> None:
     """The timeline block of one record on `fig` (module docstring)."""
-    title = f"Read state along the scan clock by rung, {data.dataset_id}"
+    title = f"Read state along the scan clock by rung, {data.display}"
     if _draw_failure(fig, data, style):
         fig.suptitle(title)
         return
@@ -782,7 +788,7 @@ def draw_timelines(
         theme.apply_common_style(ax)
     fig.suptitle(title)
     caption = (
-        f"Each read's state at each rung of {data.dataset_id}, the four states above and "
+        f"Each read's state at each rung of {data.display}, the four states above and "
         f"the two the carve used below; a rung is drawn when it is in spec at least "
         f"{OCCUPANCY_DRAWN:.0%} of the observed time, the rest are named as culled. "
         "Hatched spans are read gaps."
@@ -834,6 +840,8 @@ _PANEL_H = 2.8
 CROSSING_KINDS = ("clean", "merged", "unbracketed")
 # The id each crossing bar carries, so a test can read the bars back.
 CROSSING_GID = "crossing_bar"
+# The id of the mark a rung whose crossing counts were not computed carries.
+NOT_PLACED_GID = "crossing_not_computed"
 # The dash of each count-ratio limit, so the two guides differ in more than their label.
 LIMIT_DASHES = {LIMIT_INDEPENDENT: "--", LIMIT_SMOOTH: "-."}
 # The id the marker of each count ratio of exactly 0 carries, so a test can find it.
@@ -986,17 +994,18 @@ def _draw_crossings(ax: plt.Axes, data: ResolvabilityBlockData, style: str) -> N
         return
     width = 0.38
     names: list[str] = []
+    labelled: set[str] = set()
     for i, label in enumerate(data.ladder):
         counts = data.crossing_counts[label]
         if not counts:
-            ax.text(
-                i,
-                0.0,
-                data.crossing_status[label].replace("not computed: ", ""),
-                rotation=90,
-                ha="center",
-                va="bottom",
-                **theme.scaled_text(theme.ANNOTATION, style),
+            ax.plot(
+                [i],
+                [0.0],
+                marker="x",
+                linestyle="none",
+                color=theme.verdict_color("not computed"),
+                clip_on=False,
+                gid=NOT_PLACED_GID,
             )
         for j, count in enumerate(counts):
             x = i + (j - (len(counts) - 1) / 2.0) * width
@@ -1009,9 +1018,10 @@ def _draw_crossings(ax: plt.Axes, data: ResolvabilityBlockData, style: str) -> N
                     width=width * 0.9,
                     bottom=bottom,
                     color=theme.CROSSING_COLORS[kind],
-                    label=kind if i == 0 and j == 0 else None,
+                    label=None if kind in labelled else kind,
                     gid=CROSSING_GID,
                 )
+                labelled.add(kind)
                 bottom += value
         names.append(label)
     ax.set_xticks(range(len(data.ladder)))
@@ -1031,12 +1041,18 @@ def _resolvability_caption(data: ResolvabilityBlockData) -> str:
     drawn, notes = _spectrum_marks(data) if data.frequency_hz.size else ([], [])
     marks = f" with its {_listed(drawn)}" if drawn else ""
     parts = [
-        f"Event resolvability of {data.dataset_id} ({data.metric_key}): the spectrum of "
+        f"Event resolvability of {data.display}: the spectrum of "
         f"{data.value_key}{marks}; per rung of {data.threshold_value_key}, the count ratio "
         "across the decimation ladder with its limits, and the down-crossings clean, "
         "merged or unbracketed at each confidence level k, left to right in increasing k.",
         "G10 and its halves are in the record's table.",
     ]
+    if "noise floor" in drawn:
+        parts.append(
+            "The noise floor is twice the mean of sigma squared times the median read "
+            "spacing: a mean, so reads with a large sigma raise it, and a floor above the "
+            "spectrum says the reported sigma exceeds the scatter the spectrum shows."
+        )
     if notes:
         parts.append(f"Not drawn on the spectrum: {_listed(notes)}.")
     zeros = _zero_ratios(data)
@@ -1048,6 +1064,13 @@ def _resolvability_caption(data: ResolvabilityBlockData) -> str:
             "A count ratio of 0, no down-crossing between kept reads, sits on the axis "
             f"floor as a down triangle: {where}."
         )
+    unplaced = [
+        f"{label} ({data.crossing_status[label].removeprefix('not computed: ')})"
+        for label in data.ladder
+        if not data.crossing_counts[label]
+    ]
+    if unplaced:
+        parts.append(f"Crossing counts not computed, marked x: {'; '.join(unplaced)}.")
     if data.flag:
         parts.append(f"This record is {data.flag}.")
     return " ".join(parts)
@@ -1057,7 +1080,7 @@ def draw_resolvability(
     fig: Figure | SubFigure, data: ResolvabilityBlockData, style: str
 ) -> None:
     """The resolvability block of one record on `fig` (module docstring)."""
-    title = f"Event resolvability, {data.dataset_id}"
+    title = f"Event resolvability, {data.display}"
     if data.failure:
         ax = fig.add_subplot(1, 1, 1)
         ax.set_axis_off()
@@ -1068,7 +1091,7 @@ def draw_resolvability(
     _draw_spectrum(axes[0], data, style)
     _draw_counts(axes[1], data, style)
     _draw_crossings(axes[2], data, style)
-    fig.suptitle(f"{title} ({data.metric_key})")
+    fig.suptitle(title)
     fig.supxlabel(
         _resolvability_caption(data),
         wrap=True,
@@ -1145,7 +1168,7 @@ def draw_record_figure(fig: Figure, data: RecordFigureData, style: str) -> None:
     rows = fig.subfigures(len(data.blocks), 1, height_ratios=heights)
     for row, block in zip(np.atleast_1d(rows), data.blocks, strict=True):
         _page_row(block)[0](row, block, style)
-    fig.suptitle(f"Record figure, {data.dataset_id}")
+    fig.suptitle(f"Record figure, {data.display}")
 
 
 class RecordFigurePlot(BasePlot):
