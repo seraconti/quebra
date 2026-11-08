@@ -270,20 +270,28 @@ def test_the_guard_actually_matches_something() -> None:
     on their own hardcoded names, and the suite would report full health over zero coverage.
     That is the failure the module docstring records `fidelity_windows` causing once already.
 
-    So: assert the matcher still finds carves, in more than one job, including the
-    `check_ledger` family, which carves the most: one carve per record, 50 records over ten
-    jobs (28 of 6D2S, 22 of 2x2).
+    So: assert the matcher still finds carves, in more than one job, including both ledger
+    families, selected by `JOB_FAMILY` and not by file name: `check_ledger`, the T2*
+    ledgers, which carve the most, one carve per record, 50 records over ten jobs (28 of
+    6D2S, 22 of 2x2); and `check_ledger_fidelity`, the infidelity ledgers, 22 records of 2x2
+    over four jobs.
     """
     jobs = {path.stem: _load_job(path) for path in _job_files()}
     per_job = {name: len(_windows_nodes(job)) for name, job in jobs.items()}
     carving = {name: n for name, n in per_job.items() if n}
     assert len(carving) >= 2, f"the carve matcher found nothing to check: {per_job}"
-    ledger = {
-        name: n for name, n in per_job.items() if name.startswith("check_ledger_")
+    family_of = {
+        declared.path.stem: declared.family for declared in discover(JOBS_DIR).values()
     }
-    assert len(ledger) == 10 and sum(ledger.values()) >= 50, (
-        f"the check_ledger family carves 50 records; the matcher sees {ledger}"
-    )
+    for family, n_jobs, n_records in (
+        ("check_ledger", 10, 50),
+        ("check_ledger_fidelity", 4, 22),
+    ):
+        ledger = {name: n for name, n in per_job.items() if family_of[name] == family}
+        assert len(ledger) == n_jobs and sum(ledger.values()) >= n_records, (
+            f"the {family} family carves {n_records} records over {n_jobs} jobs; the "
+            f"matcher sees {ledger}"
+        )
     # The Allan selector can go dead the same way. Both Ramsey archetypes compute one.
     allan = {name: n for name, job in jobs.items() if (n := len(_allan_nodes(job)))}
     assert len(allan) >= 2, f"the allan matcher found fewer than two jobs: {allan}"

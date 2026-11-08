@@ -283,7 +283,10 @@ jobs/composite/ compare_*.py, independence_survey.py, record_figures_6d2s_q*.py
              composites across datasets, by job.include + .ref or, for the
              compare_r*.py comparisons, by carving each record through
              comparison_recipe; declare JOB_SWEEP = False. One record-figure job per
-             6D2S ledger job, which it includes and refs once
+             6D2S ledger job, which it includes and refs once.
+             check_ledger_fidelity_2x2_q*.py: the checks of the 2x2 infidelity windows,
+             one job per qubit including its records' fid_2x2 jobs (family
+             check_ledger_fidelity); independence_survey_fidelity_2x2.py surveys them
 src/quebra/recipes.py          RAMSEY_CONFIG + configure_ramsey_job orchestrator, and
                                wire_t2star_carve, the one T2* carve.
                                Reusable library code: keeping it out of jobs/ is what
@@ -292,6 +295,12 @@ src/quebra/recipes.py          RAMSEY_CONFIG + configure_ramsey_job orchestrator
 src/quebra/ledger_recipe.py    configure_check_ledger_job and the survey wiring. Apart
                                from recipes.py so the checks stay out of the T2* jobs'
                                identity closure.
+src/quebra/fidelity_ledger_recipe.py  configure_fidelity_ledger_job: the same ledger
+                               and survey on infidelity_recipe's carve of each
+                               included fid job, its ledgers carrying the paper name
+                               and the bench statement that
+                               panels/infidelity_check_ledger.py prints. Apart from
+                               ledger_recipe.py so the T2* ledgers keep their identity.
 src/quebra/tellability_recipe.py  wire_*_tellability: one tellability step per metric
                                record, on the nodes configure_* return. recipes.py never
                                imports it, so jobs without tellability do not carry it.

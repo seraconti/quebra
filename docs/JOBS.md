@@ -7,7 +7,7 @@ Every job declares a `JOB_ID` (the logical name `job.include` resolves) and a
 `JOB_FAMILY` (its category). Neither is its directory: a job can move without
 breaking any composite, and recategorising costs one string edit.
 
-110 jobs in 11 families.
+115 jobs in 12 families.
 
 ## check_ledger
 
@@ -23,6 +23,15 @@ breaking any composite, and recategorising costs one string edit.
 | `check_ledger_6d2s_q4` | `jobs/active/check_ledger_6d2s_q4.py` | `jobs/bench/results/size_table.csv` | — | — |
 | `check_ledger_6d2s_q5` | `jobs/active/check_ledger_6d2s_q5.py` | `jobs/bench/results/size_table.csv` | — | — |
 | `check_ledger_6d2s_q6` | `jobs/active/check_ledger_6d2s_q6.py` | `jobs/bench/results/size_table.csv` | — | — |
+
+## check_ledger_fidelity
+
+| JOB_ID | file | datasets | includes | parameters |
+|---|---|---|---|---|
+| `check_ledger_fidelity_2x2_q1` | `jobs/composite/check_ledger_fidelity_2x2_q1.py` | `jobs/bench/results/size_table.csv` | `fid_2x2_q1_030723`<br>`fid_2x2_q1_050723`<br>`fid_2x2_q1_070723`<br>`fid_2x2_q1_090623`<br>`fid_2x2_q1_100623`<br>`fid_2x2_q1_100723`<br>`fid_2x2_q1_200623`<br>`fid_2x2_q1_220823`<br>`fid_2x2_q1_250623`<br>`fid_2x2_q1_300623` | `PREFIX='fid_2x2_q1'` |
+| `check_ledger_fidelity_2x2_q2` | `jobs/composite/check_ledger_fidelity_2x2_q2.py` | `jobs/bench/results/size_table.csv` | `fid_2x2_q2_030723`<br>`fid_2x2_q2_040723`<br>`fid_2x2_q2_090623`<br>`fid_2x2_q2_120723`<br>`fid_2x2_q2_220823` | `PREFIX='fid_2x2_q2'` |
+| `check_ledger_fidelity_2x2_q3` | `jobs/composite/check_ledger_fidelity_2x2_q3.py` | `jobs/bench/results/size_table.csv` | `fid_2x2_q3_040723`<br>`fid_2x2_q3_090623`<br>`fid_2x2_q3_110723`<br>`fid_2x2_q3_220823`<br>`fid_2x2_q3_260623`<br>`fid_2x2_q3_300623` | `PREFIX='fid_2x2_q3'` |
+| `check_ledger_fidelity_2x2_q4` | `jobs/composite/check_ledger_fidelity_2x2_q4.py` | `jobs/bench/results/size_table.csv` | `fid_2x2_q4_220823` | `PREFIX='fid_2x2_q4'` |
 
 ## compliance
 
@@ -117,6 +126,7 @@ breaking any composite, and recategorising costs one string edit.
 | JOB_ID | file | datasets | includes | parameters |
 |---|---|---|---|---|
 | `independence_survey` | `jobs/composite/independence_survey.py` | — | `check_ledger_2x2_q1`<br>`check_ledger_2x2_q2`<br>`check_ledger_2x2_q3`<br>`check_ledger_2x2_q4`<br>`check_ledger_6d2s_q1`<br>`check_ledger_6d2s_q2`<br>`check_ledger_6d2s_q3`<br>`check_ledger_6d2s_q4`<br>`check_ledger_6d2s_q5`<br>`check_ledger_6d2s_q6` | `PREFIX='independence_survey'` |
+| `independence_survey_fidelity_2x2` | `jobs/composite/independence_survey_fidelity_2x2.py` | — | `check_ledger_fidelity_2x2_q1`<br>`check_ledger_fidelity_2x2_q2`<br>`check_ledger_fidelity_2x2_q3`<br>`check_ledger_fidelity_2x2_q4` | `PREFIX='independence_survey_fidelity_2x2'` |
 | `km_with_checks_6d2s` | `jobs/active/km_with_checks_6d2s.py` | `jobs/bench/results/size_table.csv` | — | `ALPHA=0.05`<br>`GAP_MULT=10.0`<br>`LAG_MAX=5`<br>`MIN_EVENTS_PASS=35`<br>`N_PERMUTATIONS=999`<br>`PREFIX='km_with_checks_6d2s'`<br>`SEED=20260903`<br>`THRESHOLD_LABEL='3.0 µs'`<br>`TIE_CUTOFF_DISTINCT=5` |
 
 ## interval
