@@ -96,8 +96,9 @@ class NelsonAalen:
     """Cumulative hazard H(t) = sum d/n, its Aalen variance sum d/n^2, and a log band.
 
     `time_s` starts at 0 with H = 0 and holds one entry per age with a death. The band is
-    H exp(+/- z sqrt(V) / H), NaN where H = 0. No step fills `checks`, so it is empty
-    and reads NOT ASSESSED.
+    H exp(+/- z sqrt(V) / H), NaN where H = 0. Empty unless a step fills `checks` (the
+    record figures' hazard block and curve summaries fill it with their band's check
+    outcome); empty reads NOT ASSESSED.
     """
 
     dataset_id: str
@@ -181,7 +182,8 @@ class CurveSummaries:
     past it extends the last value of S flat to tau, as R's `summary(fit, rmean = tau)`
     does, so the restricted mean then counts time no window was watched for.
 
-    No step fills `checks`, so it is empty and reads NOT ASSESSED.
+    Empty unless a step fills `checks` (the record figures' hazard block and curve
+    summaries fill it with their band's check outcome); empty reads NOT ASSESSED.
     """
 
     dataset_id: str

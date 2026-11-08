@@ -247,6 +247,10 @@ analyzers/   allan.py, fidelity.py, t2star.py, tlf.py, mtbf.py
              DerSimonian-Laird summary of many records, each also at every threshold
              and side of one ladder, the comparison table, and the data of the
              figures plots/record_comparison_plot.py draws
+             record_figure.py  the record figures: each block's typed artifact and its
+             builder (survival, hazard, in-spec fraction, resolvability, timeline), the
+             carve held to its ledger, the curve summaries and resolvability tables,
+             and RecordFigureData, one record's blocks for its page
              check_attachment.py  standings and check-outcome fields; a leaf, imports
              nothing from quebra
              signal_band.py, distinguish_band.py, reliability_band.py  the three nested
@@ -266,12 +270,17 @@ panels/      within_calibration.py, across_calibration.py   generic render compo
              functions-of-axes half. The artifact itself is built in
              analyzers/within_calibration_compute.py and typed in
              analyzers/within_calibration_data.py.
-plots/       base.py, targets.py, theme.py, *_plot.py   targets: static, academic, poster
+plots/       base.py, targets.py, theme.py, *_plot.py   targets: static, academic, poster,
+             table. record_figure_plot.py draws each record-figure block, and
+             RecordFigurePlot the page that stacks one record's blocks, one row each,
+             in the recipe's PAGE_ORDER
 jobs/active/ ramsey_*.py, ramsey_2x2_*.py, t2star_*.py, mtbf_*.py, check_calibration.py,
              check_ledger_6d2s_q*.py (checks only: per-record ledgers + per-qubit survey)
-jobs/composite/ compare_*.py, independence_survey.py   composites across datasets, by
-             job.include + .ref or, for the compare_r*.py comparisons, by carving each
-             record through comparison_recipe; declare JOB_SWEEP = False
+jobs/composite/ compare_*.py, independence_survey.py, record_figures_6d2s_q*.py
+             composites across datasets, by job.include + .ref or, for the
+             compare_r*.py comparisons, by carving each record through
+             comparison_recipe; declare JOB_SWEEP = False. One record-figure job per
+             6D2S ledger job, which it includes and refs once
 src/quebra/recipes.py          RAMSEY_CONFIG + configure_ramsey_job orchestrator, and
                                wire_t2star_carve, the one T2* carve.
                                Reusable library code: keeping it out of jobs/ is what
@@ -287,6 +296,13 @@ src/quebra/comparison_recipe.py   wire_record_carves (every record on one T2* la
                                then wire_record_pair or wire_record_forest, each with
                                its comparison table, and wire_pair_figure or
                                wire_forest_figures. recipes.py never imports it.
+src/quebra/record_figure_recipe.py  configure_record_figure_job: every block of every
+                               record the paper's tables list, off one included
+                               ledger job, each record carved again with that job's
+                               carve kwargs and held to its ledger. BLOCKS registers
+                               the blocks and PAGE_ORDER orders them on the page; the
+                               curve summaries and resolvability tables follow.
+                               recipes.py never imports it.
 src/quebra/cli.py              the CLI, installed as the `quebra` console script.
                                Anchors output/ and the --all glob on the WORKING
                                DIRECTORY, never on __file__, so an installed copy
