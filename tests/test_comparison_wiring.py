@@ -171,7 +171,11 @@ def test_a_pair_resolves_at_every_rung_and_side_and_its_table_holds_every_number
         assert _cell(rows, both, "tau_s")[0] == pair.tau.rmst_tau_s
         for quantity in PAIR_QUANTITIES[1:-1]:
             assert _cell(rows, both, quantity)[0] == getattr(pair, quantity), quantity
-        assert _cell(rows, both, "logrank_p")[1] == record_comparison.UNADJUSTED
+        # Unadjusted, and resting on independent windows within each record, beside every p.
+        assert _cell(rows, both, "logrank_p")[1] == (
+            "unadjusted for any other comparison; assumes the windows within each record "
+            "are independent"
+        )
         # A tested pair's SE carries no note: only a descriptive pair's says why it is None.
         assert _cell(rows, both, "rmst_difference_se_s")[1] is None
         for record, summary in (("r1", pair.summary_a), ("r2", pair.summary_b)):

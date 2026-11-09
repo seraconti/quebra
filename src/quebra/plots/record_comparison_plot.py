@@ -10,10 +10,12 @@ What each figure states in the image, per docs/FIGURE_STANDARD.md:
 - the comparison tau and the record that set it, per panel, per group or per rung;
 - what was dropped: windows whose birth was not observed (pair panels), and records with
   no windows or with no death before tau, by name (forest) or by count (ladder);
-- the check outcome of what is drawn, which reads NOT ASSESSED while no step fills it;
-- the evidence line of the pair or of each group;
+- the check outcome of what is drawn, which reads NOT ASSESSED while no step fills it,
+  and, in each pair panel, each record's check and group-row tallies when filled;
+- the evidence line of the pair or of each group, and how a pair was chosen when declared;
 - in the caption, that a pair's p-values are unadjusted for the other thresholds and
-  sides, and that groups drawn together are described, not tested.
+  sides and assume the windows within each record are independent, and that groups drawn
+  together are described, not tested.
 
 A group with fewer than `record_comparison.MIN_POOLED` records with a variance has no
 pooled numbers, so it is drawn as a table of its records, never as a forest. A flagged
@@ -60,7 +62,10 @@ _WRAP = 58
 _COLUMNS = 4
 DAGGER = "†"
 
-UNADJUSTED = "Each panel's log-rank p is unadjusted for the other thresholds and sides."
+UNADJUSTED = (
+    "Each panel's log-rank p is unadjusted for the other thresholds and sides, and "
+    "assumes the windows within each record are independent."
+)
 DESCRIBED_NOT_TESTED = "The groups are described, not tested: no test compares them."
 
 
@@ -141,7 +146,7 @@ def _pair_lines(panel: PairPanel) -> list[str]:
         f"birth unseen, excluded: a {panel.curve_a.n_unobserved_birth_dropped}, "
         f"b {panel.curve_b.n_unobserved_birth_dropped}"
     )
-    return lines
+    return lines + list(panel.check_lines)
 
 
 def _pair_panel(ax: plt.Axes, panel: PairPanel, style: str) -> None:
@@ -242,7 +247,11 @@ class PairLadderPlot(BasePlot):
             )
             fig.suptitle(f"Window survival, {data.record_a} vs {data.record_b}")
             panels = list(data.panels.values())
-            checks = " | ".join(dict.fromkeys(p.pair.check_summary() for p in panels))
+            checks = (
+                "each panel's tallies, every cell in the table"
+                if any(p.check_lines for p in panels)
+                else " | ".join(dict.fromkeys(p.pair.check_summary() for p in panels))
+            )
             rule = panels[0].pair.tau.tau_rule
             fig.text(
                 0.01,
@@ -252,6 +261,7 @@ class PairLadderPlot(BasePlot):
                     f"the difference of the restricted means up to it. Bands: "
                     f"{panels[0].pair.conf_level:.0%} pointwise. Evidence: "
                     f"{data.evidence}. Check outcome: {checks}. "
+                    + (f"{data.declared}. " if data.declared else "")
                     + " ".join(
                         f"{line}."
                         for line in _flag_lines(
@@ -310,7 +320,7 @@ def _group_lines(
         "birth unseen, excluded: {} of {} windows of the records with windows".format(
             *data.birth_unseen[group]
         ),
-        f"check outcome: {summary.check_summary()}",
+        f"check outcome: {summary.check_line or summary.check_summary()}",
     ]
     drawn = [row.record for row in summary.rows] + no_windows
     return lines + _flag_lines(drawn, data.flags)
@@ -487,7 +497,8 @@ def _ladder_lines(data: PooledLadderData, group: str, side: str) -> list[str]:
                 f"{pooled}, {len(tau.excluded)} without windows; birth unseen, "
                 f"excluded {dropped} of {carved} windows"
             )
-        checks[summary.check_summary()] = None
+        line = f"{label}: {summary.check_line}" if summary.check_line else None
+        checks[line or summary.check_summary()] = None
     lines.append(f"check outcome: {' | '.join(checks)}")
     return lines
 

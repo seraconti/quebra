@@ -35,8 +35,10 @@ Validity assumptions
 - Assumption: the windows of each record are exchangeable draws from one law, with
   independent censoring.
   Diagnostic: the check outcome attached to each record (`checks_a` and `checks_b` on a
-  pair, each row's summary in a pooled result); empty reads NOT ASSESSED, and no step here
-  fills it.
+  pair, each row's summary in a pooled result), with its group-row verdicts beside it. No
+  step here fills them; `analyzers/comparison_checks.py` does, from each record's ledger.
+  Empty reads NOT ASSESSED. Every log-rank p in a table and a figure says it assumes the
+  windows within each record are independent.
   Consequence of violation: the log-rank p, the SE of the difference and every interval of
   the summary are miscalibrated; the point difference is still the difference of the two
   areas.
@@ -104,6 +106,8 @@ NO_DEATHS = "no deaths in either record"
 # Why a descriptive comparison (`compare_pair(test=False)`) has no log-rank and no SE for
 # its difference.
 NO_TEST = "descriptive comparison: no test between the records"
+# A record's group-row verdicts at one threshold: (group, bag, clock, verdict) per row.
+GroupVerdicts = tuple[tuple[str, str, str, str], ...]
 ZERO_LOGRANK_VARIANCE = (
     "zero log-rank variance: at every death age one record had no window at risk, "
     "or every window at risk died"
@@ -225,8 +229,10 @@ class PairComparison:
     off its event table, so they are set even when nothing else is computed.
 
     The point difference is descriptive; the p and the SE rest on exchangeability.
-    `checks_a` / `checks_b` are each record's check-outcome field; no step here fills them,
-    so they read NOT ASSESSED. `tested` is False for a descriptive comparison
+    `checks_a` / `checks_b` are each record's check-outcome field and `group_verdicts_a` /
+    `group_verdicts_b` its group-row verdicts at this threshold, (group, bag, clock,
+    verdict); no step here fills them (`comparison_checks` does), so empty reads NOT
+    ASSESSED. `tested` is False for a descriptive comparison
     (`compare_pair(test=False)`): no log-rank and no SE for the difference, each None with
     the reason `NO_TEST`.
     """
@@ -255,6 +261,8 @@ class PairComparison:
     checks_a: CheckAttachment = field(default_factory=CheckAttachment)
     checks_b: CheckAttachment = field(default_factory=CheckAttachment)
     tested: bool = True
+    group_verdicts_a: GroupVerdicts = ()
+    group_verdicts_b: GroupVerdicts = ()
 
     def check_summary(self) -> str:
         return (
@@ -382,6 +390,7 @@ class RecordRow:
 
     `lower_s` and `upper_s` are the normal interval rmst +/- z se, None when the SE is 0.
     `not_pooled_reason` names why a row with a restricted mean stays out of the pool.
+    `group_verdicts` is the record's group-row verdicts at this threshold, as on a pair.
     """
 
     record: str
@@ -390,6 +399,7 @@ class RecordRow:
     upper_s: float | None
     pooled: bool
     not_pooled_reason: str | None
+    group_verdicts: GroupVerdicts = ()
 
 
 @dataclass
@@ -405,8 +415,10 @@ class RandomEffectsSummary:
     The prediction interval is where the true restricted mean of one more record from the
     same population should fall; a measured one scatters wider, by its own variance. Every
     pooled number rests on exchangeability within each record and independence between them.
-    Each row's summary carries that record's check-outcome field; no step here fills it, so
-    it reads NOT ASSESSED.
+    Each row's summary carries that record's check-outcome field, and the row its group-row
+    verdicts; no step here fills them (`comparison_checks` does), so empty reads NOT
+    ASSESSED. `check_line` is the one line a figure prints when they are filled, set with
+    them; empty, a figure prints `check_summary()`.
     """
 
     threshold_label: str
@@ -429,6 +441,7 @@ class RandomEffectsSummary:
     prediction_upper_s: float | None
     not_pooled_reason: str | None
     standing: str = RESTS_ON_EXCHANGEABILITY
+    check_line: str = ""
 
     def check_summary(self) -> str:
         if not self.rows:
@@ -835,6 +848,9 @@ TABLE_COLUMNS = (
 )
 POOLED = "pooled"
 UNADJUSTED = "unadjusted for any other comparison"
+INDEPENDENT_WINDOWS = "assumes the windows within each record are independent"
+# The note of every computed log-rank p.
+LOGRANK_P_NOTE = f"{UNADJUSTED}; {INDEPENDENT_WINDOWS}"
 _RMST_QUANTITIES = ("rmst_s", "rmst_se_s")
 _COUNT_QUANTITIES = ("n_windows", "n_deaths")
 _RECORD_QUANTITIES = _RMST_QUANTITIES + _COUNT_QUANTITIES
@@ -897,12 +913,22 @@ def require_flags(flags: Mapping[str, str], records: Sequence[str]) -> None:
         )
 
 
+def group_note(verdicts: GroupVerdicts) -> str:
+    """A record's group-row verdicts as one note, `; `-joined, each
+    `group, <bag> bag, <clock> clock: verdict`."""
+    return "; ".join(
+        f"{group}, {bag} bag, {clock} clock: {verdict}"
+        for group, bag, clock, verdict in verdicts
+    )
+
+
 def pair_table(
     pairs: ByThresholdSide[PairComparison],
     *,
     comparison: str,
     evidence: str,
     flags: Mapping[str, str] | None = None,
+    declared: str = "",
 ) -> pd.DataFrame:
     """Every number of a pair at every threshold and side, one per row (`TABLE_COLUMNS`).
 
@@ -918,6 +944,11 @@ def pair_table(
     is why it is a kwarg of this step and not of the comparison. `flags` maps a record to
     a line said about it alone, such as how the paper's table marks it; a flagged record
     gets a `flag` row with that line as its note, at every threshold and side.
+
+    `declared`, when given, says how the pair was chosen; it is the note of a `declared`
+    row at every threshold and side. A record whose group-row verdicts are filled gets a
+    `group_verdicts` row, each verdict in its note. Every computed log-rank p carries
+    `LOGRANK_P_NOTE`: unadjusted, and resting on independent windows within each record.
     """
     require_evidence({comparison: evidence}, [comparison])
     flags = dict(flags or {})
@@ -932,9 +963,19 @@ def pair_table(
         cells: list[tuple[str, str, object, str | None]] = [
             (both, "tau_s", pair.tau.rmst_tau_s, tau_note)
         ]
-        for record, summary, counts in (
-            (pair.record_a, pair.summary_a, (pair.n_windows_a, pair.n_deaths_a)),
-            (pair.record_b, pair.summary_b, (pair.n_windows_b, pair.n_deaths_b)),
+        for record, summary, counts, groups in (
+            (
+                pair.record_a,
+                pair.summary_a,
+                (pair.n_windows_a, pair.n_deaths_a),
+                pair.group_verdicts_a,
+            ),
+            (
+                pair.record_b,
+                pair.summary_b,
+                (pair.n_windows_b, pair.n_deaths_b),
+                pair.group_verdicts_b,
+            ),
         ):
             cells += [
                 (
@@ -951,6 +992,8 @@ def pair_table(
             ]
             if record in flags:
                 cells.append((record, "flag", None, flags[record]))
+            if groups:
+                cells.append((record, "group_verdicts", None, group_note(groups)))
         cells += [
             (
                 both,
@@ -971,12 +1014,14 @@ def pair_table(
                 quantity,
                 getattr(pair, quantity),
                 pair.logrank_not_computed_reason
-                or (UNADJUSTED if quantity == "logrank_p" else None),
+                or (LOGRANK_P_NOTE if quantity == "logrank_p" else None),
             )
             for quantity in ("logrank_z", "logrank_chi2", "logrank_p")
         ]
         cells.append((both, "check_outcome", None, pair.check_summary()))
         cells.append((both, "evidence", None, evidence))
+        if declared:
+            cells.append((both, "declared", None, declared))
         rows += [
             (comparison, "", record, label, side, quantity, value, note)
             for record, quantity, value, note in cells
@@ -1034,6 +1079,10 @@ def random_effects_table(
             ]
             if row.record in flags:
                 cells.append((row.record, "flag", None, flags[row.record]))
+            if row.group_verdicts:
+                cells.append(
+                    (row.record, "group_verdicts", None, group_note(row.group_verdicts))
+                )
         for record, reason in summary.tau.excluded:
             if reason != NO_WINDOWS:
                 raise ValueError(
@@ -1067,11 +1116,14 @@ class PairPanel:
 
     The curves are `kaplan_meier.curve_from_event_table` on the event tables the comparison
     read, so a drawn curve and the numbers printed beside it rest on the same windows.
+    `check_lines` holds one line per record whose checks are filled: the tally of its
+    check-outcome cells and of its group-row verdicts at this threshold (`check_lines`).
     """
 
     curve_a: KaplanMeierCurve
     curve_b: KaplanMeierCurve
     pair: PairComparison
+    check_lines: tuple[str, ...] = ()
 
 
 @dataclass
@@ -1085,6 +1137,37 @@ class PairLadderData(StaleArtifactGuard):
     ladder: tuple[str, ...]
     panels: dict[tuple[str, str], PairPanel]
     flags: dict[str, str]
+    declared: str = ""
+
+
+def verdict_tally(verdicts: Sequence[str]) -> str:
+    """`n verdict` per distinct verdict, in sorted order, comma-joined; `none` when empty."""
+    counts: dict[str, int] = {}
+    for verdict in verdicts:
+        counts[verdict] = counts.get(verdict, 0) + 1
+    return ", ".join(f"{n} {v}" for v, n in sorted(counts.items())) or "none"
+
+
+def check_lines(pair: PairComparison) -> tuple[str, ...]:
+    """One line per record of `pair` whose checks are filled: the tally of its check cells,
+    which are this rung's bag on both clocks, and of its group-row verdicts, which are this
+    rung's both bags on both clocks. A record with neither filled has no line, so an
+    unfilled pair has none."""
+    lines = []
+    for tag, checks, groups in (
+        ("a", pair.checks_a, pair.group_verdicts_a),
+        ("b", pair.checks_b, pair.group_verdicts_b),
+    ):
+        parts = []
+        if checks.checks_asked:
+            tally = verdict_tally([v for _, _, v in checks.check_verdicts])
+            parts.append(f"checks, {pair.side} bag: {tally}")
+        if groups:
+            tally = verdict_tally([v for *_, v in groups])
+            parts.append(f"groups, both bags: {tally}")
+        if parts:
+            lines.append(f"{tag}: " + "; ".join(parts))
+    return tuple(lines)
 
 
 def select_rungs(ladder: Sequence[str], rungs: Sequence[str] | None) -> tuple[str, ...]:
@@ -1112,13 +1195,14 @@ def build_pair_ladder_data(
     evidence: str,
     flags: Mapping[str, str] | None = None,
     rungs: Sequence[str] | None = None,
+    declared: str = "",
 ) -> PairLadderData:
     """The pair figure's data: each comparison of `pairs` beside both records' curves.
 
     The carves must be the two records `pairs` compared, a first, on the ladder `pairs`
     holds; anything else raises. `flags` is as in `pair_table`. `rungs` names the
     thresholds the figure draws (`select_rungs`), both sides of each; it reaches no table,
-    so the pair's table keeps every rung.
+    so the pair's table keeps every rung. `declared` is as in `pair_table`.
     """
     require_evidence({comparison: evidence}, [comparison])
     ladder, (a, b) = _tables_on_one_ladder((carve_a, carve_b))
@@ -1144,6 +1228,7 @@ def build_pair_ladder_data(
                 table_b, label=pair.record_b, conf_level=pair.conf_level
             ),
             pair=pair,
+            check_lines=check_lines(pair),
         )
     if not panels:
         raise ValueError("the pairs hold no threshold and side to draw")
@@ -1158,6 +1243,7 @@ def build_pair_ladder_data(
         ladder=drawn,
         panels=panels,
         flags=flags,
+        declared=declared,
     )
 
 

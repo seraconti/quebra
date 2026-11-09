@@ -247,6 +247,8 @@ analyzers/   allan.py, fidelity.py, t2star.py, tlf.py, mtbf.py
              DerSimonian-Laird summary of many records, each also at every threshold
              and side of one ladder, the comparison table, and the data of the
              figures plots/record_comparison_plot.py draws
+             comparison_checks.py  each compared record's check outcome and group-row
+             verdicts, read off its own ledger, its carve held to that ledger
              record_figure.py  the record figures: each block's typed artifact and its
              builder (survival, hazard, in-spec fraction, resolvability, timeline), the
              carve held to its ledger, the curve summaries and resolvability tables,
@@ -286,7 +288,10 @@ jobs/composite/ compare_*.py, independence_survey.py, record_figures_6d2s_q*.py
              6D2S ledger job, which it includes and refs once.
              check_ledger_fidelity_2x2_q*.py: the checks of the 2x2 infidelity windows,
              one job per qubit including its records' fid_2x2 jobs (family
-             check_ledger_fidelity); independence_survey_fidelity_2x2.py surveys them
+             check_ledger_fidelity); independence_survey_fidelity_2x2.py surveys them.
+             compare_f1_2x2_same_night.py and compare_f3_2x2_conditions.py: the
+             comparisons on those windows, reading each record's carve and ledger from
+             the infidelity ledger jobs
 src/quebra/recipes.py          RAMSEY_CONFIG + configure_ramsey_job orchestrator, and
                                wire_t2star_carve, the one T2* carve.
                                Reusable library code: keeping it out of jobs/ is what
@@ -306,8 +311,12 @@ src/quebra/tellability_recipe.py  wire_*_tellability: one tellability step per m
                                imports it, so jobs without tellability do not carry it.
 src/quebra/comparison_recipe.py   wire_record_carves (every record on one T2* ladder),
                                then wire_record_pair or wire_record_forest, each with
-                               its comparison table, and wire_pair_figure or
+                               its comparison table (with ledgers=, each record's checks
+                               filled from its ledger), and wire_pair_figure or
                                wire_forest_figures. recipes.py never imports it.
+src/quebra/fidelity_comparison_recipe.py  included_fidelity_records: each record of an
+                               included infidelity ledger job, its run name, paper name,
+                               and refs to its persisted carve and ledger.
 src/quebra/record_figure_recipe.py  configure_record_figure_job: every block of every
                                record the paper's tables list, off one included
                                ledger job, each record carved again with that job's

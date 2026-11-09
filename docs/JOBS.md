@@ -7,7 +7,7 @@ Every job declares a `JOB_ID` (the logical name `job.include` resolves) and a
 `JOB_FAMILY` (its category). Neither is its directory: a job can move without
 breaking any composite, and recategorising costs one string edit.
 
-115 jobs in 12 families.
+117 jobs in 12 families.
 
 ## check_ledger
 
@@ -162,6 +162,8 @@ breaking any composite, and recategorising costs one string edit.
 
 | JOB_ID | file | datasets | includes | parameters |
 |---|---|---|---|---|
+| `compare_f1_2x2_same_night` | `jobs/composite/compare_f1_2x2_same_night.py` | — | `check_ledger_fidelity_2x2_q1`<br>`check_ledger_fidelity_2x2_q2`<br>`check_ledger_fidelity_2x2_q3`<br>`check_ledger_fidelity_2x2_q4` | `CONF_LEVEL=0.95`<br>`DECLARED='Pairs declared after an exploratory look at these records: every pair of 2x2 records sharing a night, 12 pairs at 3 rungs and 2 sides, so up to 72 log-rank p, each unadjusted for the others'`<br>`EVIDENCE='one night of the 2x2: one condition group (temperature and voltage configuration, Supp. Fig. S13); two qubits'`<br>`TAU_RULE='min_largest_age'` |
+| `compare_f3_2x2_conditions` | `jobs/composite/compare_f3_2x2_conditions.py` | — | `check_ledger_fidelity_2x2_q1`<br>`check_ledger_fidelity_2x2_q2`<br>`check_ledger_fidelity_2x2_q3`<br>`check_ledger_fidelity_2x2_q4` | `CONF_LEVEL=0.95`<br>`EVIDENCE_2X2='temperature and voltage configuration stated (Supp. Fig. S13)'`<br>`FOREST_SIDE='in_spec'`<br>`FOREST_THRESHOLD='99%'`<br>`TAU_RULE='min_largest_age'`<br>`TAU_SCOPE='per_group'` |
 | `compare_j_across_jump` | `jobs/composite/compare_j_across_jump.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE='two halves of one run, split at a frequency jump: one voltage setting'`<br>`TAU_RULE='min_largest_age'` |
 | `compare_r1_qubits_one_night` | `jobs/composite/compare_r1_qubits_one_night.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE='one run, one voltage setting'`<br>`TAU_RULE='min_largest_age'` |
 | `compare_r2_nights_one_qubit` | `jobs/composite/compare_r2_nights_one_qubit.py` | — | — | `CONF_LEVEL=0.95`<br>`EVIDENCE='temperature period stated; voltage settings can change between nights and are not listed per night'`<br>`TAU_RULE='min_largest_age'` |
